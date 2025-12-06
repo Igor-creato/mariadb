@@ -3,11 +3,13 @@
 /**
  * Plugin Name: Mariadb Cashback Plugin
  * Description: Плагин для создания таблиц кэшбэка, триггеров и событий в базе данных.
- * Version: 1.0.0
+ * Version: 1.0.1
  * Author: Kilo Code
  * License: GPL v2 or later
  * Text Domain: mariadb-cashback
  */
+
+define('MARIADB_PLUGIN_VERSION', '1.0.1');
 
 if (!defined('ABSPATH')) {
     exit; // Защита от прямого доступа
@@ -53,6 +55,7 @@ class Mariadb_Plugin
         $instance->create_tables();
         $instance->create_triggers();
         $instance->create_events();
+        $instance->upgrade_schema();
         $instance->initialize_existing_users();
     }
 
@@ -313,6 +316,19 @@ class Mariadb_Plugin
         foreach ($events as $event) {
             $wpdb->query($event);
         }
+    }
+
+    /**
+     * Обновление схемы базы данных
+     */
+    private function upgrade_schema()
+    {
+        global $wpdb;
+
+        // Добавление CHECK ограничения к cashback_rate (игнорируем если уже существует)
+        $wpdb->query("ALTER TABLE `{$wpdb->prefix}cashback_user_profile` ADD CONSTRAINT `chk_cashback_rate` CHECK (cashback_rate BETWEEN 0.00 AND 100.00);");
+
+        // Здесь можно добавить другие миграции, которые будут применяться при каждой активации
     }
 
     /**
