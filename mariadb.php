@@ -214,7 +214,7 @@ class Mariadb_Plugin
                 
                 -- Вычисляем кэшбэк на основе процента
                 IF NEW.commission IS NOT NULL THEN
-                    SET NEW.cashback = FLOOR(NEW.commission * IFNULL(v_rate, 60.00) / 100, 2);
+                    SET NEW.cashback = ROUND(NEW.commission * IFNULL(v_rate, 60.00) / 100, 2);
                 ELSE
                     SET NEW.cashback = 0.00;
                 END IF;
@@ -234,7 +234,7 @@ class Mariadb_Plugin
                 -- Если комиссия изменилась, пересчитываем кэшбэк
                 IF OLD.commission != NEW.commission THEN
                     -- Используем процент из текущей строки (applied_cashback_rate)
-                    SET NEW.cashback = FLOOR(NEW.commission * NEW.applied_cashback_rate / 100, 2);
+                    SET NEW.cashback = ROUND(NEW.commission * NEW.applied_cashback_rate / 100, 2);
                 END IF;
             END;",
 
