@@ -66,7 +66,7 @@ class Mariadb_Plugin
     {
         global $wpdb;
 
-        $charset_collate = $wpdb->get_charset_collate();
+        $charset_collate = "DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
 
         // Таблица cashback_payout_requests
         $table1 = "CREATE TABLE `{$wpdb->prefix}cashback_payout_requests` (
@@ -93,13 +93,15 @@ class Mariadb_Plugin
             `commission` decimal(10,2) DEFAULT NULL,
             `uniq_id` varchar(255) DEFAULT NULL,
             `cashback` decimal(10,2) DEFAULT NULL,
+            `applied_cashback_rate` decimal(5,2) DEFAULT 60.00 COMMENT 'Процент кэшбэка на момент создания транзакции',
             `created_at` timestamp NULL DEFAULT current_timestamp(),
             `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
             PRIMARY KEY (`id`),
             UNIQUE KEY `unique_uniq_partner` (`uniq_id`,`partner`),
             KEY `user_id` (`user_id`),
             KEY `idx_order_status_updated_cashback` (`order_status`,`updated_at`,`cashback`),
-            CONSTRAINT `fk_transactions_user` FOREIGN KEY (`user_id`) REFERENCES `{$wpdb->prefix}users` (`ID`) ON DELETE CASCADE
+            CONSTRAINT `fk_transactions_user` FOREIGN KEY (`user_id`) REFERENCES `{$wpdb->prefix}users` (`ID`) ON DELETE CASCADE,
+            CONSTRAINT `chk_applied_cashback_rate_range` CHECK (`applied_cashback_rate` BETWEEN 0.00 AND 100.00)
         ) ENGINE=InnoDB {$charset_collate};";
 
         // Таблица cashback_unregistered_transactions
@@ -176,12 +178,46 @@ class Mariadb_Plugin
     {
         global $wpdb;
 
+        // Удаляем существующие триггеры перед созданием новых
+        $drop_triggers = [
+            "DROP TRIGGER IF EXISTS `{$wpdb->prefix}calculate_cashback_before_insert`;",
+            "DROP TRIGGER IF EXISTS `{$wpdb->prefix}calculate_cashback_before_insert_unregistered`;",
+            "DROP TRIGGER IF EXISTS `{$wpdb->prefix}calculate_cashback_before_update`;",
+            "DROP TRIGGER IF EXISTS `{$wpdb->prefix}calculate_cashback_before_update_unregistered`;",
+            "DROP TRIGGER IF EXISTS `{$wpdb->prefix}cashback_tr_prevent_delete_final_status`;",
+            "DROP TRIGGER IF EXISTS `{$wpdb->prefix}cashback_tr_prevent_update_final_status`;",
+            "DROP TRIGGER IF EXISTS `{$wpdb->prefix}tr_prevent_delete_paid_payout`;",
+            "DROP TRIGGER IF EXISTS `{$wpdb->prefix}tr_prevent_update_paid_payout`;",
+        ];
+
+        foreach ($drop_triggers as $drop_trigger) {
+            $result = $wpdb->query($drop_trigger);
+            if ($result === false) {
+                error_log('Failed to drop trigger: ' . $drop_trigger . ' Error: ' . $wpdb->last_error);
+            }
+        }
+
         $triggers = [
             "CREATE TRIGGER `{$wpdb->prefix}calculate_cashback_before_insert`
             BEFORE INSERT ON `{$wpdb->prefix}cashback_transactions`
             FOR EACH ROW
             BEGIN
-                SET NEW.cashback = FLOOR(NEW.commission * 0.6);
+                DECLARE v_rate DECIMAL(5,2) DEFAULT 60.00;
+                
+                SELECT cashback_rate INTO v_rate
+                FROM `{$wpdb->prefix}cashback_user_profile`
+                WHERE user_id = NEW.user_id
+                LIMIT 1;
+                
+                -- Сохраняем процент кэшбэка, который применяется
+                SET NEW.applied_cashback_rate = IFNULL(v_rate, 60.00);
+                
+                -- Вычисляем кэшбэк на основе процента
+                IF NEW.commission IS NOT NULL THEN
+                    SET NEW.cashback = FLOOR(NEW.commission * IFNULL(v_rate, 60.00) / 100, 2);
+                ELSE
+                    SET NEW.cashback = 0.00;
+                END IF;
             END;",
 
             "CREATE TRIGGER `{$wpdb->prefix}calculate_cashback_before_insert_unregistered`
@@ -195,8 +231,10 @@ class Mariadb_Plugin
             BEFORE UPDATE ON `{$wpdb->prefix}cashback_transactions`
             FOR EACH ROW
             BEGIN
+                -- Если комиссия изменилась, пересчитываем кэшбэк
                 IF OLD.commission != NEW.commission THEN
-                    SET NEW.cashback = FLOOR(NEW.commission * 0.6);
+                    -- Используем процент из текущей строки (applied_cashback_rate)
+                    SET NEW.cashback = FLOOR(NEW.commission * NEW.applied_cashback_rate / 100, 2);
                 END IF;
             END;",
 
@@ -251,7 +289,10 @@ class Mariadb_Plugin
         ];
 
         foreach ($triggers as $trigger) {
-            $wpdb->query($trigger);
+            $result = $wpdb->query($trigger);
+            if ($result === false) {
+                error_log('Failed to create trigger: ' . $trigger . ' Error: ' . $wpdb->last_error);
+            }
         }
     }
 
@@ -327,6 +368,41 @@ class Mariadb_Plugin
 
         // Добавление CHECK ограничения к cashback_rate (игнорируем если уже существует)
         $wpdb->query("ALTER TABLE `{$wpdb->prefix}cashback_user_profile` ADD CONSTRAINT `chk_cashback_rate` CHECK (cashback_rate BETWEEN 0.00 AND 100.00);");
+
+        // Проверка существования колонки applied_cashback_rate
+        $column_exists = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND COLUMN_NAME = %s",
+            $wpdb->prefix . 'cashback_transactions',
+            'applied_cashback_rate'
+        ));
+
+        if (!$column_exists) {
+            // Добавление новой колонки applied_cashback_rate в cashback_transactions
+            $wpdb->query("ALTER TABLE `{$wpdb->prefix}cashback_transactions`
+                ADD COLUMN `applied_cashback_rate` DECIMAL(5,2) DEFAULT 60.00
+                COMMENT 'Процент кэшбэка на момент создания транзакции',
+                ADD CONSTRAINT `chk_applied_cashback_rate_range`
+                CHECK (`applied_cashback_rate` BETWEEN 0.00 AND 100.00);");
+        }
+
+        // Обновление всех существующих записей на значение по умолчанию 60.00
+        $wpdb->query("UPDATE `{$wpdb->prefix}cashback_transactions`
+            SET `applied_cashback_rate` = 60.00;");
+
+        // Миграция кодировки таблиц к utf8mb4_unicode_ci
+        $tables = [
+            'cashback_payout_requests',
+            'cashback_transactions',
+            'cashback_unregistered_transactions',
+            'cashback_user_balance',
+            'cashback_webhooks',
+            'cashback_user_profile'
+        ];
+
+        foreach ($tables as $table) {
+            $wpdb->query("ALTER TABLE `{$wpdb->prefix}{$table}` ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;");
+        }
 
         // Здесь можно добавить другие миграции, которые будут применяться при каждой активации
     }
