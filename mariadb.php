@@ -44,6 +44,7 @@ class Mariadb_Plugin
     {
         // Инициализация плагина
         add_action('user_register', array($this, 'add_user_to_profile'));
+        add_action('user_register', array($this, 'add_user_to_balance'));
     }
 
     /**
