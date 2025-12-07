@@ -398,6 +398,35 @@ class Mariadb_Plugin
                 array('%d', '%s', '%s')
             );
         }
+
+        // Добавляем пользователя в баланс
+        $this->add_user_to_balance($user_id);
+    }
+
+    /**
+     * Добавление пользователя в баланс
+     */
+    public function add_user_to_balance($user_id)
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'cashback_user_balance';
+
+        // Проверяем, существует ли уже запись
+        $exists = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$table_name} WHERE user_id = %d",
+            $user_id
+        ));
+
+        if (!$exists) {
+            $wpdb->insert(
+                $table_name,
+                array(
+                    'user_id' => $user_id,
+                ),
+                array('%d')
+            );
+        }
     }
 }
 
