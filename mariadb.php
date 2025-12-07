@@ -251,7 +251,7 @@ class Mariadb_Plugin
             BEFORE DELETE ON `{$wpdb->prefix}cashback_transactions`
             FOR EACH ROW
             BEGIN
-                IF OLD.order_status = 'Сумма переведена в доступный баланс' THEN
+                IF OLD.order_status = 'Зачислено на баланс' THEN
                     SIGNAL SQLSTATE '45000'
                     SET MESSAGE_TEXT = 'Удаление запрещено: запись с финальным статусом не может быть удалена.';
                 END IF;
@@ -261,9 +261,9 @@ class Mariadb_Plugin
             BEFORE UPDATE ON `{$wpdb->prefix}cashback_transactions`
             FOR EACH ROW
             BEGIN
-                IF OLD.order_status = 'Сумма переведена в доступный баланс' THEN
+                IF OLD.order_status = 'Зачислено на баланс' THEN
                     SIGNAL SQLSTATE '45000'
-                    SET MESSAGE_TEXT = 'Изменение запрещено: статус \"Сумма переведена в доступный баланс\" является финальным.';
+                    SET MESSAGE_TEXT = 'Изменение запрещено: статус \"Зачислено на баланс\" является финальным.';
                 END IF;
             END;",
 
@@ -336,7 +336,7 @@ class Mariadb_Plugin
 
                 UPDATE `{$wpdb->prefix}cashback_transactions`
                 SET
-                    order_status = 'Сумма переведена в доступный баланс',
+                    order_status = 'Зачислено на баланс',
                     updated_at = CURRENT_TIMESTAMP
                 WHERE
                     order_status = 'Подтвержден'
