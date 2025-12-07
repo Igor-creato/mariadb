@@ -55,7 +55,6 @@ class Mariadb_Plugin
         $instance->create_tables();
         $instance->create_triggers();
         $instance->create_events();
-        $instance->upgrade_schema();
         $instance->initialize_existing_users();
     }
 
@@ -359,53 +358,6 @@ class Mariadb_Plugin
         }
     }
 
-    /**
-     * Обновление схемы базы данных
-     */
-    private function upgrade_schema()
-    {
-        global $wpdb;
-
-        // Добавление CHECK ограничения к cashback_rate (игнорируем если уже существует)
-        $wpdb->query("ALTER TABLE `{$wpdb->prefix}cashback_user_profile` ADD CONSTRAINT `chk_cashback_rate` CHECK (cashback_rate BETWEEN 0.00 AND 100.00);");
-
-        // Проверка существования колонки applied_cashback_rate
-        $column_exists = $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND COLUMN_NAME = %s",
-            $wpdb->prefix . 'cashback_transactions',
-            'applied_cashback_rate'
-        ));
-
-        if (!$column_exists) {
-            // Добавление новой колонки applied_cashback_rate в cashback_transactions
-            $wpdb->query("ALTER TABLE `{$wpdb->prefix}cashback_transactions`
-                ADD COLUMN `applied_cashback_rate` DECIMAL(5,2) DEFAULT 60.00
-                COMMENT 'Процент кэшбэка на момент создания транзакции',
-                ADD CONSTRAINT `chk_applied_cashback_rate_range`
-                CHECK (`applied_cashback_rate` BETWEEN 0.00 AND 100.00);");
-        }
-
-        // Обновление всех существующих записей на значение по умолчанию 60.00
-        $wpdb->query("UPDATE `{$wpdb->prefix}cashback_transactions`
-            SET `applied_cashback_rate` = 60.00;");
-
-        // Миграция кодировки таблиц к utf8mb4_unicode_ci
-        $tables = [
-            'cashback_payout_requests',
-            'cashback_transactions',
-            'cashback_unregistered_transactions',
-            'cashback_user_balance',
-            'cashback_webhooks',
-            'cashback_user_profile'
-        ];
-
-        foreach ($tables as $table) {
-            $wpdb->query("ALTER TABLE `{$wpdb->prefix}{$table}` ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;");
-        }
-
-        // Здесь можно добавить другие миграции, которые будут применяться при каждой активации
-    }
 
     /**
      * Инициализация существующих пользователей
