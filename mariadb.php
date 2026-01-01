@@ -4,7 +4,7 @@
  * Plugin Name: Cashback Mariadb
  * Description: Плагин для создания таблиц кэшбэка, триггеров и событий в базе данных.
  * Version: 1.0.1
- * Author: Kilo Code
+ * Author: Cashback
  * License: GPL v2 or later
  * Text Domain: mariadb-cashback
  */

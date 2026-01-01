@@ -1,0 +1,25 @@
+/* Стили для админки */
+.affiliate-url-param-group {
+    background: #f9f9f9;
+    margin: 0 !important;
+}
+
+.affiliate-url-param-group:last-child {
+    border-bottom: none !important;
+}
+
+.affiliate-url-param-group .form-field-wide {
+    margin-bottom: 0;
+}
+
+.affiliate-url-param-group p._affiliate_param_1_key_field,
+.affiliate-url-param-group p._affiliate_param_2_key_field,
+.affiliate-url-param-group p._affiliate_param_3_key_field {
+    margin-bottom: 8px !important;
+}
+
+.affiliate-url-param-group p._affiliate_param_1_value_field,
+.affiliate-url-param-group p._affiliate_param_2_value_field,
+.affiliate-url-param-group p._affiliate_param_3_value_field {
+    margin-bottom: 0 !important;
+}
