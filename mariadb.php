@@ -133,7 +133,7 @@ class Mariadb_Plugin
         // Таблица cashback_user_balance
         $table4 = "CREATE TABLE `{$wpdb->prefix}cashback_user_balance` (
             `user_id` bigint(20) unsigned NOT NULL,
-            `available_balance` decimal(18,2) NOT NULL DEFAULT 0.00,
+            `available_balance` decimal(18,2) NOT NULL DEFAULT 0.0,
             `pending_balance` decimal(18,2) NOT NULL DEFAULT 0.00,
             `paid_balance` decimal(18,2) NOT NULL DEFAULT 0.00,
             PRIMARY KEY (`user_id`),
@@ -159,9 +159,12 @@ class Mariadb_Plugin
             `payout_full_name` varchar(255) DEFAULT NULL COMMENT 'ФИО для выплат',
             `cashback_rate` decimal(5,2) NOT NULL DEFAULT 60.00 COMMENT 'Процент кэшбэка (60 = 60%)' CHECK (cashback_rate BETWEEN 0.00 AND 100.00),
             `is_verified` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = реквизиты подтверждены',
-            `payout_details_updated_at` datetime DEFAULT NULL,
+            `payout_details_updated_at` datetime DEFAULT NULL COMMENT 'Дата и время обновления реквизитов',
             `min_payout_amount` decimal(18,2) DEFAULT 100.00 COMMENT 'Минимальная сумма выплаты',
             `opt_out` tinyint(1) NOT NULL DEFAULT 0,
+            `status` ENUM('active','noactive','banned','deleted') NOT NULL DEFAULT 'active' COMMENT 'Статус профиля',
+            `banned_at` DATETIME DEFAULT NULL COMMENT 'Дата и время бана',
+            `ban_reason` VARCHAR(255) DEFAULT NULL COMMENT 'Причина блокировки',
             `created_at` datetime DEFAULT current_timestamp(),
             `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp(),
             PRIMARY KEY (`user_id`),
@@ -175,6 +178,45 @@ class Mariadb_Plugin
         dbDelta($table4);
         dbDelta($table5);
         dbDelta($table6);
+
+        // Обновляем существующую таблицу, если у нее отсутствуют новые поля
+        $this->update_profile_table_structure();
+    }
+
+    /**
+     * Обновление структуры таблицы профиля пользователя для добавления новых полей
+     */
+    private function update_profile_table_structure()
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'cashback_user_profile';
+
+        // Проверяем, существуют ли новые колонки
+        $status_column = $wpdb->get_var("SHOW COLUMNS FROM `{$table_name}` LIKE 'status'");
+        $banned_at_column = $wpdb->get_var("SHOW COLUMNS FROM `{$table_name}` LIKE 'banned_at'");
+        $ban_reason_column = $wpdb->get_var("SHOW COLUMNS FROM `{$table_name}` LIKE 'ban_reason'");
+
+        $alter_queries = array();
+
+        // Добавляем колонки, если они не существуют
+        if (!$status_column) {
+            $alter_queries[] = "ADD COLUMN `status` ENUM('active','banned','deleted') NOT NULL DEFAULT 'active' COMMENT 'Статус профиля'";
+        }
+
+        if (!$banned_at_column) {
+            $alter_queries[] = "ADD COLUMN `banned_at` DATETIME DEFAULT NULL COMMENT 'Дата и время бана'";
+        }
+
+        if (!$ban_reason_column) {
+            $alter_queries[] = "ADD COLUMN `ban_reason` VARCHAR(255) DEFAULT NULL COMMENT 'Причина блокировки'";
+        }
+
+        // Выполняем ALTER запросы, если есть новые колонки
+        if (!empty($alter_queries)) {
+            $alter_query = "ALTER TABLE `{$table_name}` " . implode(", ", $alter_queries);
+            $wpdb->query($alter_query);
+        }
     }
 
     /**
@@ -401,8 +443,9 @@ class Mariadb_Plugin
                     'user_id' => $user_id,
                     'payout_method' => '',
                     'payout_account' => '',
+                    'status' => 'active' // Устанавливаем статус по умолчанию при создании новой записи
                 ),
-                array('%d', '%s', '%s')
+                array('%d', '%s', '%s', '%s')
             );
         }
 
