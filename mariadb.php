@@ -160,7 +160,7 @@ class Mariadb_Plugin
             `cashback_rate` decimal(5,2) NOT NULL DEFAULT 60.00 COMMENT 'Процент кэшбэка (60 = 60%)' CHECK (cashback_rate BETWEEN 0.00 AND 100.00),
             `is_verified` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = реквизиты подтверждены',
             `payout_details_updated_at` datetime DEFAULT NULL,
-            `min_payout_amount` decimal(18,2) DEFAULT NULL,
+            `min_payout_amount` decimal(18,2) DEFAULT 100.00 COMMENT 'Минимальная сумма выплаты',
             `opt_out` tinyint(1) NOT NULL DEFAULT 0,
             `created_at` datetime DEFAULT current_timestamp(),
             `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp(),
