@@ -45,6 +45,9 @@ class Mariadb_Plugin
         // Инициализация плагина
         add_action('user_register', array($this, 'add_user_to_profile'));
         add_action('user_register', array($this, 'add_user_to_balance'));
+
+        // Подключение модуля вывода кэшбэка
+        require_once __DIR__ . '/cashback-withdrawal.php';
     }
 
     /**
@@ -57,6 +60,9 @@ class Mariadb_Plugin
         $instance->create_triggers();
         $instance->create_events();
         $instance->initialize_existing_users();
+
+        // Flush rewrite rules for new endpoints
+        flush_rewrite_rules();
     }
 
     /**
