@@ -111,6 +111,25 @@ class CashbackWithdrawal
     }
 
     /**
+     * Get minimum payout amount for user
+     *
+     * @param int $user_id
+     * @return float
+     */
+    private function get_min_payout_amount($user_id)
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'cashback_user_profile';
+        $min_payout_amount = $wpdb->get_var($wpdb->prepare(
+            "SELECT min_payout_amount FROM {$table_name} WHERE user_id = %d",
+            $user_id
+        ));
+
+        return (float) ($min_payout_amount ?: 100.00); // Default to 100.00 if not set
+    }
+
+    /**
      * Display content for the endpoint
      */
     public function endpoint_content()
@@ -122,12 +141,14 @@ class CashbackWithdrawal
         }
 
         $balance = $this->get_available_balance($user_id);
+        $min_payout_amount = $this->get_min_payout_amount($user_id);
 
         echo '<div class="cashback-withdrawal-container">';
         echo '<h2>' . __('Вывод кэшбэка', 'woocommerce') . '</h2>';
         echo '<div class="balance-display">';
         echo '<p>' . __('Доступный баланс:', 'woocommerce') . ' <span id="cashback-balance-amount" class="balance-amount ' . ($balance > 0 ? 'balance-green' : 'balance-gray') . '">' . wc_price($balance) . '</span></p>';
         echo '</div>';
+        echo '<p>' . __('Минимальная сумма выплаты:', 'woocommerce') . ' <span class="min-payout-amount">' . wc_price($min_payout_amount) . '</span></p>';
         echo '</div>';
     }
 
