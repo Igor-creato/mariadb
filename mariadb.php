@@ -1,7 +1,7 @@
 <?php
 
 /**
- * Plugin Name: Mariadb Cashback Plugin
+ * Plugin Name: Cashback Mariadb
  * Description: Плагин для создания таблиц кэшбэка, триггеров и событий в базе данных.
  * Version: 1.0.1
  * Author: Kilo Code
