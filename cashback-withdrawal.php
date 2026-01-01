@@ -1,12 +1,5 @@
 <?php
 
-/**
- * Cashback Withdrawal Module for WooCommerce My Account
- *
- * This module adds a "Cashback Withdrawal" endpoint to the WooCommerce My Account page,
- * displaying the user's available balance from the wp_cashback_user_balance table.
- */
-
 if (!defined('ABSPATH')) {
     exit; // Exit if accessed directly
 }
@@ -154,5 +147,4 @@ class CashbackWithdrawal
     }
 }
 
-// Initialize the module
-CashbackWithdrawal::get_instance();
+// Инициализация будет происходить в основном файле плагина

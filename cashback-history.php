@@ -1,13 +1,5 @@
 <?php
 
-/**
- * Plugin Name: Cashback History
- * Description: Добавляет пункт меню "История покупок" в личный кабинет WooCommerce с данными из таблицы cashback_transactions.
- * Version: 1.0.0
- * Author: Cashback
- * License: GPL v2 or later
- */
-
 if (!defined('ABSPATH')) {
     exit; // Exit if accessed directly
 }
@@ -185,4 +177,4 @@ class CashbackHistory
     }
 }
 
-CashbackHistory::get_instance();
+// Инициализация будет происходить в основном файле плагина

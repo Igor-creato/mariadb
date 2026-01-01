@@ -1,18 +1,5 @@
 <?php
 
-/**
- * Plugin Name: Cashback WooCommerce Affiliate URL
- * Description: Добавляет настраиваемые параметры URL для внешних партнерских товаров с поддержкой динамического ID пользователя
- * Version: 1.0.0
- * Requires at least: 6.0
- * Requires PHP: 8.4
- * Author: Cashback
- * Text Domain: wc-affiliate-url-params
- * Domain Path: /languages
- * WC requires at least: 10.0
- * WC tested up to: 10.3.5
- */
-
 if (!defined('ABSPATH')) {
     exit;
 }
@@ -67,7 +54,7 @@ class WC_Affiliate_URL_Params
             $param_value = get_post_meta($post->ID, "_affiliate_param_{$i}_value", true);
 
             echo '<div class="affiliate-url-param-group" style="padding: 12px; border-bottom: 1px solid #f0f0f0;">';
-            echo '<p style="margin: 0 0 8px;"><strong>' .
+            echo '<p style="margin: 0 8px;"><strong>' .
                 sprintf(esc_html__('Параметр %d', 'wc-affiliate-url-params'), $i) . '</strong></p>';
 
             woocommerce_wp_text_input([
@@ -280,13 +267,6 @@ class WC_Affiliate_URL_Params
         );
     }
 }
-
-// Инициализация плагина
-add_action('plugins_loaded', function () {
-    if (class_exists('WooCommerce')) {
-        new WC_Affiliate_URL_Params();
-    }
-});
 
 // Объявление совместимости с HPOS
 add_action('before_woocommerce_init', function () {

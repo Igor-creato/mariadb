@@ -1,16 +1,5 @@
 <?php
 
-/**
- * Plugin Name: Cashback Mariadb
- * Description: Плагин для создания таблиц кэшбэка, триггеров и событий в базе данных.
- * Version: 1.0.1
- * Author: Cashback
- * License: GPL v2 or later
- * Text Domain: mariadb-cashback
- */
-
-define('MARIADB_PLUGIN_VERSION', '1.0.1');
-
 if (!defined('ABSPATH')) {
     exit; // Защита от прямого доступа
 }
@@ -45,9 +34,6 @@ class Mariadb_Plugin
         // Инициализация плагина
         add_action('user_register', array($this, 'add_user_to_profile'));
         add_action('user_register', array($this, 'add_user_to_balance'));
-
-        // Подключение модуля вывода кэшбэка
-        require_once __DIR__ . '/cashback-withdrawal.php';
     }
 
     /**
@@ -486,8 +472,5 @@ function mariadb_plugin_init()
     return Mariadb_Plugin::get_instance();
 }
 
-// Хук активации
-register_activation_hook(__FILE__, array('Mariadb_Plugin', 'activate'));
-
-// Запуск плагина
-mariadb_plugin_init();
+// Инициализация плагина при полной загрузке WordPress
+add_action('plugins_loaded', 'mariadb_plugin_init');
