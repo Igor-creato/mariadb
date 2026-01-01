@@ -110,11 +110,32 @@
 
       // Проверяем авторизацию
       if (!wcAffiliateParams.isLoggedIn) {
-        console.log('WC Affiliate: User not logged in, showing warning');
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        showAuthWarning($target, href);
-        return false;
+        console.log('WC Affiliate: User not logged in, checking element type');
+
+        // Проверяем, является ли элемент кнопкой/ссылкой для входа или регистрации
+        const isLoginOrRegisterElement =
+          $target.hasClass('login') ||
+          $target.hasClass('register') ||
+          $target.hasClass('wc-forward') ||
+          $target.attr('href')?.includes('login') ||
+          $target.attr('href')?.includes('register') ||
+          $target.attr('href')?.includes('my-account') ||
+          $target.text().toLowerCase().includes('войти') ||
+          $target.text().toLowerCase().includes('вход') ||
+          $target.text().toLowerCase().includes('регистрация') ||
+          $target.text().toLowerCase().includes('авторизоваться');
+
+        // Если это элемент для входа/регистрации, не показываем предупреждение
+        if (isLoginOrRegisterElement) {
+          console.log('WC Affiliate: Login/register element detected, allowing normal behavior');
+          return true;
+        } else {
+          console.log('WC Affiliate: Non-login element detected, showing warning');
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          showAuthWarning($target, href);
+          return false;
+        }
       } else {
         console.log('WC Affiliate: User logged in, replacing placeholder');
         // Если пользователь авторизован, заменяем плейсхолдер на ID
