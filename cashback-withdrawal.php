@@ -39,6 +39,9 @@ class CashbackWithdrawal
         add_filter('woocommerce_account_menu_items', array($this, 'add_menu_item'));
         add_action('woocommerce_account_cashback-withdrawal_endpoint', array($this, 'endpoint_content'));
         add_action('wp_enqueue_scripts', array($this, 'enqueue_styles'));
+        // AJAX обработчики для вывода кэшбэка
+        add_action('wp_ajax_process_cashback_withdrawal', array($this, 'process_cashback_withdrawal'));
+        add_action('wp_ajax_nopriv_process_cashback_withdrawal', array($this, 'process_cashback_withdrawal'));
     }
 
     /**
@@ -150,10 +153,113 @@ class CashbackWithdrawal
         echo '</div>';
         echo '<p>' . __('Минимальная сумма выплаты:', 'woocommerce') . ' <span class="min-payout-amount">' . wc_price($min_payout_amount) . '</span></p>';
         echo '</div>';
+
+        // Добавляем форму вывода кэшбэка
+        echo '<div class="cashback-withdrawal-form">';
+        echo '<form id="withdrawal-form">';
+        echo '<p class="form-row">';
+        echo '<label for="withdrawal-amount">' . __('Сумма вывода', 'woocommerce') . ' <span class="required">*</span></label>';
+        echo '<input type="number" class="input-text" name="withdrawal_amount" id="withdrawal-amount" placeholder="' . __('Введите сумму', 'woocommerce') . '" value="" min="' . $min_payout_amount . '" max="' . $balance . '" step="0.01" />';
+        echo '</p>';
+        echo '<p class="form-row">';
+        echo '<button type="submit" class="button alt" id="withdrawal-submit" name="withdrawal_submit" value="' . esc_attr__('Вывести', 'woocommerce') . '">' . __('Вывести', 'woocommerce') . '</button>';
+        echo '</p>';
+        echo '<div id="withdrawal-messages"></div>';
+        echo '</form>';
+        echo '</div>';
+
+        // Добавляем nonce для безопасности
+        wp_nonce_field('cashback_withdrawal_nonce', 'withdrawal_nonce');
     }
 
     /**
-     * Enqueue custom styles
+     * Process cashback withdrawal request
+     */
+    public function process_cashback_withdrawal()
+    {
+        // Проверяем nonce для безопасности
+        if (!wp_verify_nonce($_POST['nonce'], 'cashback_withdrawal_nonce')) {
+            wp_die('Security check failed');
+        }
+
+        // Проверяем, авторизован ли пользователь
+        if (!is_user_logged_in()) {
+            wp_send_json_error(__('Вы должны быть авторизованы для выполнения этого действия.', 'woocommerce'));
+            return;
+        }
+
+        $user_id = get_current_user_id();
+        $withdrawal_amount = floatval($_POST['withdrawal_amount']);
+
+        // Получаем минимальную сумму вывода для пользователя
+        $min_payout_amount = $this->get_min_payout_amount($user_id);
+        // Получаем доступный баланс пользователя
+        $available_balance = $this->get_available_balance($user_id);
+
+        // Проверяем, что введенная сумма больше или равна минимальной
+        if ($withdrawal_amount < $min_payout_amount) {
+            wp_send_json_error(__('Вы ввели сумму меньше минимально допустимой, введите другую сумму', 'woocommerce'));
+            return;
+        }
+
+        // Проверяем, что введенная сумма не превышает доступный баланс
+        if ($withdrawal_amount > $available_balance) {
+            wp_send_json_error(__('Вы ввели сумму больше доступной, введите другую сумму', 'woocommerce'));
+            return;
+        }
+
+        global $wpdb;
+        $table_name_balance = $wpdb->prefix . 'cashback_user_balance';
+        $table_name_requests = $wpdb->prefix . 'cashback_payout_requests';
+
+        // Используем транзакцию для обеспечения безопасности и целостности данных
+        $wpdb->query('START TRANSACTION');
+
+        try {
+            // Обновляем баланс: уменьшаем available_balance и увеличиваем pending_balance
+            $result = $wpdb->query($wpdb->prepare(
+                "UPDATE {$table_name_balance}
+                SET available_balance = available_balance - %f,
+                    pending_balance = pending_balance + %f
+                WHERE user_id = %d",
+                $withdrawal_amount,
+                $withdrawal_amount,
+                $user_id
+            ));
+
+            if ($result === false) {
+                throw new Exception('Failed to update user balance');
+            }
+
+            // Добавляем запись в таблицу запросов на вывод
+            $result = $wpdb->insert(
+                $table_name_requests,
+                array(
+                    'user_id' => $user_id,
+                    'total_amount' => $withdrawal_amount,
+                    'status' => 'waiting'
+                ),
+                array('%d', '%f', '%s')
+            );
+
+            if ($result === false) {
+                throw new Exception('Failed to insert payout request');
+            }
+
+            // Фиксируем транзакцию
+            $wpdb->query('COMMIT');
+
+            // Отправляем успешный ответ
+            wp_send_json_success(sprintf(__('Заявка на вывод кэшбэка на сумму %s руб. успешно добавлена', 'woocommerce'), number_format($withdrawal_amount, 2, '.', ' ')));
+        } catch (Exception $e) {
+            // Откатываем транзакцию в случае ошибки
+            $wpdb->query('ROLLBACK');
+            wp_send_json_error(__('Ошибка при обработке запроса на вывод. Пожалуйста, попробуйте еще раз.', 'woocommerce'));
+        }
+    }
+
+    /**
+     * Enqueue custom styles and scripts
      */
     public function enqueue_styles()
     {
@@ -164,6 +270,21 @@ class CashbackWithdrawal
                 array(),
                 '1.0.0'
             );
+
+            // Подключаем скрипты для обработки формы вывода
+            wp_enqueue_script(
+                'cashback-withdrawal-js',
+                plugins_url('assets/js/frontend.js', __FILE__),
+                array('jquery'),
+                '1.0.0',
+                true
+            );
+
+            // Передаем AJAX URL в JavaScript
+            wp_localize_script('cashback-withdrawal-js', 'cashback_ajax', array(
+                'ajax_url' => admin_url('admin-ajax.php'),
+                'nonce' => wp_create_nonce('cashback_withdrawal_nonce')
+            ));
         }
     }
 }

@@ -238,3 +238,80 @@
     }
   }
 })(jQuery);
+
+// Frontend JavaScript for the cashback withdrawal functionality
+jQuery(document).ready(function ($) {
+  // Обработчик отправки формы вывода кэшбэка
+  $('#withdrawal-form').on('submit', function (e) {
+    e.preventDefault(); // Предотвращаем стандартную отправку формы
+
+    // Блокируем кнопку отправки и очищаем предыдущие сообщения
+    var submitBtn = $('#withdrawal-submit');
+    var withdrawalAmount = $('#withdrawal-amount');
+
+    // Проверяем, заблокирована ли форма (чтобы избежать двойного нажатия)
+    if (submitBtn.prop('disabled')) {
+      return false;
+    }
+
+    // Получаем введенную сумму
+    var amount = parseFloat(withdrawalAmount.val());
+
+    // Проверяем, введена ли сумма
+    if (isNaN(amount) || amount <= 0) {
+      $('#withdrawal-messages').html(
+        '<div class="error-message">' +
+          'Пожалуйста, введите корректную сумму для вывода.' +
+          '</div>',
+      );
+      return false;
+    }
+
+    // Блокируем форму во время обработки
+    submitBtn.prop('disabled', true);
+    withdrawalAmount.prop('disabled', true);
+    submitBtn.val('Обработка...'); // Меняем текст кнопки
+
+    // Подготовка данных для AJAX запроса
+    var data = {
+      action: 'process_cashback_withdrawal',
+      withdrawal_amount: amount,
+      nonce: cashback_ajax.nonce,
+    };
+
+    // Отправляем AJAX запрос
+    $.ajax({
+      url: cashback_ajax.ajax_url,
+      type: 'POST',
+      data: data,
+      success: function (response) {
+        if (response.success) {
+          // Успешный вывод
+          $('#withdrawal-messages').html(
+            '<div class="success-message">' + response.data + '</div>',
+          );
+
+          // Очищаем поле ввода
+          withdrawalAmount.val('');
+        } else {
+          // Ошибка
+          $('#withdrawal-messages').html('<div class="error-message">' + response.data + '</div>');
+        }
+      },
+      error: function () {
+        // Ошибка соединения
+        $('#withdrawal-messages').html(
+          '<div class="error-message">' +
+            'Ошибка соединения. Пожалуйста, попробуйте еще раз.' +
+            '</div>',
+        );
+      },
+      complete: function () {
+        // Разблокируем форму после завершения запроса
+        submitBtn.prop('disabled', false);
+        withdrawalAmount.prop('disabled', false);
+        submitBtn.val('Вывести'); // Возвращаем первоначальный текст кнопки
+      },
+    });
+  });
+});
