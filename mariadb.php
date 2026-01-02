@@ -65,7 +65,7 @@ class Mariadb_Plugin
             `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
             `user_id` bigint(20) unsigned NOT NULL,
             `total_amount` decimal(18,2) NOT NULL,
-            `status` enum('Запрошена','Выплачен') NOT NULL DEFAULT 'Запрошена',
+            `status` enum('В обработке','Выплачен') NOT NULL DEFAULT 'В обработке',
             `created_at` datetime DEFAULT current_timestamp(),
             `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp(),
             PRIMARY KEY (`id`),
@@ -148,7 +148,7 @@ class Mariadb_Plugin
             `payout_details_updated_at` datetime DEFAULT NULL COMMENT 'Дата и время обновления реквизитов',
             `min_payout_amount` decimal(18,2) DEFAULT 100.00 COMMENT 'Минимальная сумма выплаты',
             `opt_out` tinyint(1) NOT NULL DEFAULT 0,
-            `status` ENUM('active','noactive','banned','deleted') NOT NULL DEFAULT 'active' COMMENT 'Статус профиля',
+            `status` ENUM('Активный','Не активный','Забанен','Удален') NOT NULL DEFAULT 'Активный' COMMENT 'Статус профиля',
             `banned_at` DATETIME DEFAULT NULL COMMENT 'Дата и время бана',
             `ban_reason` VARCHAR(255) DEFAULT NULL COMMENT 'Причина блокировки',
             `last_active_at` DATETIME DEFAULT NULL COMMENT 'Дата и время последней активности',
@@ -362,9 +362,9 @@ class Mariadb_Plugin
             DO
             BEGIN
                 UPDATE `{$wpdb->prefix}cashback_user_profile`
-                SET status = 'noactive'
+                SET status = 'Не активный'
                 WHERE
-                    status = 'active'
+                    status = 'Активный'
                     AND (
                         -- Была активность: проверяем last_active_at
                         (last_active_at IS NOT NULL AND last_active_at < DATE_SUB(NOW(), INTERVAL 6 MONTH))
