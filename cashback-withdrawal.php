@@ -178,53 +178,77 @@ class CashbackWithdrawal
     /**
      * Process cashback withdrawal request
      */
+    /**
+    /**
+     * Process cashback withdrawal request with concurrency-safe balance handling.
+     * Allows multiple withdrawal requests (as long as balance permits),
+     * but prevents race conditions during balance deduction.
+     */
     public function process_cashback_withdrawal()
     {
-        // Проверяем nonce для безопасности
-        if (!wp_verify_nonce($_POST['nonce'], 'cashback_withdrawal_nonce')) {
-            wp_die('Security check failed');
+        // === 1. Security: nonce and authentication ===
+        if (!wp_verify_nonce($_POST['nonce'] ?? '', 'cashback_withdrawal_nonce')) {
+            wp_die('Security check failed', 403);
         }
 
-        // Проверяем, авторизован ли пользователь
         if (!is_user_logged_in()) {
             wp_send_json_error(__('Вы должны быть авторизованы для выполнения этого действия.', 'woocommerce'));
             return;
         }
 
         $user_id = get_current_user_id();
-        $withdrawal_amount = floatval($_POST['withdrawal_amount']);
+        $withdrawal_amount = floatval($_POST['withdrawal_amount'] ?? 0);
 
-        // Получаем минимальную сумму вывода для пользователя
+        // === 2. Input validation ===
         $min_payout_amount = $this->get_min_payout_amount($user_id);
-        // Получаем доступный баланс пользователя
         $available_balance = $this->get_available_balance($user_id);
 
-        // Проверяем, что введенная сумма больше или равна минимальной
+        if ($withdrawal_amount <= 0) {
+            wp_send_json_error(__('Сумма вывода должна быть положительной.', 'woocommerce'));
+            return;
+        }
+
         if ($withdrawal_amount < $min_payout_amount) {
             wp_send_json_error(__('Вы ввели сумму меньше минимально допустимой, введите другую сумму', 'woocommerce'));
             return;
         }
 
-        // Проверяем, что введенная сумма не превышает доступный баланс
         if ($withdrawal_amount > $available_balance) {
             wp_send_json_error(__('Вы ввели сумму больше доступной, введите другую сумму', 'woocommerce'));
             return;
         }
 
+        // === 3. Atomic balance deduction with row-level locking ===
         global $wpdb;
-        $table_name_balance = $wpdb->prefix . 'cashback_user_balance';
-        $table_name_requests = $wpdb->prefix . 'cashback_payout_requests';
+        $table_balance = $wpdb->prefix . 'cashback_user_balance';
+        $table_requests = $wpdb->prefix . 'cashback_payout_requests';
 
-        // Используем транзакцию для обеспечения безопасности и целостности данных
         $wpdb->query('START TRANSACTION');
 
         try {
-            // Обновляем баланс: уменьшаем available_balance и увеличиваем pending_balance
+            // 🔒 CRITICAL: Lock the user's balance row to prevent race conditions
+            $user_balance = $wpdb->get_row($wpdb->prepare(
+                "SELECT available_balance, pending_balance
+             FROM {$table_balance}
+             WHERE user_id = %d FOR UPDATE",
+                $user_id
+            ));
+
+            if (!$user_balance) {
+                throw new Exception('User balance record not found');
+            }
+
+            // Re-check balance under lock (in case it changed after initial read)
+            if ($withdrawal_amount > $user_balance->available_balance) {
+                throw new Exception('Insufficient available balance after lock');
+            }
+
+            // 📝 Deduct from available, add to pending
             $result = $wpdb->query($wpdb->prepare(
-                "UPDATE {$table_name_balance}
-                SET available_balance = available_balance - %f,
-                    pending_balance = pending_balance + %f
-                WHERE user_id = %d",
+                "UPDATE {$table_balance}
+             SET available_balance = available_balance - %f,
+                 pending_balance = pending_balance + %f
+             WHERE user_id = %d",
                 $withdrawal_amount,
                 $withdrawal_amount,
                 $user_id
@@ -234,9 +258,9 @@ class CashbackWithdrawal
                 throw new Exception('Failed to update user balance');
             }
 
-            // Добавляем запись в таблицу запросов на вывод
+            // 📝 Create new withdrawal request (multiple are allowed)
             $result = $wpdb->insert(
-                $table_name_requests,
+                $table_requests,
                 array(
                     'user_id' => $user_id,
                     'total_amount' => $withdrawal_amount,
@@ -249,15 +273,26 @@ class CashbackWithdrawal
                 throw new Exception('Failed to insert payout request');
             }
 
-            // Фиксируем транзакцию
             $wpdb->query('COMMIT');
 
-            // Отправляем успешный ответ
-            wp_send_json_success(sprintf(__('Заявка на вывод кэшбэка на сумму %s руб. успешно добавлена', 'woocommerce'), number_format($withdrawal_amount, 2, '.', ' ')));
+            wp_send_json_success(sprintf(
+                __('Заявка на вывод кэшбэка на сумму %s руб. успешно добавлена', 'woocommerce'),
+                number_format($withdrawal_amount, 2, '.', ' ')
+            ));
         } catch (Exception $e) {
-            // Откатываем транзакцию в случае ошибки
             $wpdb->query('ROLLBACK');
-            wp_send_json_error(__('Ошибка при обработке запроса на вывод. Пожалуйста, попробуйте еще раз.', 'woocommerce'));
+            $error_message = $e->getMessage();
+
+            // Log unexpected errors
+            if ($error_message !== 'Insufficient available balance after lock') {
+                error_log("CashbackWithdrawal error for user {$user_id}: " . $error_message);
+            }
+
+            if ($error_message === 'Insufficient available balance after lock') {
+                wp_send_json_error(__('Недостаточно средств для вывода. Пожалуйста, обновите страницу и попробуйте снова.', 'woocommerce'));
+            } else {
+                wp_send_json_error(__('Ошибка при обработке запроса на вывод. Пожалуйста, попробуйте еще раз.', 'woocommerce'));
+            }
         }
     }
 
