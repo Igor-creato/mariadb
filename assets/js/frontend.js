@@ -293,6 +293,9 @@ jQuery(document).ready(function ($) {
 
           // Очищаем поле ввода
           withdrawalAmount.val('');
+
+          // Обновляем баланс пользователя через AJAX
+          updateBalanceDisplay();
         } else {
           // Ошибка
           $('#withdrawal-messages').html('<div class="error-message">' + response.data + '</div>');
@@ -315,3 +318,29 @@ jQuery(document).ready(function ($) {
     });
   });
 });
+
+/**
+ * Функция для обновления отображения баланса пользователя
+ */
+function updateBalanceDisplay() {
+  jQuery.ajax({
+    url: cashback_ajax.ajax_url,
+    type: 'POST',
+    data: {
+      action: 'get_user_balance',
+      nonce: cashback_ajax.nonce,
+    },
+    success: function (response) {
+      if (response.success) {
+        // Обновляем отображение баланса на странице
+        jQuery('#cashback-balance-amount').html(response.data.formatted_balance);
+
+        // Обновляем максимальное значение для поля ввода
+        jQuery('#withdrawal-amount').attr('max', response.data.balance);
+      }
+    },
+    error: function () {
+      console.log('Ошибка при обновлении баланса');
+    },
+  });
+}

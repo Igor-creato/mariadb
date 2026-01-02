@@ -42,6 +42,9 @@ class CashbackWithdrawal
         // AJAX обработчики для вывода кэшбэка
         add_action('wp_ajax_process_cashback_withdrawal', array($this, 'process_cashback_withdrawal'));
         add_action('wp_ajax_nopriv_process_cashback_withdrawal', array($this, 'process_cashback_withdrawal'));
+        // AJAX обработчик для обновления баланса
+        add_action('wp_ajax_get_user_balance', array($this, 'get_user_balance_ajax'));
+        add_action('wp_ajax_nopriv_get_user_balance', array($this, 'get_user_balance_ajax'));
     }
 
     /**
@@ -286,6 +289,26 @@ class CashbackWithdrawal
                 'nonce' => wp_create_nonce('cashback_withdrawal_nonce')
             ));
         }
+    }
+
+    /**
+     * AJAX обработчик для получения баланса пользователя
+     */
+    public function get_user_balance_ajax()
+    {
+        // Проверяем, авторизован ли пользователь
+        if (!is_user_logged_in()) {
+            wp_send_json_error(__('Вы должны быть авторизованы для выполнения этого действия.', 'woocommerce'));
+            return;
+        }
+
+        $user_id = get_current_user_id();
+        $balance = $this->get_available_balance($user_id);
+
+        wp_send_json_success(array(
+            'balance' => $balance,
+            'formatted_balance' => wc_price($balance)
+        ));
     }
 }
 
