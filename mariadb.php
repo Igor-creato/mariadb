@@ -90,7 +90,7 @@ class Mariadb_Plugin
             `user_id` bigint(20) unsigned NOT NULL,
             `order_number` varchar(255) NOT NULL,
             `offer_name` varchar(255) DEFAULT NULL,
-            `order_status` varchar(255) NOT NULL DEFAULT 'В ожидании',
+            `order_status` enum('waiting','completed','declined','balance') NOT NULL DEFAULT 'waiting',
             `partner` varchar(255) DEFAULT NULL,
             `sum_order` decimal(10,2) DEFAULT NULL,
             `commission` decimal(10,2) DEFAULT NULL,
@@ -113,7 +113,7 @@ class Mariadb_Plugin
             `user_id` varchar(255) NOT NULL,
             `order_number` varchar(255) NOT NULL,
             `offer_name` varchar(255) DEFAULT NULL,
-            `order_status` varchar(255) NOT NULL DEFAULT 'В ожидании',
+            `order_status`  enum('waiting','completed','declined','balance') NOT NULL DEFAULT 'waiting',
             `partner` varchar(255) DEFAULT NULL,
             `sum_order` decimal(10,2) DEFAULT NULL,
             `commission` decimal(10,2) DEFAULT NULL,
@@ -160,7 +160,7 @@ class Mariadb_Plugin
             `min_payout_amount` decimal(18,2) DEFAULT 100.00 COMMENT 'Минимальная сумма выплаты',
             `opt_out` tinyint(1) NOT NULL DEFAULT 0,
             `status` ENUM('active','noactive','banned','deleted') NOT NULL DEFAULT 'active' COMMENT 'Статус профиля',
-            `banned_at` DATETIME DEFAULT NULL COMMENT 'Дата и время бана',
+            `banned_at` DATETIME DEFAULT NULL COMMENT 'Дата и время блокировки',
             `ban_reason` VARCHAR(255) DEFAULT NULL COMMENT 'Причина блокировки',
             `last_active_at` DATETIME DEFAULT NULL COMMENT 'Дата и время последней активности',
             `created_at` datetime DEFAULT current_timestamp(),
@@ -257,7 +257,7 @@ class Mariadb_Plugin
             BEFORE DELETE ON `{$wpdb->prefix}cashback_transactions`
             FOR EACH ROW
             BEGIN
-                IF OLD.order_status = 'Зачислено на баланс' THEN
+                IF OLD.order_status = 'balance' THEN
                     SIGNAL SQLSTATE '45000'
                     SET MESSAGE_TEXT = 'Удаление запрещено: запись с финальным статусом не может быть удалена.';
                 END IF;
@@ -267,9 +267,9 @@ class Mariadb_Plugin
             BEFORE UPDATE ON `{$wpdb->prefix}cashback_transactions`
             FOR EACH ROW
             BEGIN
-                IF OLD.order_status = 'Зачислено на баланс' THEN
+                IF OLD.order_status = 'balance' THEN
                     SIGNAL SQLSTATE '45000'
-                    SET MESSAGE_TEXT = 'Изменение запрещено: статус \"Зачислено на баланс\" является финальным.';
+                    SET MESSAGE_TEXT = 'Изменение запрещено: запись с финальным статусом не может быть изменена.';
                 END IF;
             END;",
 
@@ -277,7 +277,7 @@ class Mariadb_Plugin
             BEFORE DELETE ON `{$wpdb->prefix}cashback_payout_requests`
             FOR EACH ROW
             BEGIN
-                IF OLD.status = 'Выплачен' THEN
+                IF OLD.status = 'payd' THEN
                     SIGNAL SQLSTATE '45000'
                     SET MESSAGE_TEXT = 'Удаление запрещено: выплаченная заявка не может быть удалена.';
                 END IF;
@@ -287,7 +287,7 @@ class Mariadb_Plugin
             BEFORE UPDATE ON `{$wpdb->prefix}cashback_payout_requests`
             FOR EACH ROW
             BEGIN
-                IF OLD.status = 'Выплачен' THEN
+                IF OLD.status = 'payd' THEN
                     SIGNAL SQLSTATE '45000'
                     SET MESSAGE_TEXT = 'Изменение запрещено: выплаченная заявка не может быть изменена.';
                 END IF;
@@ -333,7 +333,7 @@ class Mariadb_Plugin
                     SUM(cashback) AS add_amount
                 FROM `{$wpdb->prefix}cashback_transactions`
                 WHERE
-                    order_status = 'Подтвержден'
+                    order_status = 'completed'
                     AND updated_at <= DATE_SUB(NOW(), INTERVAL 14 DAY)
                     AND cashback IS NOT NULL
                 GROUP BY user_id;
@@ -350,10 +350,10 @@ class Mariadb_Plugin
 
                 UPDATE `{$wpdb->prefix}cashback_transactions`
                 SET
-                    order_status = 'Зачислено на баланс',
+                    order_status = 'balance',
                     updated_at = CURRENT_TIMESTAMP
                 WHERE
-                    order_status = 'Подтвержден'
+                    order_status = 'completed'
                     AND updated_at <= DATE_SUB(NOW(), INTERVAL 14 DAY)
                     AND cashback IS NOT NULL;
 
