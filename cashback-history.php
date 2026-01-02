@@ -86,7 +86,7 @@ class CashbackHistory
                 echo '<td>' . esc_html(date_i18n(get_option('date_format'), strtotime($transaction->created_at))) . '</td>';
                 echo '<td>' . esc_html($transaction->offer_name) . '</td>';
                 echo '<td>' . esc_html($transaction->cashback) . '</td>';
-                echo '<td>' . esc_html($transaction->order_status) . '</td>';
+                echo '<td>' . esc_html($this->get_status_label($transaction->order_status)) . '</td>';
                 echo '</tr>';
             }
 
@@ -158,7 +158,7 @@ class CashbackHistory
             $html .= '<td>' . esc_html(date_i18n(get_option('date_format'), strtotime($transaction->created_at))) . '</td>';
             $html .= '<td>' . esc_html($transaction->offer_name) . '</td>';
             $html .= '<td>' . esc_html($transaction->cashback) . '</td>';
-            $html .= '<td>' . esc_html($transaction->order_status) . '</td>';
+            $html .= '<td>' . esc_html($this->get_status_label($transaction->order_status)) . '</td>';
             $html .= '</tr>';
         }
 
@@ -173,6 +173,22 @@ class CashbackHistory
                 'ajax_url' => admin_url('admin-ajax.php'),
                 'nonce' => wp_create_nonce('load_page_transactions_nonce')
             ));
+        }
+    }
+
+    private function get_status_label($status)
+    {
+        switch ($status) {
+            case 'waiting':
+                return __('В ожидании', 'cashback-history');
+            case 'completed':
+                return __('Подтвержден', 'cashback-history');
+            case 'declined':
+                return __('Отклонен', 'cashback-history');
+            case 'balance':
+                return __('Зачислен на баланс', 'cashback-history');
+            default:
+                return esc_html($status);
         }
     }
 }
