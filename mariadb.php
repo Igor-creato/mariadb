@@ -151,6 +151,7 @@ class Mariadb_Plugin
             `status` ENUM('active','noactive','banned','deleted') NOT NULL DEFAULT 'active' COMMENT 'Статус профиля',
             `banned_at` DATETIME DEFAULT NULL COMMENT 'Дата и время бана',
             `ban_reason` VARCHAR(255) DEFAULT NULL COMMENT 'Причина блокировки',
+            `last_active_at` DATETIME DEFAULT NULL COMMENT 'Дата и время последней активности',
             `created_at` datetime DEFAULT current_timestamp(),
             `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp(),
             PRIMARY KEY (`user_id`),
@@ -164,46 +165,8 @@ class Mariadb_Plugin
         dbDelta($table4);
         dbDelta($table5);
         dbDelta($table6);
-
-        // Обновляем существующую таблицу, если у нее отсутствуют новые поля
-        $this->update_profile_table_structure();
     }
 
-    /**
-     * Обновление структуры таблицы профиля пользователя для добавления новых полей
-     */
-    private function update_profile_table_structure()
-    {
-        global $wpdb;
-
-        $table_name = $wpdb->prefix . 'cashback_user_profile';
-
-        // Проверяем, существуют ли новые колонки
-        $status_column = $wpdb->get_var("SHOW COLUMNS FROM `{$table_name}` LIKE 'status'");
-        $banned_at_column = $wpdb->get_var("SHOW COLUMNS FROM `{$table_name}` LIKE 'banned_at'");
-        $ban_reason_column = $wpdb->get_var("SHOW COLUMNS FROM `{$table_name}` LIKE 'ban_reason'");
-
-        $alter_queries = array();
-
-        // Добавляем колонки, если они не существуют
-        if (!$status_column) {
-            $alter_queries[] = "ADD COLUMN `status` ENUM('active','banned','deleted') NOT NULL DEFAULT 'active' COMMENT 'Статус профиля'";
-        }
-
-        if (!$banned_at_column) {
-            $alter_queries[] = "ADD COLUMN `banned_at` DATETIME DEFAULT NULL COMMENT 'Дата и время бана'";
-        }
-
-        if (!$ban_reason_column) {
-            $alter_queries[] = "ADD COLUMN `ban_reason` VARCHAR(255) DEFAULT NULL COMMENT 'Причина блокировки'";
-        }
-
-        // Выполняем ALTER запросы, если есть новые колонки
-        if (!empty($alter_queries)) {
-            $alter_query = "ALTER TABLE `{$table_name}` " . implode(", ", $alter_queries);
-            $wpdb->query($alter_query);
-        }
-    }
 
     /**
      * Создание триггеров

@@ -4,7 +4,7 @@
  * Plugin Name: Cashback Plugin
  * Description: Объединенный плагин для системы кэшбэка и аффилиат-партнерства
  * Version: 1.0.0
- * Author: Plugin Developer
+ * Author: Cashback
  * Text Domain: cashback-plugin
  */
 
