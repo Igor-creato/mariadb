@@ -165,6 +165,10 @@ class Mariadb_Plugin
         dbDelta($table4);
         dbDelta($table5);
         dbDelta($table6);
+
+        // Создаем индекс для таблицы cashback_user_profile отдельно
+        $index_sql = "ALTER TABLE `{$wpdb->prefix}cashback_user_profile` ADD INDEX idx_active_check (status, last_active_at, created_at);";
+        $wpdb->query($index_sql);
     }
 
 
@@ -349,6 +353,26 @@ class Mariadb_Plugin
             ENABLE
             DO DELETE FROM `{$wpdb->prefix}cashback_webhooks`
             WHERE received_at < NOW() - INTERVAL 6 MONTH;",
+
+            "CREATE EVENT IF NOT EXISTS `{$wpdb->prefix}cashback_ev_mark_inactive_profiles`
+            ON SCHEDULE EVERY 1 DAY
+            STARTS CURRENT_TIMESTAMP
+            ON COMPLETION PRESERVE
+            ENABLE
+            DO
+            BEGIN
+                UPDATE `{$wpdb->prefix}cashback_user_profile`
+                SET status = 'noactive'
+                WHERE
+                    status = 'active'
+                    AND (
+                        -- Была активность: проверяем last_active_at
+                        (last_active_at IS NOT NULL AND last_active_at < DATE_SUB(NOW(), INTERVAL 6 MONTH))
+                        OR
+                        -- Никогда не было активности: смотрим по дате создания профиля
+                        (last_active_at IS NULL AND created_at < DATE_SUB(NOW(), INTERVAL 6 MONTH))
+                    );
+            END;"
         ];
 
         foreach ($events as $event) {
