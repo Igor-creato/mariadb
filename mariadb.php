@@ -31,8 +31,7 @@ class Mariadb_Plugin
     private function __construct()
     {
         // Инициализация плагина
-        add_action('user_register', array($this, 'add_user_to_profile'));
-        add_action('user_register', array($this, 'add_user_to_balance'));
+        add_action('user_register', array($this, 'add_user_to_cashback_tables'));
     }
 
     /**
@@ -420,7 +419,7 @@ class Mariadb_Plugin
         }
 
         foreach ($users as $user_id) {
-            $result = $this->add_user_to_profile($user_id);
+            $result = $this->add_user_to_cashback_tables($user_id);
             if (!$result) {
                 throw new Exception("Failed to initialize user {$user_id}. Error: " . $wpdb->last_error);
             }
@@ -436,12 +435,17 @@ class Mariadb_Plugin
     {
         global $wpdb;
 
+        error_log('Mariadb Plugin: Adding user profile for user ID: ' . $user_id);
+
         $table_name = $wpdb->prefix . 'cashback_user_profile';
 
+        // Проверяем, существует ли уже запись
         $exists = $wpdb->get_var($wpdb->prepare(
             "SELECT COUNT(*) FROM {$table_name} WHERE user_id = %d",
             $user_id
         ));
+
+        error_log('Mariadb Plugin: Profile exists check result: ' . $exists . ' for user ID: ' . $user_id);
 
         if (!$exists) {
             $result = $wpdb->insert(
@@ -453,10 +457,14 @@ class Mariadb_Plugin
                 array('%d', '%s')
             );
 
-            if (!$result) {
+            if ($result === false) {
                 error_log('Mariadb Plugin Error: Failed to insert user profile for user ' . $user_id . '. Error: ' . $wpdb->last_error);
                 return false;
+            } else {
+                error_log('Mariadb Plugin: Successfully inserted user profile for user ID: ' . $user_id);
             }
+        } else {
+            error_log('Mariadb Plugin: User profile already exists for user ID: ' . $user_id);
         }
 
         return $this->add_user_to_balance($user_id);
@@ -469,37 +477,72 @@ class Mariadb_Plugin
     {
         global $wpdb;
 
+        error_log('Mariadb Plugin: Adding user balance for user ID: ' . $user_id);
+
         $table_name = $wpdb->prefix . 'cashback_user_balance';
 
+        // Проверяем, существует ли уже запись
         $exists = $wpdb->get_var($wpdb->prepare(
             "SELECT COUNT(*) FROM {$table_name} WHERE user_id = %d",
             $user_id
         ));
+
+        error_log('Mariadb Plugin: Balance exists check result: ' . $exists . ' for user ID: ' . $user_id);
 
         if (!$exists) {
             $result = $wpdb->insert(
                 $table_name,
                 array(
                     'user_id' => $user_id,
+                    'available_balance' => 0.0,
+                    'pending_balance' => 0.0,
+                    'paid_balance' => 0.0
                 ),
-                array('%d')
+                array('%d', '%f', '%f', '%f')
             );
 
-            if (!$result) {
+            if ($result === false) {
                 error_log('Mariadb Plugin Error: Failed to insert user balance for user ' . $user_id . '. Error: ' . $wpdb->last_error);
                 return false;
+            } else {
+                error_log('Mariadb Plugin: Successfully inserted user balance for user ID: ' . $user_id);
             }
+        } else {
+            error_log('Mariadb Plugin: User balance already exists for user ID: ' . $user_id);
         }
 
         return true;
+    }
+
+    /**
+     * Добавление пользователя в таблицы кэшбэка при регистрации
+     */
+    public function add_user_to_cashback_tables($user_id)
+    {
+        error_log('Mariadb Plugin: Processing user registration for user ID: ' . $user_id);
+
+        // Сначала добавляем в профиль, который в свою очередь добавит в баланс
+        $result = $this->add_user_to_profile($user_id);
+
+        if ($result) {
+            error_log('Mariadb Plugin: Successfully added user ' . $user_id . ' to cashback tables');
+        } else {
+            error_log('Mariadb Plugin: Failed to add user ' . $user_id . ' to cashback tables');
+        }
+
+        return $result;
     }
 }
 
 // Инициализация плагина
 function mariadb_plugin_init()
 {
-    return Mariadb_Plugin::get_instance();
+    $instance = Mariadb_Plugin::get_instance();
+    return $instance;
 }
 
 // Инициализация плагина при полной загрузке WordPress
 add_action('plugins_loaded', 'mariadb_plugin_init');
+
+// Также добавим инициализацию при инициализации WordPress, чтобы убедиться, что хуки зарегистрированы
+add_action('init', 'mariadb_plugin_init');
