@@ -45,13 +45,18 @@ class Mariadb_Plugin
         // Подавляем вывод при создании таблиц и триггеров
         ob_start();
 
-        $instance->create_tables();
-        $instance->create_triggers();
-        $instance->create_events();
-        $instance->initialize_existing_users();
+        try {
+            $instance->create_tables();
+            $instance->create_triggers();
+            $instance->create_events();
+            $instance->initialize_existing_users();
 
-        // Очищаем буфер вывода (если что-то было выведено)
-        ob_end_clean();
+            ob_end_clean();
+        } catch (Exception $e) {
+            ob_end_clean();
+            error_log('Mariadb Plugin Activation Error: ' . $e->getMessage());
+            wp_die('Ошибка активации плагина Mariadb: ' . esc_html($e->getMessage()));
+        }
 
         // Flush rewrite rules for new endpoints
         flush_rewrite_rules();
@@ -71,7 +76,7 @@ class Mariadb_Plugin
             `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
             `user_id` bigint(20) unsigned NOT NULL,
             `total_amount` decimal(18,2) NOT NULL,
-            `status` enum('В обработке','Выплачен') NOT NULL DEFAULT 'В обработке',
+            `status` enum('waiting','payd','declined') NOT NULL DEFAULT 'waiting',
             `created_at` datetime DEFAULT current_timestamp(),
             `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp(),
             PRIMARY KEY (`id`),
@@ -172,6 +177,8 @@ class Mariadb_Plugin
         dbDelta($table4);
         dbDelta($table5);
         dbDelta($table6);
+
+        error_log('Mariadb Plugin: Tables created successfully');
     }
 
     /**
@@ -194,7 +201,10 @@ class Mariadb_Plugin
         ];
 
         foreach ($drop_triggers as $drop_trigger) {
-            @$wpdb->query($drop_trigger); // Подавляем уведомления об ошибках
+            $result = $wpdb->query($drop_trigger);
+            if ($result === false) {
+                error_log('Mariadb Plugin Warning: Failed to drop trigger. Error: ' . $wpdb->last_error);
+            }
         }
 
         $triggers = [
@@ -284,9 +294,20 @@ class Mariadb_Plugin
             END;",
         ];
 
+        $failed_triggers = [];
         foreach ($triggers as $trigger) {
-            @$wpdb->query($trigger); // Подавляем уведомления об ошибках
+            $result = $wpdb->query($trigger);
+            if ($result === false) {
+                $failed_triggers[] = $wpdb->last_error;
+                error_log('Mariadb Plugin Error: Failed to create trigger. Error: ' . $wpdb->last_error);
+            }
         }
+
+        if (!empty($failed_triggers)) {
+            throw new Exception('Failed to create one or more triggers: ' . implode('; ', $failed_triggers));
+        }
+
+        error_log('Mariadb Plugin: All triggers created successfully');
     }
 
     /**
@@ -365,8 +386,22 @@ class Mariadb_Plugin
             END;"
         ];
 
+        $failed_events = [];
         foreach ($events as $event) {
-            @$wpdb->query($event); // Подавляем уведомления об ошибках
+            $result = $wpdb->query($event);
+            if ($result === false) {
+                $error = $wpdb->last_error;
+                // События могут не поддерживаться на хостинге, логируем но не критично
+                error_log('Mariadb Plugin Warning: Failed to create event. This may be normal if your hosting does not support MySQL events. Error: ' . $error);
+                $failed_events[] = $error;
+            }
+        }
+
+        // События опциональны, не прерываем активацию
+        if (!empty($failed_events)) {
+            error_log('Mariadb Plugin: Some events failed to create (non-critical): ' . implode('; ', $failed_events));
+        } else {
+            error_log('Mariadb Plugin: All events created successfully');
         }
     }
 
@@ -378,9 +413,20 @@ class Mariadb_Plugin
         global $wpdb;
 
         $users = get_users(array('fields' => 'ID'));
-        foreach ($users as $user_id) {
-            $this->add_user_to_profile($user_id);
+
+        if (empty($users)) {
+            error_log('Mariadb Plugin: No existing users to initialize');
+            return;
         }
+
+        foreach ($users as $user_id) {
+            $result = $this->add_user_to_profile($user_id);
+            if (!$result) {
+                throw new Exception("Failed to initialize user {$user_id}. Error: " . $wpdb->last_error);
+            }
+        }
+
+        error_log('Mariadb Plugin: Successfully initialized ' . count($users) . ' existing users');
     }
 
     /**
@@ -398,7 +444,7 @@ class Mariadb_Plugin
         ));
 
         if (!$exists) {
-            $wpdb->insert(
+            $result = $wpdb->insert(
                 $table_name,
                 array(
                     'user_id' => $user_id,
@@ -406,9 +452,14 @@ class Mariadb_Plugin
                 ),
                 array('%d', '%s')
             );
+
+            if (!$result) {
+                error_log('Mariadb Plugin Error: Failed to insert user profile for user ' . $user_id . '. Error: ' . $wpdb->last_error);
+                return false;
+            }
         }
 
-        $this->add_user_to_balance($user_id);
+        return $this->add_user_to_balance($user_id);
     }
 
     /**
@@ -426,14 +477,21 @@ class Mariadb_Plugin
         ));
 
         if (!$exists) {
-            $wpdb->insert(
+            $result = $wpdb->insert(
                 $table_name,
                 array(
                     'user_id' => $user_id,
                 ),
                 array('%d')
             );
+
+            if (!$result) {
+                error_log('Mariadb Plugin Error: Failed to insert user balance for user ' . $user_id . '. Error: ' . $wpdb->last_error);
+                return false;
+            }
         }
+
+        return true;
     }
 }
 
