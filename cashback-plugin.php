@@ -49,6 +49,7 @@ class CashbackPlugin
         $this->require_file('mariadb.php');
         $this->require_file('cashback-history.php');
         $this->require_file('cashback-withdrawal.php');
+        $this->require_file('history-payout.php');
         $this->require_file('wc-affiliate-url-params.php');
     }
 
@@ -69,6 +70,10 @@ class CashbackPlugin
 
         if (class_exists('CashbackWithdrawal')) {
             CashbackWithdrawal::get_instance();
+        }
+
+        if (class_exists('HistoryPayout')) {
+            HistoryPayout::get_instance();
         }
 
         // WC_Affiliate_URL_Params будет инициализирован через хук, когда будет доступен WooCommerce
