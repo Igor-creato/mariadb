@@ -6,6 +6,8 @@ if (!defined('ABSPATH')) {
 
 class CashbackHistory
 {
+    private const PER_PAGE = 10;
+    private const MAX_ALLOWED_PAGES = 1000; // Защита от DoS (макс. 10 000 записей)
 
     private static $instance = null;
 
@@ -41,10 +43,14 @@ class CashbackHistory
 
     public function add_menu_item($items)
     {
-        $logout = $items['customer-logout'];
-        unset($items['customer-logout']);
-        $items['cashback-history'] = __('История покупок', 'cashback-history');
-        $items['customer-logout'] = $logout;
+        if (isset($items['customer-logout'])) {
+            $logout = $items['customer-logout'];
+            unset($items['customer-logout']);
+            $items['cashback-history'] = __('История покупок', 'cashback-history');
+            $items['customer-logout'] = $logout;
+        } else {
+            $items['cashback-history'] = __('История покупок', 'cashback-history');
+        }
         return $items;
     }
 
@@ -52,40 +58,43 @@ class CashbackHistory
     {
         $user_id = get_current_user_id();
         if (!$user_id) {
-            echo '<p>' . __('Вы должны быть авторизованы.', 'cashback-history') . '</p>';
+            echo '<p>' . esc_html__('Вы должны быть авторизованы.', 'cashback-history') . '</p>';
             return;
         }
 
+        $per_page = self::PER_PAGE;
+        $total = $this->get_total_transactions($user_id);
+        $total_pages = $total > 0 ? ceil($total / $per_page) : 1;
+        $total_pages = min($total_pages, self::MAX_ALLOWED_PAGES);
+
         $page = isset($_GET['page']) ? intval($_GET['page']) : 1;
-        $per_page = 10;
+        $page = max(1, min($page, $total_pages));
         $offset = ($page - 1) * $per_page;
 
         $transactions = $this->get_transactions($user_id, $per_page, $offset);
-        $total = $this->get_total_transactions($user_id);
-        $total_pages = ceil($total / $per_page);
 
         echo '<div class="wd-cashback-history">';
-        echo '<h2>' . __('История покупок', 'cashback-history') . '</h2>';
+        echo '<h2>' . esc_html__('История покупок', 'cashback-history') . '</h2>';
 
         if (empty($transactions)) {
-            echo '<p>' . __('У вас нет истории покупок.', 'cashback-history') . '</p>';
+            echo '<p>' . esc_html__('У вас нет истории покупок.', 'cashback-history') . '</p>';
         } else {
             echo '<table class="wd-table shop_table_responsive">';
             echo '<thead>';
             echo '<tr>';
-            echo '<th>' . __('Дата', 'cashback-history') . '</th>';
-            echo '<th>' . __('Магазин', 'cashback-history') . '</th>';
-            echo '<th>' . __('Кэшбэк', 'cashback-history') . '</th>';
-            echo '<th>' . __('Статус', 'cashback-history') . '</th>';
+            echo '<th>' . esc_html__('Дата', 'cashback-history') . '</th>';
+            echo '<th>' . esc_html__('Магазин', 'cashback-history') . '</th>';
+            echo '<th>' . esc_html__('Кэшбэк', 'cashback-history') . '</th>';
+            echo '<th>' . esc_html__('Статус', 'cashback-history') . '</th>';
             echo '</tr>';
             echo '</thead>';
             echo '<tbody id="transactions-body">';
 
             foreach ($transactions as $transaction) {
                 echo '<tr>';
-                echo '<td>' . esc_html(date_i18n(get_option('date_format'), strtotime($transaction->created_at))) . '</td>';
-                echo '<td>' . esc_html($transaction->offer_name) . '</td>';
-                echo '<td>' . esc_html($transaction->cashback) . '</td>';
+                echo '<td>' . $this->format_date($transaction->created_at) . '</td>';
+                echo '<td>' . esc_html($transaction->offer_name ?? __('Н/Д', 'cashback-history')) . '</td>';
+                echo '<td>' . esc_html($transaction->cashback ?? '0.00') . '</td>';
                 echo '<td>' . esc_html($this->get_status_label($transaction->order_status)) . '</td>';
                 echo '</tr>';
             }
@@ -120,7 +129,11 @@ class CashbackHistory
         global $wpdb;
         $table_name = $wpdb->prefix . 'cashback_transactions';
         return $wpdb->get_results($wpdb->prepare(
-            "SELECT created_at, offer_name, cashback, order_status FROM {$table_name} WHERE user_id = %d ORDER BY created_at DESC LIMIT %d OFFSET %d",
+            "SELECT created_at, offer_name, cashback, order_status 
+             FROM {$table_name} 
+             WHERE user_id = %d 
+             ORDER BY created_at DESC 
+             LIMIT %d OFFSET %d",
             $user_id,
             $limit,
             $offset
@@ -131,7 +144,7 @@ class CashbackHistory
     {
         global $wpdb;
         $table_name = $wpdb->prefix . 'cashback_transactions';
-        return $wpdb->get_var($wpdb->prepare(
+        return (int) $wpdb->get_var($wpdb->prepare(
             "SELECT COUNT(*) FROM {$table_name} WHERE user_id = %d",
             $user_id
         ));
@@ -143,11 +156,20 @@ class CashbackHistory
 
         $user_id = get_current_user_id();
         if (!$user_id) {
-            wp_die(__('Вы должны быть авторизованы.', 'cashback-history'));
+            wp_send_json_error(esc_html__('Вы должны быть авторизованы.', 'cashback-history'));
         }
 
+        if (!isset($_POST['page'])) {
+            wp_send_json_error(esc_html__('Некорректный запрос.', 'cashback-history'));
+        }
+
+        $per_page = self::PER_PAGE;
+        $total = $this->get_total_transactions($user_id);
+        $total_pages = $total > 0 ? ceil($total / $per_page) : 1;
+        $total_pages = min($total_pages, self::MAX_ALLOWED_PAGES);
+
         $page = intval($_POST['page']);
-        $per_page = 10;
+        $page = max(1, min($page, $total_pages));
         $offset = ($page - 1) * $per_page;
 
         $transactions = $this->get_transactions($user_id, $per_page, $offset);
@@ -155,25 +177,41 @@ class CashbackHistory
         $html = '';
         foreach ($transactions as $transaction) {
             $html .= '<tr>';
-            $html .= '<td>' . esc_html(date_i18n(get_option('date_format'), strtotime($transaction->created_at))) . '</td>';
-            $html .= '<td>' . esc_html($transaction->offer_name) . '</td>';
-            $html .= '<td>' . esc_html($transaction->cashback) . '</td>';
+            $html .= '<td>' . $this->format_date($transaction->created_at) . '</td>';
+            $html .= '<td>' . esc_html($transaction->offer_name ?? __('Н/Д', 'cashback-history')) . '</td>';
+            $html .= '<td>' . esc_html($transaction->cashback ?? '0.00') . '</td>';
             $html .= '<td>' . esc_html($this->get_status_label($transaction->order_status)) . '</td>';
             $html .= '</tr>';
         }
 
-        wp_send_json_success(array('html' => $html));
+        wp_send_json_success(array(
+            'html' => $html,
+            'current_page' => $page,
+            'total_pages' => $total_pages
+        ));
     }
 
     public function enqueue_scripts()
     {
-        if (is_account_page()) {
-            wp_enqueue_script('cashback-history-ajax', plugin_dir_url(__FILE__) . 'cashback-history.js', array('jquery'), '1.0.0', true);
+        if (is_account_page() && $this->is_cashback_history_page()) {
+            wp_enqueue_script(
+                'cashback-history-ajax',
+                plugin_dir_url(__FILE__) . 'cashback-history.js',
+                array('jquery'),
+                '1.0.0',
+                true
+            );
             wp_localize_script('cashback-history-ajax', 'cashback_ajax', array(
                 'ajax_url' => admin_url('admin-ajax.php'),
                 'nonce' => wp_create_nonce('load_page_transactions_nonce')
             ));
         }
+    }
+
+    private function is_cashback_history_page()
+    {
+        global $wp;
+        return isset($wp->query_vars['cashback-history']);
     }
 
     private function get_status_label($status)
@@ -188,8 +226,25 @@ class CashbackHistory
             case 'balance':
                 return __('Зачислен на баланс', 'cashback-history');
             default:
-                return esc_html($status);
+                return esc_html($status ?: __('Неизвестно', 'cashback-history'));
         }
+    }
+
+    /**
+     * Безопасное форматирование даты с защитой от некорректных значений
+     */
+    private function format_date($date_string)
+    {
+        if (empty($date_string) || $date_string === '0000-00-00 00:00:00') {
+            return esc_html__('Н/Д', 'cashback-history');
+        }
+
+        $timestamp = strtotime($date_string);
+        if ($timestamp === false) {
+            return esc_html__('Некорректная дата', 'cashback-history');
+        }
+
+        return esc_html(date_i18n(get_option('date_format'), $timestamp));
     }
 }
 
