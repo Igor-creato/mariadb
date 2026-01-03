@@ -124,17 +124,18 @@ class Mariadb_Plugin
             `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
             PRIMARY KEY (`id`),
             UNIQUE KEY `unique_uniq_partner` (`uniq_id`,`partner`)
-        ) ENGINE=InnoDB {$charset_collate};";
+        ) ENGINE=InnoDB {$charset_collate} COMMENT='Вэбхуки принятые от неавторизованных пользователей';";
 
         // Таблица cashback_user_balance
         $table4 = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_user_balance` (
             `user_id` bigint(20) unsigned NOT NULL,
-            `available_balance` decimal(18,2) NOT NULL DEFAULT 0.0,
-            `pending_balance` decimal(18,2) NOT NULL DEFAULT 0.00,
-            `paid_balance` decimal(18,2) NOT NULL DEFAULT 0.00,
+            `available_balance` decimal(18,2) NOT NULL DEFAULT 0.0 COMMENT 'Доступный баланс пользователя',
+            `pending_balance` decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'В ожидании выплаты',
+            `paid_balance` decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'Выплачен',
+            `frozen_balance`    decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'Заблокирован',
             PRIMARY KEY (`user_id`),
             CONSTRAINT `fk_balance_user` FOREIGN KEY (`user_id`) REFERENCES `{$wpdb->prefix}users` (`ID`) ON DELETE CASCADE
-        ) ENGINE=InnoDB {$charset_collate};";
+        ) ENGINE=InnoDB {$charset_collate}  COMMENT='Балансы пользователей кэшбэк-сервиса';";
 
         // Таблица cashback_webhooks
         $table5 = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_webhooks` (
@@ -145,7 +146,7 @@ class Mariadb_Plugin
             PRIMARY KEY (`id`),
             UNIQUE KEY `uk_payload_norm` (`payload_norm`) USING HASH,
             KEY `idx_received_at` (`received_at`)
-        ) ENGINE=InnoDB {$charset_collate};";
+        ) ENGINE=InnoDB {$charset_collate} COMMENT='Сырые уникальные webhooks';";
 
         // Таблица cashback_user_profile
         $table6 = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_user_profile` (
@@ -210,6 +211,7 @@ class Mariadb_Plugin
             "CREATE TRIGGER `{$wpdb->prefix}calculate_cashback_before_insert`
             BEFORE INSERT ON `{$wpdb->prefix}cashback_transactions`
             FOR EACH ROW
+            COMMENT 'Автоматически рассчитывает кэшбэк при вставке на основе индивидуального cashback_rate пользователя'
             BEGIN
                 DECLARE v_rate DECIMAL(5,2) DEFAULT 60.00;
                 
@@ -230,6 +232,7 @@ class Mariadb_Plugin
             "CREATE TRIGGER `{$wpdb->prefix}calculate_cashback_before_insert_unregistered`
             BEFORE INSERT ON `{$wpdb->prefix}cashback_unregistered_transactions`
             FOR EACH ROW
+            COMMENT 'Рассчитывает кэшбэк для незарегистрированных пользователей по фиксированной ставке 60%'
             BEGIN
                 SET NEW.cashback = FLOOR(NEW.commission * 0.6);
             END;",
@@ -237,6 +240,7 @@ class Mariadb_Plugin
             "CREATE TRIGGER `{$wpdb->prefix}calculate_cashback_before_update`
             BEFORE UPDATE ON `{$wpdb->prefix}cashback_transactions`
             FOR EACH ROW
+            COMMENT 'Пересчитывает кэшбэк только при изменении commission, используя сохранённую applied_cashback_rate'
             BEGIN
                 IF OLD.commission != NEW.commission THEN
                     SET NEW.cashback = ROUND(NEW.commission * NEW.applied_cashback_rate / 100, 2);
@@ -246,6 +250,7 @@ class Mariadb_Plugin
             "CREATE TRIGGER `{$wpdb->prefix}calculate_cashback_before_update_unregistered`
             BEFORE UPDATE ON `{$wpdb->prefix}cashback_unregistered_transactions`
             FOR EACH ROW
+            COMMENT 'Пересчитывает кэшбэк для незарегистрированных пользователей при изменении commission'
             BEGIN
                 IF OLD.commission != NEW.commission THEN
                     SET NEW.cashback = FLOOR(NEW.commission * 0.6);
@@ -255,6 +260,7 @@ class Mariadb_Plugin
             "CREATE TRIGGER `{$wpdb->prefix}cashback_tr_prevent_delete_final_status`
             BEFORE DELETE ON `{$wpdb->prefix}cashback_transactions`
             FOR EACH ROW
+            COMMENT 'Запрещает удаление транзакций со статусом ''balance'' (финальный статус)'
             BEGIN
                 IF OLD.order_status = 'balance' THEN
                     SIGNAL SQLSTATE '45000'
@@ -265,6 +271,7 @@ class Mariadb_Plugin
             "CREATE TRIGGER `{$wpdb->prefix}cashback_tr_prevent_update_final_status`
             BEFORE UPDATE ON `{$wpdb->prefix}cashback_transactions`
             FOR EACH ROW
+            COMMENT 'Запрещает изменение транзакций со статусом ''balance'' (финальный статус)'
             BEGIN
                 IF OLD.order_status = 'balance' THEN
                     SIGNAL SQLSTATE '45000'
@@ -275,6 +282,7 @@ class Mariadb_Plugin
             "CREATE TRIGGER `{$wpdb->prefix}tr_prevent_delete_paid_payout`
             BEFORE DELETE ON `{$wpdb->prefix}cashback_payout_requests`
             FOR EACH ROW
+            COMMENT 'Запрещает удаление заявок на выплату со статусом ''payd'' выплачена'
             BEGIN
                 IF OLD.status = 'payd' THEN
                     SIGNAL SQLSTATE '45000'
@@ -285,6 +293,7 @@ class Mariadb_Plugin
             "CREATE TRIGGER `{$wpdb->prefix}tr_prevent_update_paid_payout`
             BEFORE UPDATE ON `{$wpdb->prefix}cashback_payout_requests`
             FOR EACH ROW
+            COMMENT 'Запрещает изменение заявок на выплату со статусом ''payd'' выплачена'
             BEGIN
                 IF OLD.status = 'payd' THEN
                     SIGNAL SQLSTATE '45000'
