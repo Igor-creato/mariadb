@@ -196,7 +196,7 @@ class CashbackHistory
         if (is_account_page() && $this->is_cashback_history_page()) {
             wp_enqueue_script(
                 'cashback-history-ajax',
-                plugin_dir_url(__FILE__) . 'cashback-history.js',
+                plugin_dir_url(__FILE__) . 'assets/css/cashback-history.js',
                 array('jquery'),
                 '1.0.0',
                 true
