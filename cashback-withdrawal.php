@@ -136,6 +136,61 @@ class CashbackWithdrawal
     }
 
     /**
+     * Get payout method for user
+     *
+     * @param int $user_id
+     * @return string|null
+     */
+    private function get_payout_method($user_id)
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'cashback_user_profile';
+        $payout_method = $wpdb->get_var($wpdb->prepare(
+            "SELECT payout_method FROM {$table_name} WHERE user_id = %d",
+            $user_id
+        ));
+
+        return $payout_method;
+    }
+
+    /**
+     * Get payout account for user
+     *
+     * @param int $user_id
+     * @return string|null
+     */
+    private function get_payout_account($user_id)
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'cashback_user_profile';
+        $payout_account = $wpdb->get_var($wpdb->prepare(
+            "SELECT payout_account FROM {$table_name} WHERE user_id = %d",
+            $user_id
+        ));
+
+        return $payout_account;
+    }
+
+    /**
+     * Get payout method label for display
+     *
+     * @param string $method
+     * @return string
+     */
+    private function get_payout_method_label($method)
+    {
+        $labels = array(
+            'sbp' => __('Система быстрых платежей (СБП)', 'woocommerce'),
+            'mir' => __('Карта МИР', 'woocommerce'),
+            'yoomoney' => __('ЮMoney', 'woocommerce')
+        );
+
+        return isset($labels[$method]) ? $labels[$method] : ucfirst($method);
+    }
+
+    /**
      * Display content for the endpoint
      */
     public function endpoint_content()
@@ -173,12 +228,26 @@ class CashbackWithdrawal
         $balance = $this->get_available_balance($user_id);
         $min_payout_amount = $this->get_min_payout_amount($user_id);
 
+        // Получаем информацию о способе вывода и номере счета
+        $payout_method = $this->get_payout_method($user_id);
+        $payout_account = $this->get_payout_account($user_id);
+
         echo '<div class="cashback-withdrawal-container">';
         echo '<h2>' . __('Вывод кэшбэка', 'woocommerce') . '</h2>';
         echo '<div class="balance-display">';
         echo '<p>' . __('Доступный баланс:', 'woocommerce') . ' <span id="cashback-balance-amount" class="balance-amount ' . ($balance > 0 ? 'balance-green' : 'balance-gray') . '">' . wc_price($balance) . '</span></p>';
         echo '</div>';
         echo '<p>' . __('Минимальная сумма выплаты:', 'woocommerce') . ' <span class="min-payout-amount">' . wc_price($min_payout_amount) . '</span></p>';
+
+        // Отображаем способ вывода и номер счета
+        echo '<div class="payout-details">';
+        if ($payout_method && $payout_account) {
+            echo '<p>' . __('Способ вывода:', 'woocommerce') . ' <strong>' . $this->get_payout_method_label($payout_method) . '</strong></p>';
+            echo '<p>' . __('Номер счета:', 'woocommerce') . ' <strong>' . esc_html($payout_account) . '</strong></p>';
+        } else {
+            echo '<p class="no-payout-details">' . __('Выберите способ вывода и номер счета.', 'woocommerce') . '</p>';
+        }
+        echo '</div>';
         echo '</div>';
 
         // Добавляем форму вывода кэшбэка

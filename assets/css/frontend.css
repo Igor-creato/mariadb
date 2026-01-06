@@ -250,5 +250,28 @@
     color: #007cba;
 }
 
+/* Стили для отображения способа вывода и номера счета */
+.cashback-withdrawal-container .payout-details {
+    background-color: #f9f9f9;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 15px;
+    margin-bottom: 20px;
+}
+
+.cashback-withdrawal-container .payout-details p {
+    margin: 5px 0;
+    font-size: 14px;
+}
+
+.cashback-withdrawal-container .payout-details .no-payout-details {
+    color: #d63638;
+    font-style: italic;
+}
+
+.cashback-withdrawal-container .payout-details strong {
+    color: #333;
+}
+
 
 
