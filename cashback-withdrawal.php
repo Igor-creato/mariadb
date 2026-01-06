@@ -295,9 +295,25 @@ class CashbackWithdrawal
         }
 
         $user_id = get_current_user_id();
+
+        // Проверяем, что пользователь имеет корректный ID
+        if (!$user_id || $user_id <= 0) {
+            wp_send_json_error(__('Некорректный идентификатор пользователя.', 'woocommerce'));
+            return;
+        }
+
         $withdrawal_amount = floatval($_POST['withdrawal_amount'] ?? 0);
 
-        // === 2. Input validation ===
+        // === 2. Check if payout method and account are filled ===
+        $payout_method = $this->get_payout_method($user_id);
+        $payout_account = $this->get_payout_account($user_id);
+
+        if (empty($payout_method) || empty($payout_account)) {
+            wp_send_json_error(__('Для вывода средств пожалуйста, заполните способ вывода и номер счета в вашем профиле.', 'woocommerce'));
+            return;
+        }
+
+        // === 3. Input validation ===
         $min_payout_amount = $this->get_min_payout_amount($user_id);
         $available_balance = $this->get_available_balance($user_id);
 
