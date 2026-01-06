@@ -75,8 +75,8 @@ class Mariadb_Plugin
             `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
             `user_id` bigint(20) unsigned NOT NULL,
             `total_amount` decimal(18,2) NOT NULL,
-            `payout_method` varchar(255) NOT NULL,
-            `payout_account` varchar(255) NOT NULL,
+            `payout_method` varchar(255) NOT NULL COMMENT 'Способ выплаты (например: СБП, карта, юmoney)',
+            `payout_account` varchar(255) NOT NULL COMMENT 'Реквизиты получателя (номер телефона, карты и т.п.)',
             `status` enum('waiting','payd','declined') NOT NULL DEFAULT 'waiting',
             `created_at` datetime DEFAULT current_timestamp(),
             `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp(),
@@ -153,24 +153,25 @@ class Mariadb_Plugin
         // Таблица cashback_user_profile
         $table6 = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_user_profile` (
             `user_id` bigint(20) unsigned NOT NULL,
-            `payout_method_id` bigint(20) unsigned DEFAULT NULL COMMENT 'СБП, Карта, ЮMoney и т.д.',
-            -- `payout_method` ENUM('sbp','mir','yoomoney') DEFAULT NULL COMMENT 'СБП, Карта, ЮMoney и т.д.',
+            `payout_method_id` bigint(20) unsigned DEFAULT NULL COMMENT 'ID способа выплаты, привязанного к wp_cashback_payout_methods.id',
             `payout_account` varchar(255) DEFAULT NULL COMMENT 'Телефон, номер карты или кошелёк',
             `payout_full_name` varchar(255) DEFAULT NULL COMMENT 'ФИО для выплат',
-            `cashback_rate` decimal(5,2) NOT NULL DEFAULT 60.00 COMMENT 'Процент кэшбэка (60 = 60%)' CHECK (cashback_rate BETWEEN 0.00 AND 100.00),
+            `cashback_rate` decimal(5,2) NOT NULL DEFAULT 60.00 COMMENT 'Процент кэшбэка (60 = 60%)' CHECK (`cashback_rate` BETWEEN 0.00 AND 100.00),
             `is_verified` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = реквизиты подтверждены',
             `payout_details_updated_at` datetime DEFAULT NULL COMMENT 'Дата и время обновления реквизитов',
-            `min_payout_amount` decimal(18,2) DEFAULT 100.00 COMMENT 'Минимальная сумма выплаты',
+            `min_payout_amount` decimal(18,2) DEFAULT 10.00 COMMENT 'Минимальная сумма выплаты',
             `opt_out` tinyint(1) NOT NULL DEFAULT 0,
-            `status` ENUM('active','noactive','banned','deleted') NOT NULL DEFAULT 'active' COMMENT 'Статус профиля',
-            `banned_at` DATETIME DEFAULT NULL COMMENT 'Дата и время блокировки',
-            `ban_reason` VARCHAR(255) DEFAULT NULL COMMENT 'Причина блокировки',
-            `last_active_at` DATETIME DEFAULT NULL COMMENT 'Дата и время последней активности',
+            `status` enum('active','noactive','banned','deleted') NOT NULL DEFAULT 'active' COMMENT 'Статус профиля',
+            `banned_at` datetime DEFAULT NULL COMMENT 'Дата и время блокировки',
+            `ban_reason` varchar(25) DEFAULT NULL COMMENT 'Причина блокировки',
+            `last_active_at` datetime DEFAULT NULL COMMENT 'Дата и время последней активности',
             `created_at` datetime DEFAULT current_timestamp(),
             `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp(),
             PRIMARY KEY (`user_id`),
-            KEY `idx_active_check` (`status`, `last_active_at`, `created_at`),
-            CONSTRAINT `fk_profile_wp_user` FOREIGN KEY (`user_id`) REFERENCES `{$wpdb->prefix}users` (`ID`) ON DELETE CASCADE
+            KEY `idx_active_check` (`status`,`last_active_at`,`created_at`),
+            KEY `idx_payout_method` (`payout_method_id`),
+            CONSTRAINT `fk_profile_wp_user` FOREIGN KEY (`user_id`) REFERENCES `{$wpdb->prefix}users` (`ID`) ON DELETE CASCADE,
+            CONSTRAINT `fk_payout_method` FOREIGN KEY (`payout_method_id`) REFERENCES `{$wpdb->prefix}cashback_payout_methods` (`id`) ON DELETE SET NULL
         ) ENGINE=InnoDB {$charset_collate};";
 
         // Таблица способов выплат
