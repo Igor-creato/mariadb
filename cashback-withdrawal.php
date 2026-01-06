@@ -142,7 +142,31 @@ class CashbackWithdrawal
     {
         $user_id = get_current_user_id();
         if (!$user_id) {
-            echo '<p>' . __('Вы должны быть авторизованы для просмотра этой страницы.', 'woocommerce') . '</p>';
+            // Вместо вывода сообщения об ошибке, просто выходим
+            // Ошибка авторизации будет обрабатываться через AJAX
+            echo '<div class="cashback-withdrawal-container">';
+            echo '<h2>' . __('Вывод кэшбэка', 'woocommerce') . '</h2>';
+            echo '<div id="withdrawal-messages"></div>';
+            echo '<div id="cashback-content">';
+            echo '<div class="balance-display">';
+            echo '<p>' . __('Доступный баланс:', 'woocommerce') . ' <span id="cashback-balance-amount" class="balance-amount">0</span></p>';
+            echo '</div>';
+            echo '<p>' . __('Минимальная сумма выплаты:', 'woocommerce') . ' <span class="min-payout-amount">0</span></p>';
+            echo '<div class="error-message">' . __('Вы должны быть авторизованы для просмотра этой страницы.', 'woocommerce') . '</div>';
+            echo '</div>';
+            echo '</div>';
+            echo '<div class="cashback-withdrawal-form">';
+            echo '<form id="withdrawal-form">';
+            echo '<p class="form-row">';
+            echo '<label for="withdrawal-amount">' . __('Сумма вывода', 'woocommerce') . ' <span class="required">*</span></label>';
+            echo '<input type="number" class="input-text" name="withdrawal_amount" id="withdrawal-amount" placeholder="' . __('Введите сумму', 'woocommerce') . '" value="" min="0" max="0" step="0.01" disabled/>';
+            echo '</p>';
+            echo '<p class="form-row">';
+            echo '<button type="submit" class="button alt" id="withdrawal-submit" name="withdrawal_submit" value="' . esc_attr__('Вывести', 'woocommerce') . '" disabled>' . __('Вывести', 'woocommerce') . '</button>';
+            echo '</p>';
+            echo '<div id="withdrawal-messages"></div>';
+            echo '</form>';
+            echo '</div>';
             return;
         }
 
@@ -162,7 +186,7 @@ class CashbackWithdrawal
         echo '<form id="withdrawal-form">';
         echo '<p class="form-row">';
         echo '<label for="withdrawal-amount">' . __('Сумма вывода', 'woocommerce') . ' <span class="required">*</span></label>';
-        echo '<input type="number" class="input-text" name="withdrawal_amount" id="withdrawal-amount" placeholder="' . __('Введите сумму', 'woocommerce') . '" value="" min="' . $min_payout_amount . '" max="' . $balance . '" step="0.01" />';
+        echo '<input type="number" class="input-text" name="withdrawal_amount" id="withdrawal-amount" placeholder="' . __('Введите сумму', 'woocommerce') . '" value="" step="0.01" />';
         echo '</p>';
         echo '<p class="form-row">';
         echo '<button type="submit" class="button alt" id="withdrawal-submit" name="withdrawal_submit" value="' . esc_attr__('Вывести', 'woocommerce') . '">' . __('Вывести', 'woocommerce') . '</button>';
@@ -208,13 +232,19 @@ class CashbackWithdrawal
             return;
         }
 
+        // Проверяем, что баланс пользователя больше или равен минимальной сумме для вывода
+        if ($available_balance < $min_payout_amount) {
+            wp_send_json_error(sprintf(__('Вы не можете вывести средства, Ваш баланс %s меньше минимально допустимой суммы для вывода %s', 'woocommerce'), wc_price($available_balance), wc_price($min_payout_amount)));
+            return;
+        }
+
         if ($withdrawal_amount < $min_payout_amount) {
-            wp_send_json_error(__('Вы ввели сумму меньше минимально допустимой, введите другую сумму', 'woocommerce'));
+            wp_send_json_error(sprintf(__('Вы ввели сумму меньше минимально допустимой, введите сумму больше или равно %s', 'woocommerce'), wc_price($min_payout_amount)));
             return;
         }
 
         if ($withdrawal_amount > $available_balance) {
-            wp_send_json_error(__('Вы ввели сумму больше доступной, введите другую сумму', 'woocommerce'));
+            wp_send_json_error(sprintf(__('Вы ввели сумму больше доступной, введите сумму меньше или равно %s', 'woocommerce'), wc_price($available_balance)));
             return;
         }
 

@@ -189,15 +189,21 @@ jQuery(document).ready(function ($) {
     }
 
     // Получаем введенную сумму
-    var amount = parseFloat(withdrawalAmount.val());
+    var amountInput = withdrawalAmount.val();
+    // Заменяем запятую на точку для корректной обработки чисел
+    var amount = parseFloat(amountInput.replace(',', '.'));
 
-    // Проверяем, введена ли сумма
+    // Проверяем, является ли введенное значение корректным числом
     if (isNaN(amount) || amount <= 0) {
       $('#withdrawal-messages').html(
         '<div class="error-message">' +
           'Пожалуйста, введите корректную сумму для вывода.' +
           '</div>',
       );
+      // Разблокируем форму, так как не отправляем запрос
+      submitBtn.prop('disabled', false);
+      withdrawalAmount.prop('disabled', false);
+      submitBtn.val('Вывести'); // Возвращаем первоначальный текст кнопки
       return false;
     }
 
@@ -235,13 +241,17 @@ jQuery(document).ready(function ($) {
           $('#withdrawal-messages').html('<div class="error-message">' + response.data + '</div>');
         }
       },
-      error: function () {
-        // Ошибка соединения
-        $('#withdrawal-messages').html(
-          '<div class="error-message">' +
-            'Ошибка соединения. Пожалуйста, попробуйте еще раз.' +
-            '</div>',
-        );
+      error: function (xhr, status, error) {
+        // Ошибка соединения или серверная ошибка
+        var errorMessage = 'Ошибка соединения. Пожалуйста, попробуйте еще раз.';
+        if (xhr.status === 403) {
+          errorMessage = 'Ошибка авторизации. Пожалуйста, войдите в систему и попробуйте снова.';
+        } else if (xhr.status === 400) {
+          errorMessage = 'Неверный запрос. Пожалуйста, обновите страницу и попробуйте снова.';
+        } else if (xhr.status === 500) {
+          errorMessage = 'Внутренняя ошибка сервера. Пожалуйста, попробуйте позже.';
+        }
+        $('#withdrawal-messages').html('<div class="error-message">' + errorMessage + '</div>');
       },
       complete: function () {
         // Разблокируем форму после завершения запроса
