@@ -84,6 +84,8 @@ class HistoryPayout
             echo '<tr>';
             echo '<th>' . esc_html__('Дата', 'history-payout') . '</th>';
             echo '<th>' . esc_html__('Сумма', 'history-payout') . '</th>';
+            echo '<th>' . esc_html__('Способ вывода', 'history-payout') . '</th>';
+            echo '<th>' . esc_html__('Счет', 'history-payout') . '</th>';
             echo '<th>' . esc_html__('Статус', 'history-payout') . '</th>';
             echo '</tr>';
             echo '</thead>';
@@ -91,9 +93,11 @@ class HistoryPayout
 
             foreach ($payouts as $payout) {
                 echo '<tr>';
-                echo '<td>' . $this->format_date($payout->created_at) . '</td>';
-                echo '<td>' . esc_html($payout->total_amount ?? '0.00') . '</td>';
-                echo '<td>' . esc_html($this->get_status_label($payout->status)) . '</td>';
+                echo '<td data-title="' . esc_attr__('Дата', 'history-payout') . '">' . $this->format_date($payout->created_at) . '</td>';
+                echo '<td data-title="' . esc_attr__('Сумма', 'history-payout') . '">' . esc_html($payout->total_amount ?? '0.00') . '</td>';
+                echo '<td data-title="' . esc_attr__('Способ вывода', 'history-payout') . '">' . esc_html($this->get_payout_method_label($payout->payout_method) ?: __('Не указан', 'history-payout')) . '</td>';
+                echo '<td data-title="' . esc_attr__('Счет', 'history-payout') . '">' . esc_html($payout->payout_account ?: __('Не указан', 'history-payout')) . '</td>';
+                echo '<td data-title="' . esc_attr__('Статус', 'history-payout') . '">' . esc_html($this->get_status_label($payout->status)) . '</td>';
                 echo '</tr>';
             }
 
@@ -127,10 +131,10 @@ class HistoryPayout
         global $wpdb;
         $table_name = $wpdb->prefix . 'cashback_payout_requests';
         return $wpdb->get_results($wpdb->prepare(
-            "SELECT created_at, total_amount, status 
-             FROM {$table_name} 
-             WHERE user_id = %d 
-             ORDER BY created_at DESC 
+            "SELECT created_at, total_amount, payout_method, payout_account, status
+             FROM {$table_name}
+             WHERE user_id = %d
+             ORDER BY created_at DESC
              LIMIT %d OFFSET %d",
             $user_id,
             $limit,
@@ -177,6 +181,8 @@ class HistoryPayout
             $html .= '<tr>';
             $html .= '<td>' . $this->format_date($payout->created_at) . '</td>';
             $html .= '<td>' . esc_html($payout->total_amount ?? '0.00') . '</td>';
+            $html .= '<td>' . esc_html($this->get_payout_method_label($payout->payout_method) ?: __('Не указан', 'history-payout')) . '</td>';
+            $html .= '<td>' . esc_html($payout->payout_account ?: __('Не указан', 'history-payout')) . '</td>';
             $html .= '<td>' . esc_html($this->get_status_label($payout->status)) . '</td>';
             $html .= '</tr>';
         }
@@ -240,6 +246,23 @@ class HistoryPayout
         }
 
         return esc_html(date_i18n(get_option('date_format'), $timestamp));
+    }
+
+    /**
+     * Get payout method label for display
+     *
+     * @param string $method
+     * @return string
+     */
+    private function get_payout_method_label($method)
+    {
+        $labels = array(
+            'sbp' => __('Система быстрых платежей (СБП)', 'history-payout'),
+            'mir' => __('Карта МИР', 'history-payout'),
+            'yoomoney' => __('ЮMoney', 'history-payout')
+        );
+
+        return isset($labels[$method]) ? $labels[$method] : ucfirst($method);
     }
 }
 

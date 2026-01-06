@@ -362,15 +362,21 @@ class CashbackWithdrawal
                 throw new Exception('Failed to update user balance');
             }
 
+            // Получаем информацию о способе вывода и аккаунте из профиля пользователя
+            $payout_method = $this->get_payout_method($user_id);
+            $payout_account = $this->get_payout_account($user_id);
+
             // 📝 Create new withdrawal request (multiple are allowed)
             $result = $wpdb->insert(
                 $table_requests,
                 array(
                     'user_id' => $user_id,
                     'total_amount' => $withdrawal_amount,
+                    'payout_method' => $payout_method ?: '', // Используем пустую строку, если метод не задан
+                    'payout_account' => $payout_account ?: '', // Используем пустую строку, если аккаунт не задан
                     'status' => 'waiting'
                 ),
-                array('%d', '%f', '%s')
+                array('%d', '%f', '%s', '%s', '%s')
             );
 
             if ($result === false) {
