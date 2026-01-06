@@ -145,9 +145,14 @@ class CashbackWithdrawal
     {
         global $wpdb;
 
-        $table_name = $wpdb->prefix . 'cashback_user_profile';
+        $table_profile = $wpdb->prefix . 'cashback_user_profile';
+        $table_methods = $wpdb->prefix . 'cashback_payout_methods';
+
         $payout_method = $wpdb->get_var($wpdb->prepare(
-            "SELECT payout_method FROM {$table_name} WHERE user_id = %d",
+            "SELECT pm.slug
+             FROM {$table_profile} up
+             LEFT JOIN {$table_methods} pm ON up.payout_method_id = pm.id
+             WHERE up.user_id = %d",
             $user_id
         ));
 
