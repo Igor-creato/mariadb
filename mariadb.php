@@ -75,6 +75,8 @@ class Mariadb_Plugin
             `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
             `user_id` bigint(20) unsigned NOT NULL,
             `total_amount` decimal(18,2) NOT NULL,
+            `payout_method` varchar(255) NOT NULL,
+            `payout_account` varchar(255) NOT NULL,
             `status` enum('waiting','payd','declined') NOT NULL DEFAULT 'waiting',
             `created_at` datetime DEFAULT current_timestamp(),
             `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp(),
@@ -151,7 +153,8 @@ class Mariadb_Plugin
         // Таблица cashback_user_profile
         $table6 = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_user_profile` (
             `user_id` bigint(20) unsigned NOT NULL,
-            `payout_method` ENUM('sbp','mir','yoomoney') DEFAULT NULL COMMENT 'СБП, Карта, ЮMoney и т.д.',
+            `payout_method_id` bigint(20) unsigned DEFAULT NULL COMMENT 'СБП, Карта, ЮMoney и т.д.',
+            -- `payout_method` ENUM('sbp','mir','yoomoney') DEFAULT NULL COMMENT 'СБП, Карта, ЮMoney и т.д.',
             `payout_account` varchar(255) DEFAULT NULL COMMENT 'Телефон, номер карты или кошелёк',
             `payout_full_name` varchar(255) DEFAULT NULL COMMENT 'ФИО для выплат',
             `cashback_rate` decimal(5,2) NOT NULL DEFAULT 60.00 COMMENT 'Процент кэшбэка (60 = 60%)' CHECK (cashback_rate BETWEEN 0.00 AND 100.00),
@@ -170,6 +173,19 @@ class Mariadb_Plugin
             CONSTRAINT `fk_profile_wp_user` FOREIGN KEY (`user_id`) REFERENCES `{$wpdb->prefix}users` (`ID`) ON DELETE CASCADE
         ) ENGINE=InnoDB {$charset_collate};";
 
+        // Таблица способов выплат
+        $table7 = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_payout_methods` (
+            `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            `slug` varchar(50) NOT NULL COMMENT 'Уникальный идентификатор (например: sbp, mir, yoomoney)',
+            `name` varchar(100) NOT NULL COMMENT 'Отображаемое название (например: СБП, МИР, ЮMoney)',
+            `is_active` tinyint(1) NOT NULL DEFAULT 1 COMMENT '1 = способ доступен для выбора',
+            `sort_order` int(11) NOT NULL DEFAULT 0 COMMENT 'Порядок сортировки в интерфейсе',
+            `created_at` datetime DEFAULT current_timestamp(),
+            `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uniq_slug` (`slug`)
+        ) ENGINE=InnoDB {$charset_collate} COMMENT='Способы выплат пользователей';";
+
         require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
         dbDelta($table1);
         dbDelta($table2);
@@ -177,6 +193,7 @@ class Mariadb_Plugin
         dbDelta($table4);
         dbDelta($table5);
         dbDelta($table6);
+        dbDelta($table7);
 
         error_log('Mariadb Plugin: Tables created successfully');
     }
