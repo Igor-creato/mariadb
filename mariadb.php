@@ -318,6 +318,16 @@ class Mariadb_Plugin
                     SET MESSAGE_TEXT = 'Изменение запрещено: выплаченная заявка не может быть изменена.';
                 END IF;
             END;",
+
+            "CREATE TRIGGER `{$wpdb->prefix}tr_banned_user_update_banned_at`
+            BEFORE UPDATE ON `{$wpdb->prefix}cashback_user_profile`
+            FOR EACH ROW
+            --  'Обновляет поле banned_at текущей датой и временем при изменении статуса на ''banned'''
+            BEGIN
+                IF OLD.status != 'banned' AND NEW.status = 'banned' THEN
+                    SET NEW.banned_at = NOW();
+                END IF;
+            END;",
         ];
 
         $failed_triggers = [];
