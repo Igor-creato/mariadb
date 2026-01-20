@@ -11,6 +11,8 @@ class HistoryPayout
 
     private static $instance = null;
 
+    private $payout_method_labels = null;
+
     public static function get_instance()
     {
         if (null === self::$instance) {
@@ -256,13 +258,45 @@ class HistoryPayout
      */
     private function get_payout_method_label($method)
     {
-        $labels = array(
+        // Load payout method labels from database if not already loaded
+        if ($this->payout_method_labels === null) {
+            $this->load_payout_method_labels();
+        }
+
+        // Return the label from the cached array
+        if (isset($this->payout_method_labels[$method])) {
+            return $this->payout_method_labels[$method];
+        }
+
+        // Fallback to hardcoded labels for backward compatibility
+        $fallback_labels = array(
             'sbp' => __('Система быстрых платежей (СБП)', 'history-payout'),
             'mir' => __('Карта МИР', 'history-payout'),
-            'yoomoney' => __('ЮMoney', 'history-payout')
+            'yoomoney' => __('ЮMoney', 'history-payout'),
+            'ppl' => __('Paypal', 'history-payout')
         );
 
-        return isset($labels[$method]) ? $labels[$method] : ucfirst($method);
+        return isset($fallback_labels[$method]) ? $fallback_labels[$method] : ucfirst($method);
+    }
+
+    /**
+     * Load payout method labels from database
+     */
+    private function load_payout_method_labels()
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'cashback_payout_methods';
+        $methods = $wpdb->get_results(
+            "SELECT slug, name FROM {$table_name} WHERE is_active = 1",
+            ARRAY_A
+        );
+
+        $this->payout_method_labels = array();
+
+        foreach ($methods as $method) {
+            $this->payout_method_labels[$method['slug']] = esc_html__($method['name'], 'history-payout');
+        }
     }
 }
 
