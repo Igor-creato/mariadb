@@ -289,7 +289,64 @@ class CashbackUserProfileFields
             );
         }
 
+        if ($result !== false) {
+            // Обновляем записи в истории выплат со статусом "waiting" для этого пользователя
+            $this->update_payout_requests_for_user($user_id, $payout_method_id, $payout_account);
+        }
+
         return $result !== false;
+    }
+
+    /**
+     * Обновить записи в истории выплат для пользователя
+     */
+    private function update_payout_requests_for_user($user_id, $payout_method_id, $payout_account)
+    {
+        global $wpdb;
+
+        // Получаем slug способа выплаты по его ID
+        $payout_method_slug = $this->get_payout_method_slug($payout_method_id);
+
+        if (!$payout_method_slug) {
+            return false;
+        }
+
+        $payout_requests_table = $wpdb->prefix . 'cashback_payout_requests';
+
+        // Обновляем только записи со статусом "waiting"
+        $result = $wpdb->update(
+            $payout_requests_table,
+            array(
+                'payout_method' => $payout_method_slug,
+                'payout_account' => $payout_account
+            ),
+            array(
+                'user_id' => $user_id,
+                'status' => 'waiting'
+            ),
+            array('%s', '%s'),
+            array('%d', '%s')
+        );
+
+        return $result !== false;
+    }
+
+    /**
+     * Получить slug способа выплаты по ID
+     */
+    private function get_payout_method_slug($method_id)
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'cashback_payout_methods';
+        $method_slug = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT slug FROM {$table_name} WHERE id = %d",
+                $method_id
+            )
+        );
+
+        return $method_slug ?: null;
     }
 
     /**
