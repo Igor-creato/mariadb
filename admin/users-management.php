@@ -283,35 +283,79 @@ class Cashback_Users_Management_Admin
                     $('.save-btn').on('click', function() {
                         var row = $(this).closest('tr');
                         var userId = row.data('user-id');
+                        var originalValues = {};
+                        var changedData = {};
+
+                        // Сохраняем оригинальные значения из ячеек перед редактированием
+                        row.find('.edit-field').each(function() {
+                            var cell = $(this);
+                            var field = cell.data('field');
+                            originalValues[field] = cell.text();
+                        });
+
+                        // Собираем только измененные данные
+                        row.find('.edit-input').each(function() {
+                            var input = $(this);
+                            var field = input.data('field');
+                            var newValue = input.val();
+                            var originalValue = originalValues[field];
+
+                            // Проверяем, изменилось ли значение
+                            if (originalValue != newValue) {
+                                changedData[field] = newValue;
+                            }
+                        });
+
+                        // Добавляем только необходимые данные для обновления
                         var data = {
                             'action': 'update_user_profile',
                             'user_id': userId,
                             'nonce': '<?php echo wp_create_nonce('update_user_profile_nonce'); ?>'
                         };
 
-                        row.find('.edit-input').each(function() {
-                            var input = $(this);
-                            var field = input.data('field');
-                            data[field] = input.val();
-                        });
+                        // Добавляем только измененные поля
+                        Object.assign(data, changedData);
 
-                        // Валидация данных
-                        var cashbackRate = parseFloat(data['cashback_rate']);
-                        var minPayoutAmount = parseFloat(data['min_payout_amount']);
+                        // Проверяем, есть ли вообще изменения
+                        var hasChanges = Object.keys(changedData).length > 0;
 
-                        if (isNaN(cashbackRate) || cashbackRate < 0 || cashbackRate > 100) {
-                            alert('Ставка кэшбэка должна быть числом от 0 до 100');
+                        if (!hasChanges) {
+                            alert('Нет изменений для сохранения.');
+                            // Переключаем строку обратно в режим просмотра
+                            row.find('.save-btn, .cancel-btn').hide();
+                            row.find('.edit-btn').show();
                             return;
                         }
 
-                        if (isNaN(minPayoutAmount) || minPayoutAmount < 0) {
-                            alert('Минимальная сумма выплаты должна быть положительным числом');
-                            return;
+                        // Валидация только измененных данных
+                        if (changedData.hasOwnProperty('cashback_rate')) {
+                            var cashbackRate = parseFloat(changedData['cashback_rate']);
+                            if (isNaN(cashbackRate) || cashbackRate < 0 || cashbackRate > 100) {
+                                alert('Ставка кэшбэка должна быть числом от 0 до 100');
+                                return;
+                            }
+                        }
+
+                        if (changedData.hasOwnProperty('min_payout_amount')) {
+                            var minPayoutAmount = parseFloat(changedData['min_payout_amount']);
+                            if (isNaN(minPayoutAmount) || minPayoutAmount < 0) {
+                                alert('Минимальная сумма выплаты должна быть положительным числом');
+                                return;
+                            }
+                        }
+
+                        if (changedData.hasOwnProperty('status')) {
+                            var status = changedData['status'];
+                            var allowedStatuses = ['active', 'noactive', 'banned', 'deleted'];
+                            if (allowedStatuses.indexOf(status) === -1) {
+                                alert('Недопустимый статус пользователя');
+                                return;
+                            }
                         }
 
                         $.post(ajaxurl, data, function(response) {
                             if (response.success) {
-                                // Обновляем значения в ячейках
+                                // Обновляем все значения в ячейках, используя полученные данные из базы
                                 row.find('.edit-field[data-field="cashback_rate"]').text(response.data.cashback_rate);
                                 row.find('.edit-field[data-field="min_payout_amount"]').text(response.data.min_payout_amount);
                                 row.find('.edit-field[data-field="status"]').text(response.data.status);
@@ -319,6 +363,12 @@ class Cashback_Users_Management_Admin
                                 row.find('.edit-field[data-field="banned_at"]').text(response.data.banned_at ? response.data.banned_at : '');
 
                                 // Переключаем строку в режим просмотра
+                                row.find('.edit-input').each(function() {
+                                    var cell = $(this).closest('.edit-field');
+                                    var field = $(this).data('field');
+                                    cell.text(response.data[field] || '');
+                                });
+
                                 row.find('.save-btn, .cancel-btn').hide();
                                 row.find('.edit-btn').show();
 
@@ -410,41 +460,69 @@ class Cashback_Users_Management_Admin
         global $wpdb;
 
         $user_id = intval($_POST['user_id']);
-        $cashback_rate = floatval($_POST['cashback_rate']);
-        $min_payout_amount = floatval($_POST['min_payout_amount']);
-        $status = sanitize_text_field($_POST['status']);
-        $ban_reason = sanitize_text_field($_POST['ban_reason']);
 
-        // Валидация данных
-        if ($cashback_rate < 0 || $cashback_rate > 100) {
-            wp_send_json_error(['message' => 'Ставка кэшбэка должна быть числом от 0 до 100.']);
-            return;
+        // Подготовим массив для обновления, включая только те поля, которые были переданы
+        $update_data = array();
+        $update_formats = array();
+
+        // Проверяем и добавляем только измененные поля
+        if (isset($_POST['cashback_rate'])) {
+            $cashback_rate = floatval($_POST['cashback_rate']);
+
+            // Валидация данных
+            if ($cashback_rate < 0 || $cashback_rate > 100) {
+                wp_send_json_error(['message' => 'Ставка кэшбэка должна быть числом от 0 до 100.']);
+                return;
+            }
+
+            $update_data['cashback_rate'] = $cashback_rate;
+            $update_formats[] = '%f';
         }
 
-        if ($min_payout_amount < 0) {
-            wp_send_json_error(['message' => 'Минимальная сумма выплаты должна быть положительным числом.']);
-            return;
+        if (isset($_POST['min_payout_amount'])) {
+            $min_payout_amount = floatval($_POST['min_payout_amount']);
+
+            if ($min_payout_amount < 0) {
+                wp_send_json_error(['message' => 'Минимальная сумма выплаты должна быть положительным числом.']);
+                return;
+            }
+
+            $update_data['min_payout_amount'] = $min_payout_amount;
+            $update_formats[] = '%f';
         }
 
-        // Проверяем, что статус допустим
-        $allowed_statuses = ['active', 'noactive', 'banned', 'deleted'];
-        if (!in_array($status, $allowed_statuses)) {
-            wp_send_json_error(['message' => 'Недопустимый статус пользователя.']);
-            return;
+        if (isset($_POST['status'])) {
+            $status = sanitize_text_field($_POST['status']);
+
+            // Проверяем, что статус допустим
+            $allowed_statuses = ['active', 'noactive', 'banned', 'deleted'];
+            if (!in_array($status, $allowed_statuses)) {
+                wp_send_json_error(['message' => 'Недопустимый статус пользователя.']);
+                return;
+            }
+
+            $update_data['status'] = $status;
+            $update_formats[] = '%s';
         }
 
-        // Обновляем запись в базе данных
-        $result = $wpdb->replace(
+        if (isset($_POST['ban_reason'])) {
+            $ban_reason = sanitize_text_field($_POST['ban_reason']);
+
+            $update_data['ban_reason'] = $ban_reason;
+            $update_formats[] = '%s';
+        }
+
+        // Добавляем дату обновления
+        $update_data['updated_at'] = current_time('mysql');
+        $update_formats[] = '%s';
+
+        // Обновляем только те поля, которые были изменены
+        $result = $wpdb->update(
             $this->profile_table_name,
-            [
-                'user_id' => $user_id,
-                'cashback_rate' => $cashback_rate,
-                'min_payout_amount' => $min_payout_amount,
-                'status' => $status,
-                'ban_reason' => $ban_reason,
-                'updated_at' => current_time('mysql')
-            ],
-            ['%d', '%f', '%f', '%s', '%s', '%s']
+            $update_data,
+            ['user_id' => $user_id],
+            $update_formats,
+            ['%d']  // Формат условия
         );
 
         if ($result === false) {
@@ -452,14 +530,24 @@ class Cashback_Users_Management_Admin
             return;
         }
 
+        // Получаем обновленные данные из базы
+        $updated_user_data = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT cashback_rate, min_payout_amount, status, ban_reason, banned_at 
+                 FROM {$this->profile_table_name} 
+                 WHERE user_id = %d",
+                $user_id
+            ),
+            ARRAY_A
+        );
+
+        if (!$updated_user_data) {
+            wp_send_json_error(['message' => 'Не удалось получить обновленные данные пользователя.']);
+            return;
+        }
+
         // Возвращаем обновленные данные
-        wp_send_json_success([
-            'user_id' => $user_id,
-            'cashback_rate' => $cashback_rate,
-            'min_payout_amount' => $min_payout_amount,
-            'status' => $status,
-            'ban_reason' => $ban_reason
-        ]);
+        wp_send_json_success($updated_user_data);
     }
 
     /**
