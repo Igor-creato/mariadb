@@ -186,6 +186,22 @@ class CashbackWithdrawal
      */
     private function get_payout_method_label($method)
     {
+        global $wpdb;
+
+        // Получаем название способа вывода из базы данных
+        $table_name = $wpdb->prefix . 'cashback_payout_methods';
+        $method_name = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT name FROM {$table_name} WHERE slug = %s",
+                $method
+            )
+        );
+
+        if ($method_name) {
+            return $method_name;
+        }
+
+        // Если не найдено в базе, используем старую логику
         $labels = array(
             'sbp' => __('Система быстрых платежей (СБП)', 'woocommerce'),
             'mir' => __('Карта МИР', 'woocommerce'),

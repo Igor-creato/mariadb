@@ -9,14 +9,23 @@ jQuery(document).ready(function ($) {
 
     // Валидация
     if (!payoutMethodId) {
-      alert('Пожалуйста, выберите способ вывода');
+      $('#payout_details_message')
+        .removeClass('success')
+        .addClass('error')
+        .text('Пожалуйста, выберите способ вывода');
       return;
     }
 
     if (!payoutAccount.trim()) {
-      alert('Пожалуйста, введите номер счета или телефона');
+      $('#payout_details_message')
+        .removeClass('success')
+        .addClass('error')
+        .text('Пожалуйста, введите номер счета или телефона');
       return;
     }
+
+    // Очищаем предыдущие сообщения
+    $('#payout_details_message').text('').removeClass('success error');
 
     // Отправляем AJAX-запрос
     $.ajax({
@@ -62,12 +71,18 @@ jQuery(document).ready(function ($) {
     var payoutAccount = $('#payout_account').val();
 
     if (!payoutMethodId) {
-      alert('Пожалуйста, выберите способ вывода');
+      $('#payout_details_message')
+        .removeClass('success')
+        .addClass('error')
+        .text('Пожалуйста, выберите способ вывода');
       return false;
     }
 
     if (!payoutAccount.trim()) {
-      alert('Пожалуйста, введите номер счета или телефона');
+      $('#payout_details_message')
+        .removeClass('success')
+        .addClass('error')
+        .text('Пожалуйста, введите номер счета или телефона');
       return false;
     }
 

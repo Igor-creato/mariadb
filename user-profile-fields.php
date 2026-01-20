@@ -67,99 +67,20 @@ class CashbackUserProfileFields
                 <button type="button" class="button" id="save_payout_details_btn">Сохранить</button>
                 <span id="payout_details_message"></span>
             </p>
+
+            <!-- Отображение сохраненных данных -->
+            <?php if ($payout_method_id && $payout_account):
+                $method_name = $this->get_payout_method_name($payout_method_id);
+            ?>
+                <div class="payout-current-data">
+                    <p class="woocommerce-info">
+                        <strong>Текущие данные:</strong><br>
+                        Способ вывода: <?php echo esc_html($method_name); ?><br>
+                        Номер счета/телефона: <?php echo esc_html($payout_account); ?>
+                    </p>
+                </div>
+            <?php endif; ?>
         </fieldset>
-        <script type="text/javascript">
-            jQuery(document).ready(function($) {
-                // Обработчик для кнопки "Сохранить"
-                $('#save_payout_details_btn').on('click', function(e) {
-                    e.preventDefault();
-
-                    var payoutMethodId = $('#payout_method_id').val();
-                    var payoutAccount = $('#payout_account').val();
-                    var nonce = '<?php echo wp_create_nonce("save_payout_details_nonce"); ?>';
-
-                    // Валидация
-                    if (!payoutMethodId) {
-                        alert('Пожалуйста, выберите способ вывода');
-                        return;
-                    }
-
-                    if (!payoutAccount.trim()) {
-                        alert('Пожалуйста, введите номер счета или телефона');
-                        return;
-                    }
-
-                    // Отправляем AJAX-запрос
-                    $.ajax({
-                        url: ajax_object.ajax_url,
-                        type: 'POST',
-                        data: {
-                            action: 'save_payout_details',
-                            payout_method_id: payoutMethodId,
-                            payout_account: payoutAccount,
-                            security: nonce
-                        },
-                        beforeSend: function() {
-                            $('#save_payout_details_btn').prop('disabled', true).text('Сохранение...');
-                        },
-                        success: function(response) {
-                            if (response.success) {
-                                $('#payout_details_message')
-                                    .removeClass('error')
-                                    .addClass('success')
-                                    .text(response.data.message);
-                            } else {
-                                $('#payout_details_message')
-                                    .removeClass('success')
-                                    .addClass('error')
-                                    .text(response.data.message || 'Ошибка при сохранении данных');
-                            }
-                        },
-                        error: function() {
-                            $('#payout_details_message')
-                                .removeClass('success')
-                                .addClass('error')
-                                .text('Ошибка соединения');
-                        },
-                        complete: function() {
-                            $('#save_payout_details_btn').prop('disabled', false).text('Сохранить');
-                        }
-                    });
-                });
-
-                // Также добавим валидацию при отправке всей формы
-                $('form.edit-account').on('submit', function() {
-                    var payoutMethodId = $('#payout_method_id').val();
-                    var payoutAccount = $('#payout_account').val();
-
-                    if (!payoutMethodId) {
-                        alert('Пожалуйста, выберите способ вывода');
-                        return false;
-                    }
-
-                    if (!payoutAccount.trim()) {
-                        alert('Пожалуйста, введите номер счета или телефона');
-                        return false;
-                    }
-
-                    return true;
-                });
-            });
-        </script>
-        <style>
-            #payout_details_message {
-                margin-left: 10px;
-                padding: 5px;
-            }
-
-            #payout_details_message.success {
-                color: green;
-            }
-
-            #payout_details_message.error {
-                color: red;
-            }
-        </style>
 <?php
     }
 

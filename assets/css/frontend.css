@@ -296,6 +296,8 @@
     margin-left: 10px;
     padding: 5px 10px;
     border-radius: 3px;
+    display: inline-block;
+    margin-top: 5px;
 }
 
 #payout_details_message.success {
@@ -312,6 +314,18 @@
 
 #save_payout_details_btn {
     margin-top: 10px;
+}
+
+.payout-current-data {
+    margin-top: 15px;
+    padding: 10px;
+    background-color: #f9f9f9;
+    border: 1px solid #eee;
+    border-radius: 4px;
+}
+
+.payout-current-data .woocommerce-info {
+    margin: 0;
 }
 
 
