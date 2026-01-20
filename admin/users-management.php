@@ -94,7 +94,7 @@ class Cashback_Users_Management_Admin
                 FROM {$this->table_name} u
                 LEFT JOIN {$this->profile_table_name} cup ON u.ID = cup.user_id
                 {$where_clause}
-                ORDER BY u.ID DESC
+                ORDER BY u.ID ASC
                 LIMIT %d OFFSET %d",
                 array_merge($where_params, [$per_page, $offset])
             ),
@@ -620,24 +620,25 @@ class Cashback_Users_Management_Admin
                 'current' => $current_page,
                 'format' => $format,
                 'add_args' => $add_args,
-                'type' => 'array',
-                'prev_text' => '&laquo;',
-                'next_text' => '&raquo;',
+                'type' => 'plain',  // Используем plain для более гибкого контроля над HTML
+                'prev_text' => '&lsaquo; ' . __('Предыдущая'),
+                'next_text' => __('Следующая') . ' &rsaquo;',
             ]);
 
             if ($pagination_links) {
                 echo '<div class="tablenav bottom">';
                 echo '<div class="tablenav-pages">';
+                echo '<span class="displaying-num">' . sprintf(_n('%s запись', '%s записей', $total_items, 'cashback-plugin'), number_format_i18n($total_items)) . '</span>';
                 echo '<span class="pagination-links">';
-                echo implode('', $pagination_links);
+                echo $pagination_links;
                 echo '</span>';
-                echo '</div>';
                 echo '<br class="clear"></div>';
             }
         } else {
             // Альтернативная реализация пагинации, если paginate_links недоступна
             echo '<div class="tablenav bottom">';
             echo '<div class="tablenav-pages">';
+            echo '<span class="displaying-num">' . sprintf(_n('%s запись', '%s записей', $total_items, 'cashback-plugin'), number_format_i18n($total_items)) . '</span>';
             echo '<span class="pagination-links">';
 
             // Создаем простую пагинацию вручную
@@ -652,7 +653,7 @@ class Cashback_Users_Management_Admin
             if ($current_page > 1) {
                 $prev_page = $current_page - 1;
                 $prev_url = add_query_arg('paged', $prev_page, $base_url);
-                echo '<a class="prev-page button" href="' . esc_url($prev_url) . '">&laquo;</a>';
+                echo '<a class="prev-page button" href="' . esc_url($prev_url) . '">&lsaquo; ' . __('Предыдущая') . '</a>';
             }
 
             // Текущая страница
@@ -664,7 +665,7 @@ class Cashback_Users_Management_Admin
             if ($current_page < $total_pages) {
                 $next_page = $current_page + 1;
                 $next_url = add_query_arg('paged', $next_page, $base_url);
-                echo '<a class="next-page button" href="' . esc_url($next_url) . '">&raquo;</a>';
+                echo '<a class="next-page button" href="' . esc_url($next_url) . '">' . __('Следующая') . ' &rsaquo;</a>';
             }
 
             echo '</span>';
