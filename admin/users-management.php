@@ -28,6 +28,7 @@ class Cashback_Users_Management_Admin
 
         // Обработка AJAX запросов
         add_action('wp_ajax_update_user_profile', [$this, 'handle_update_user_profile']);
+        add_action('wp_ajax_get_user_profile', [$this, 'handle_get_user_profile']);
     }
 
     /**
@@ -89,7 +90,7 @@ class Cashback_Users_Management_Admin
         $users = $wpdb->get_results(
             $wpdb->prepare(
                 "SELECT u.ID, u.display_name, 
-                        cup.cashback_rate, cup.min_payout_amount, cup.status, cup.ban_reason
+                        cup.cashback_rate, cup.min_payout_amount, cup.status, cup.ban_reason, cup.banned_at
                 FROM {$this->table_name} u
                 LEFT JOIN {$this->profile_table_name} cup ON u.ID = cup.user_id
                 {$where_clause}
@@ -143,7 +144,7 @@ class Cashback_Users_Management_Admin
             </div>
 
             <!-- Таблица пользователей -->
-            <div class="card">
+            <div class="wp-list-table-wrap">
                 <table class="wp-list-table widefat fixed striped">
                     <thead>
                         <tr>
@@ -153,9 +154,22 @@ class Cashback_Users_Management_Admin
                             <th scope="col">Мин. сумма выплаты</th>
                             <th scope="col">Статус</th>
                             <th scope="col">Причина бана</th>
+                            <th scope="col">Дата бана</th>
                             <th scope="col">Действия</th>
                         </tr>
                     </thead>
+                    <tfoot>
+                        <tr>
+                            <th scope="col">ID</th>
+                            <th scope="col">Имя пользователя</th>
+                            <th scope="col">Ставка кэшбэка (%)</th>
+                            <th scope="col">Мин. сумма выплаты</th>
+                            <th scope="col">Статус</th>
+                            <th scope="col">Причина бана</th>
+                            <th scope="col">Дата бана</th>
+                            <th scope="col">Действия</th>
+                        </tr>
+                    </tfoot>
                     <tbody id="users-tbody">
                         <?php if (!empty($users)): ?>
                             <?php foreach ($users as $user): ?>
@@ -173,6 +187,9 @@ class Cashback_Users_Management_Admin
                                     </td>
                                     <td class="edit-field" data-field="ban_reason">
                                         <?php echo esc_html($user['ban_reason'] ?? ''); ?>
+                                    </td>
+                                    <td class="edit-field" data-field="banned_at">
+                                        <?php echo esc_html($user['banned_at'] ? date('Y-m-d H:i:s', strtotime($user['banned_at'])) : ''); ?>
                                     </td>
                                     <td>
                                         <button class="button button-secondary edit-btn">Редактировать</button>
@@ -299,6 +316,7 @@ class Cashback_Users_Management_Admin
                                 row.find('.edit-field[data-field="min_payout_amount"]').text(response.data.min_payout_amount);
                                 row.find('.edit-field[data-field="status"]').text(response.data.status);
                                 row.find('.edit-field[data-field="ban_reason"]').text(response.data.ban_reason);
+                                row.find('.edit-field[data-field="banned_at"]').text(response.data.banned_at ? response.data.banned_at : '');
 
                                 // Переключаем строку в режим просмотра
                                 row.find('.save-btn, .cancel-btn').hide();
@@ -319,16 +337,48 @@ class Cashback_Users_Management_Admin
 
                     // Сброс строки к режиму просмотра
                     function resetRowToViewMode(row) {
-                        row.find('.edit-field').each(function() {
-                            var cell = $(this);
-                            var field = cell.data('field');
-                            var currentValue = cell.find('.edit-input').val();
+                        // Обновляем строку данными из базы данных
+                        var userId = row.data('user-id');
+                        var data = {
+                            'action': 'get_user_profile',
+                            'user_id': userId,
+                            'nonce': '<?php echo wp_create_nonce('get_user_profile_nonce'); ?>'
+                        };
 
-                            if (field === 'status') {
-                                cell.text(currentValue);
+                        $.post(ajaxurl, data, function(response) {
+                            if (response.success) {
+                                row.find('.edit-field[data-field="cashback_rate"]').text(response.data.cashback_rate);
+                                row.find('.edit-field[data-field="min_payout_amount"]').text(response.data.min_payout_amount);
+                                row.find('.edit-field[data-field="status"]').text(response.data.status);
+                                row.find('.edit-field[data-field="ban_reason"]').text(response.data.ban_reason);
+                                row.find('.edit-field[data-field="banned_at"]').text(response.data.banned_at ? response.data.banned_at : '');
                             } else {
-                                cell.text(currentValue);
+                                // Если не удалось получить данные, восстанавливаем старые значения
+                                row.find('.edit-field').each(function() {
+                                    var cell = $(this);
+                                    var field = cell.data('field');
+                                    var currentValue = cell.find('.edit-input').val();
+
+                                    if (field === 'status') {
+                                        cell.text(currentValue);
+                                    } else {
+                                        cell.text(currentValue);
+                                    }
+                                });
                             }
+                        }).fail(function() {
+                            // Если ошибка соединения, восстанавливаем старые значения
+                            row.find('.edit-field').each(function() {
+                                var cell = $(this);
+                                var field = cell.data('field');
+                                var currentValue = cell.find('.edit-input').val();
+
+                                if (field === 'status') {
+                                    cell.text(currentValue);
+                                } else {
+                                    cell.text(currentValue);
+                                }
+                            });
                         });
 
                         row.find('.save-btn, .cancel-btn').hide();
@@ -410,6 +460,53 @@ class Cashback_Users_Management_Admin
             'status' => $status,
             'ban_reason' => $ban_reason
         ]);
+    }
+
+    /**
+     * Обработка AJAX запроса на получение профиля пользователя
+     */
+    public function handle_get_user_profile(): void
+    {
+        // Проверяем nonce
+        if (!wp_verify_nonce(sanitize_text_field($_POST['nonce']), 'get_user_profile_nonce')) {
+            wp_send_json_error(['message' => 'Неверный nonce.']);
+            return;
+        }
+
+        // Проверяем права пользователя
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Недостаточно прав для выполнения этого действия.']);
+            return;
+        }
+
+        global $wpdb;
+
+        $user_id = intval($_POST['user_id']);
+
+        // Получаем данные пользователя из базы данных
+        $user_data = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT cashback_rate, min_payout_amount, status, ban_reason, banned_at 
+                 FROM {$this->profile_table_name} 
+                 WHERE user_id = %d",
+                $user_id
+            ),
+            ARRAY_A
+        );
+
+        if (!$user_data) {
+            // Если записи нет, возвращаем значения по умолчанию
+            $user_data = [
+                'cashback_rate' => '60.00',
+                'min_payout_amount' => '100.00',
+                'status' => 'active',
+                'ban_reason' => '',
+                'banned_at' => null
+            ];
+        }
+
+        // Возвращаем данные
+        wp_send_json_success($user_data);
     }
 
     /**
