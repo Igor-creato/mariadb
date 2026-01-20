@@ -148,9 +148,9 @@ class Cashback_Payout_Methods_Admin
                 </div>
 
                 <!-- Таблица существующих способов выплаты -->
-                <div class="card">
-                    <h2 class="title">Существующие способы выплаты</h2>
+                <h2 class="title">Существующие способы выплаты</h2>
 
+                <div class="wp-list-table-wrapper">
                     <table class="wp-list-table widefat fixed striped">
                         <thead>
                             <tr>
