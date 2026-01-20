@@ -273,5 +273,46 @@
     color: #333;
 }
 
+/* Стили для полей профиля пользователя */
+.woocommerce-form .woocommerce-account-fields fieldset {
+    border: 1px solid #d3ced2;
+    padding: 20px;
+    margin: 20px 0;
+    border-radius: 4px;
+}
+
+.woocommerce-form .woocommerce-account-fields legend {
+    font-weight: bold;
+    padding: 0 10px;
+    background: white;
+}
+
+.woocommerce-form-row--first,
+.woocommerce-form-row--last {
+    margin-bottom: 1em;
+}
+
+#payout_details_message {
+    margin-left: 10px;
+    padding: 5px 10px;
+    border-radius: 3px;
+}
+
+#payout_details_message.success {
+    color: #46b450;
+    background-color: #ecf7ee;
+    border: 1px solid #46b450;
+}
+
+#payout_details_message.error {
+    color: #dc3232;
+    background-color: #ffeae9;
+    border: 1px solid #dc3232;
+}
+
+#save_payout_details_btn {
+    margin-top: 10px;
+}
+
 
 

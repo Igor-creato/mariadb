@@ -51,6 +51,7 @@ class CashbackPlugin
         $this->require_file('cashback-withdrawal.php');
         $this->require_file('history-payout.php');
         $this->require_file('wc-affiliate-url-params.php');
+        $this->require_file('user-profile-fields.php');
         $this->require_file('admin/payout-methods.php');
         $this->require_file('admin/users-management.php');
     }
