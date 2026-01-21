@@ -201,7 +201,7 @@ class HistoryPayout
         if (is_account_page() && $this->is_history_payout_page()) {
             wp_enqueue_script(
                 'history-payout-ajax',
-                plugin_dir_url(__FILE__) . 'assets/css/history-payout.js',
+                plugin_dir_url(__FILE__) . 'assets/js/history-payout.js',
                 array('jquery'),
                 '1.0.0',
                 true
