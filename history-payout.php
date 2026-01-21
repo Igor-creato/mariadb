@@ -224,7 +224,7 @@ class HistoryPayout
         switch ($status) {
             case 'waiting':
                 return __('В обработке', 'history-payout');
-            case 'payd':
+            case 'paid':
                 return __('Выплачен', 'history-payout');
             case 'declined':
                 return __('Отклонен', 'history-payout');

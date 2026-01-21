@@ -77,11 +77,17 @@ class Mariadb_Plugin
             `total_amount` decimal(18,2) NOT NULL,
             `payout_method` varchar(255) NOT NULL COMMENT 'Способ выплаты (например: СБП, карта, юmoney)',
             `payout_account` varchar(255) NOT NULL COMMENT 'Реквизиты получателя (номер телефона, карты и т.п.)',
-            `status` enum('waiting','payd','declined') NOT NULL DEFAULT 'waiting',
+            `provider` varchar(100) DEFAULT NULL COMMENT 'Идентификатор провайдера выплат (банк/сервис)',
+            `provider_payout_id` varchar(255) DEFAULT NULL COMMENT 'ID операции у провайдера',
+            `attempts` int(11) NOT NULL DEFAULT 0 COMMENT 'Количество попыток отправки выплаты',
+            `fail_reason` text DEFAULT NULL COMMENT 'Код/описание ошибки последней попытки',
+            `status` enum('waiting','processing','paid','failed','declined') NOT NULL DEFAULT 'waiting',
             `created_at` datetime DEFAULT current_timestamp(),
             `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp(),
             PRIMARY KEY (`id`),
             KEY `idx_user_status` (`user_id`,`status`),
+            KEY `idx_status_updated` (`status`,`updated_at`),
+            KEY `idx_provider_payout_id` (`provider_payout_id`),
             CONSTRAINT `fk_payout_user` FOREIGN KEY (`user_id`) REFERENCES `{$wpdb->prefix}users` (`ID`) ON DELETE CASCADE
         ) ENGINE=InnoDB {$charset_collate};";
 
@@ -300,9 +306,9 @@ class Mariadb_Plugin
             "CREATE TRIGGER `{$wpdb->prefix}tr_prevent_delete_paid_payout`
             BEFORE DELETE ON `{$wpdb->prefix}cashback_payout_requests`
             FOR EACH ROW
-            --  'Запрещает удаление заявок на выплату со статусом ''payd'' выплачена'
+            --  'Запрещает удаление заявок на выплату со статусом ''paid'' выплачена'
             BEGIN
-                IF OLD.status = 'payd' THEN
+                IF OLD.status = 'paid' THEN
                     SIGNAL SQLSTATE '45000'
                     SET MESSAGE_TEXT = 'Удаление запрещено: выплаченная заявка не может быть удалена.';
                 END IF;
@@ -311,9 +317,9 @@ class Mariadb_Plugin
             "CREATE TRIGGER `{$wpdb->prefix}tr_prevent_update_paid_payout`
             BEFORE UPDATE ON `{$wpdb->prefix}cashback_payout_requests`
             FOR EACH ROW
-            --  'Запрещает изменение заявок на выплату со статусом ''payd'' выплачена'
+            --  'Запрещает изменение заявок на выплату со статусом ''paid'' выплачена'
             BEGIN
-                IF OLD.status = 'payd' THEN
+                IF OLD.status = 'paid' THEN
                     SIGNAL SQLSTATE '45000'
                     SET MESSAGE_TEXT = 'Изменение запрещено: выплаченная заявка не может быть изменена.';
                 END IF;
