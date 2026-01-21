@@ -310,9 +310,12 @@ class Cashback_Payouts_Admin
                             var field = cell.data('field');
                             var currentValue = cell.text();
 
+                            // Устанавливаем минимальную ширину для ячейки, чтобы она не сжималась
+                            cell.css('min-width', cell.width() + 'px');
+
                             if (field === 'status') {
                                 // Для поля status создаем select
-                                var selectHtml = '<select class="edit-input" data-field="' + field + '">';
+                                var selectHtml = '<select class="edit-input" data-field="' + field + '" style="width:100%; box-sizing:border-box;">';
                                 selectHtml += '<option value="waiting"' + (currentValue === 'waiting' ? ' selected' : '') + '>waiting</option>';
                                 selectHtml += '<option value="processing"' + (currentValue === 'processing' ? ' selected' : '') + '>processing</option>';
                                 selectHtml += '<option value="paid"' + (currentValue === 'paid' ? ' selected' : '') + '>paid</option>';
@@ -322,10 +325,10 @@ class Cashback_Payouts_Admin
                                 cell.html(selectHtml);
                             } else if (field === 'attempts') {
                                 // Для числового поля attempts создаем input
-                                cell.html('<input type="number" min="0" class="edit-input regular-text" data-field="' + field + '" value="' + currentValue + '" />');
+                                cell.html('<input type="number" min="0" class="edit-input regular-text" data-field="' + field + '" value="' + currentValue + '" style="width:100%; box-sizing:border-box;" />');
                             } else {
                                 // Для остальных полей создаем input
-                                cell.html('<input type="text" class="edit-input regular-text" data-field="' + field + '" value="' + currentValue + '" />');
+                                cell.html('<input type="text" class="edit-input regular-text" data-field="' + field + '" value="' + currentValue + '" style="width:100%; box-sizing:border-box;" />');
                             }
                         });
 
@@ -419,6 +422,9 @@ class Cashback_Payouts_Admin
                                     var cell = $(this).closest('.edit-field');
                                     var field = $(this).data('field');
                                     cell.text(response.data[field] || '');
+
+                                    // Восстанавливаем исходные стили ячейки
+                                    cell.css('min-width', '');
                                 });
 
                                 row.find('.save-btn, .cancel-btn').hide();
@@ -450,6 +456,9 @@ class Cashback_Payouts_Admin
                             } else {
                                 cell.text(currentValue);
                             }
+
+                            // Восстанавливаем исходные стили ячейки
+                            cell.css('min-width', '');
                         });
 
                         row.find('.save-btn, .cancel-btn').hide();
