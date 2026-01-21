@@ -412,17 +412,17 @@ class Cashback_Payouts_Admin
                         $.post(ajaxurl, data, function(response) {
                             if (response.success) {
                                 // Обновляем все значения в ячейках, используя полученные данные из базы
-                                row.find('.edit-field[data-field="provider"]').text(response.data.provider || '');
-                                row.find('.edit-field[data-field="provider_payout_id"]').text(response.data.provider_payout_id || '');
-                                row.find('.edit-field[data-field="attempts"]').text(response.data.attempts);
-                                row.find('.edit-field[data-field="fail_reason"]').text(response.data.fail_reason || '');
-                                row.find('.edit-field[data-field="status"]').text(response.data.status);
+                                row.find('.edit-field[data-field="provider"]').text(response.data.payout_data.provider || '');
+                                row.find('.edit-field[data-field="provider_payout_id"]').text(response.data.payout_data.provider_payout_id || '');
+                                row.find('.edit-field[data-field="attempts"]').text(response.data.payout_data.attempts);
+                                row.find('.edit-field[data-field="fail_reason"]').text(response.data.payout_data.fail_reason || '');
+                                row.find('.edit-field[data-field="status"]').text(response.data.payout_data.status);
 
                                 // Переключаем строку в режим просмотра
                                 row.find('.edit-input').each(function() {
                                     var cell = $(this).closest('.edit-field');
                                     var field = $(this).data('field');
-                                    cell.text(response.data[field] || '');
+                                    cell.text(response.data.payout_data[field] || '');
 
                                     // Восстанавливаем исходные стили ячейки
                                     cell.css('min-width', '');
@@ -430,6 +430,20 @@ class Cashback_Payouts_Admin
 
                                 row.find('.save-btn, .cancel-btn').hide();
                                 row.find('.edit-btn').show();
+
+                                // Обновляем выпадающий список фильтра по статусам
+                                var statusFilter = $('#filter-status');
+                                var currentSelected = statusFilter.val(); // Сохраняем текущий выбранный статус
+
+                                // Очищаем текущие опции, кроме "Все статусы"
+                                statusFilter.empty();
+                                statusFilter.append('<option value="">Все статусы</option>');
+
+                                // Добавляем обновленные опции статусов
+                                $.each(response.data.statuses, function(index, status) {
+                                    var isSelected = (status === currentSelected) ? ' selected' : '';
+                                    statusFilter.append('<option value="' + status + '"' + isSelected + '>' + status + '</option>');
+                                });
 
                                 // Показываем сообщение об успешном обновлении
                                 $('.wp-header-end').after('<div class="notice notice-success is-dismissible"><p>Запрос на выплату успешно обновлен.</p></div>');
@@ -618,8 +632,19 @@ class Cashback_Payouts_Admin
             return;
         }
 
-        // Возвращаем обновленные данные
-        wp_send_json_success($updated_payout_data);
+        // Получаем уникальные статусы для обновления фильтра
+        $statuses = $wpdb->get_col(
+            "SELECT DISTINCT status 
+            FROM {$this->table_name} 
+            WHERE status IS NOT NULL 
+            ORDER BY status ASC"
+        );
+
+        // Возвращаем обновленные данные и статусы
+        wp_send_json_success([
+            'payout_data' => $updated_payout_data,
+            'statuses' => $statuses
+        ]);
     }
 
     /**
