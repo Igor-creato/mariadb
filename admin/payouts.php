@@ -26,6 +26,7 @@ class Cashback_Payouts_Admin
 
         // Обработка AJAX запросов
         add_action('wp_ajax_update_payout_request', [$this, 'handle_update_payout_request']);
+        add_action('wp_ajax_get_payout_request', [$this, 'handle_get_payout_request']);
     }
 
     /**
@@ -443,26 +444,53 @@ class Cashback_Payouts_Admin
                         });
                     });
 
+                    // Загрузка актуальных данных из базы
+                    function loadPayoutData(payoutId, callback) {
+                        var data = {
+                            'action': 'get_payout_request',
+                            'payout_id': payoutId,
+                            'nonce': '<?php echo wp_create_nonce('get_payout_request_nonce'); ?>'
+                        };
+
+                        $.post(ajaxurl, data, function(response) {
+                            if (response.success) {
+                                callback(null, response.data);
+                            } else {
+                                callback(response.data.message || 'Ошибка при загрузке данных выплаты', null);
+                            }
+                        }).fail(function() {
+                            callback('Ошибка соединения при загрузке данных выплаты', null);
+                        });
+                    }
+
                     // Сброс строки к режиму просмотра
                     function resetRowToViewMode(row) {
-                        // Восстанавливаем старые значения
-                        row.find('.edit-field').each(function() {
-                            var cell = $(this);
-                            var field = cell.data('field');
-                            var currentValue = cell.find('.edit-input').val();
+                        var payoutId = row.data('payout-id');
 
-                            if (field === 'status') {
-                                cell.text(currentValue);
-                            } else {
-                                cell.text(currentValue);
+                        // Загружаем актуальные данные из базы
+                        loadPayoutData(payoutId, function(error, payoutData) {
+                            if (error) {
+                                console.error('Ошибка загрузки данных выплаты:', error);
+                                alert('Ошибка загрузки данных выплаты: ' + error);
+                                return;
                             }
 
-                            // Восстанавливаем исходные стили ячейки
-                            cell.css('min-width', '');
-                        });
+                            // Обновляем все значения в ячейках, используя полученные данные из базы
+                            row.find('.edit-field[data-field="provider"]').text(payoutData.provider || '');
+                            row.find('.edit-field[data-field="provider_payout_id"]').text(payoutData.provider_payout_id || '');
+                            row.find('.edit-field[data-field="attempts"]').text(payoutData.attempts);
+                            row.find('.edit-field[data-field="fail_reason"]').text(payoutData.fail_reason || '');
+                            row.find('.edit-field[data-field="status"]').text(payoutData.status);
 
-                        row.find('.save-btn, .cancel-btn').hide();
-                        row.find('.edit-btn').show();
+                            // Восстанавливаем исходные стили ячеек
+                            row.find('.edit-field').each(function() {
+                                var cell = $(this);
+                                cell.css('min-width', '');
+                            });
+
+                            row.find('.save-btn, .cancel-btn').hide();
+                            row.find('.edit-btn').show();
+                        });
                     }
                 });
             </script>
@@ -576,6 +604,47 @@ class Cashback_Payouts_Admin
 
         // Возвращаем обновленные данные
         wp_send_json_success($updated_payout_data);
+    }
+
+    /**
+     * Обработка AJAX запроса на получение данных запроса выплаты
+     */
+    public function handle_get_payout_request(): void
+    {
+        // Проверяем nonce
+        if (!wp_verify_nonce(sanitize_text_field($_POST['nonce']), 'get_payout_request_nonce')) {
+            wp_send_json_error(['message' => 'Неверный nonce.']);
+            return;
+        }
+
+        // Проверяем права пользователя
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Недостаточно прав для выполнения этого действия.']);
+            return;
+        }
+
+        global $wpdb;
+
+        $payout_id = intval($_POST['payout_id']);
+
+        // Получаем данные из базы
+        $payout_data = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT provider, provider_payout_id, attempts, fail_reason, status 
+                 FROM {$this->table_name} 
+                 WHERE id = %d",
+                $payout_id
+            ),
+            ARRAY_A
+        );
+
+        if (!$payout_data) {
+            wp_send_json_error(['message' => 'Не удалось получить данные запроса выплаты.']);
+            return;
+        }
+
+        // Возвращаем данные
+        wp_send_json_success($payout_data);
     }
 
     /**
