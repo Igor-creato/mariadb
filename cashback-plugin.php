@@ -54,6 +54,7 @@ class CashbackPlugin
         $this->require_file('user-profile-fields.php');
         $this->require_file('admin/payout-methods.php');
         $this->require_file('admin/users-management.php');
+        $this->require_file('admin/payouts.php');
     }
 
     private function require_file($filename)
