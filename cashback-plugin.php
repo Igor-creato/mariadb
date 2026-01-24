@@ -26,7 +26,28 @@ class CashbackPlugin
         $this->require_file('mariadb.php');
         // Активация основного функционала (таблицы, триггеры, события)
         if (class_exists('Mariadb_Plugin')) {
-            Mariadb_Plugin::activate();
+            try {
+                Mariadb_Plugin::activate();
+            } catch (Exception $e) {
+                // Логируем детальную ошибку
+                error_log('Cashback Plugin Activation Error: ' . $e->getMessage());
+                error_log('Stack trace: ' . $e->getTraceAsString());
+                // Показываем пользователю
+                wp_die(
+                    '<h1>Ошибка активации плагина</h1>' .
+                        '<p><strong>Cashback Plugin:</strong> ' . esc_html($e->getMessage()) . '</p>' .
+                        '<p>Проверьте логи ошибок для получения дополнительной информации.</p>',
+                    'Ошибка активации плагина',
+                    array('back_link' => true)
+                );
+            }
+        } else {
+            wp_die(
+                '<h1>Ошибка активации плагина</h1>' .
+                    '<p><strong>Cashback Plugin:</strong> Класс Mariadb_Plugin не найден.</p>',
+                'Ошибка активации плагина',
+                array('back_link' => true)
+            );
         }
         // Сбрасываем переписывание URL
         flush_rewrite_rules();

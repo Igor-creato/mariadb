@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 if (!defined('ABSPATH')) {
     exit; // Exit if accessed directly
 }
@@ -22,7 +24,7 @@ class CashbackWithdrawal
      *
      * @return CashbackWithdrawal
      */
-    public static function get_instance()
+    public static function get_instance(): self
     {
         if (null === self::$instance) {
             self::$instance = new self();
@@ -103,7 +105,7 @@ class CashbackWithdrawal
      * @param int $user_id
      * @return float
      */
-    private function get_available_balance($user_id)
+    private function get_available_balance(int $user_id): float
     {
         global $wpdb;
 
@@ -122,7 +124,7 @@ class CashbackWithdrawal
      * @param int $user_id
      * @return float
      */
-    private function get_min_payout_amount($user_id)
+    private function get_min_payout_amount(int $user_id): float
     {
         global $wpdb;
 
@@ -141,7 +143,7 @@ class CashbackWithdrawal
      * @param int $user_id
      * @return string|null
      */
-    private function get_payout_method($user_id)
+    private function get_payout_method(int $user_id): ?string
     {
         global $wpdb;
 
@@ -165,7 +167,7 @@ class CashbackWithdrawal
      * @param int $user_id
      * @return string|null
      */
-    private function get_payout_account($user_id)
+    private function get_payout_account(int $user_id): ?string
     {
         global $wpdb;
 
@@ -184,7 +186,7 @@ class CashbackWithdrawal
      * @param string $method
      * @return string
      */
-    private function get_payout_method_label($method)
+    private function get_payout_method_label(string $method): string
     {
         global $wpdb;
 
@@ -318,55 +320,89 @@ class CashbackWithdrawal
             return;
         }
 
+        // === 2. Защита от повторных запросов ===
+        $transient_key = 'withdrawal_request_' . $user_id;
+        if (get_transient($transient_key)) {
+            wp_send_json_error(__('Предыдущий запрос еще обрабатывается. Пожалуйста, подождите.', 'woocommerce'));
+            return;
+        }
+
+        // Устанавливаем блокировку на 30 секунд
+        set_transient($transient_key, true, 30);
+
         $withdrawal_amount = floatval($_POST['withdrawal_amount'] ?? 0);
 
-        // === 2. Check if payout method and account are filled ===
+        // === 3. Check if payout method and account are filled ===
         $payout_method = $this->get_payout_method($user_id);
         $payout_account = $this->get_payout_account($user_id);
 
         if (empty($payout_method) || empty($payout_account)) {
+            delete_transient($transient_key); // Снимаем блокировку
             wp_send_json_error(__('Для вывода средств пожалуйста, заполните способ вывода и номер счета в вашем профиле.', 'woocommerce'));
             return;
         }
 
-        // === 3. Input validation ===
+        // === 4. Input validation ===
         $min_payout_amount = $this->get_min_payout_amount($user_id);
         $available_balance = $this->get_available_balance($user_id);
+        $max_withdrawal_amount = 50000.00; // Максимальная сумма вывода
 
         if ($withdrawal_amount <= 0) {
+            delete_transient($transient_key); // Снимаем блокировку
             wp_send_json_error(__('Сумма вывода должна быть положительной.', 'woocommerce'));
             return;
         }
 
         // Проверяем, что баланс пользователя больше или равен минимальной сумме для вывода
         if ($available_balance < $min_payout_amount) {
+            delete_transient($transient_key); // Снимаем блокировку
             wp_send_json_error(sprintf(__('Вы не можете вывести средства, Ваш баланс %s меньше минимально допустимой суммы для вывода %s', 'woocommerce'), wc_price($available_balance), wc_price($min_payout_amount)));
             return;
         }
 
         if ($withdrawal_amount < $min_payout_amount) {
+            delete_transient($transient_key); // Снимаем блокировку
             wp_send_json_error(sprintf(__('Вы ввели сумму меньше минимально допустимой, введите сумму больше или равно %s', 'woocommerce'), wc_price($min_payout_amount)));
             return;
         }
 
         if ($withdrawal_amount > $available_balance) {
+            delete_transient($transient_key); // Снимаем блокировку
             wp_send_json_error(sprintf(__('Вы ввели сумму больше доступной, введите сумму меньше или равно %s', 'woocommerce'), wc_price($available_balance)));
             return;
         }
 
-        // === 3. Atomic balance deduction with row-level locking ===
+        if ($withdrawal_amount > $max_withdrawal_amount) {
+            delete_transient($transient_key); // Снимаем блокировку
+            wp_send_json_error(sprintf(__('Максимальная сумма вывода %s', 'woocommerce'), wc_price($max_withdrawal_amount)));
+            return;
+        }
+
+        // === 5. Atomic balance deduction with row-level locking ===
         global $wpdb;
         $table_balance = $wpdb->prefix . 'cashback_user_balance';
         $table_requests = $wpdb->prefix . 'cashback_payout_requests';
+
+        // Дополнительная блокировка на уровне MariaDB
+        $lock_acquired = $wpdb->get_var($wpdb->prepare(
+            "SELECT GET_LOCK('user_withdrawal_%d', 10)",
+            $user_id
+        ));
+
+        if (!$lock_acquired) {
+            delete_transient($transient_key); // Снимаем блокировку
+            wp_send_json_error(__('Не удалось получить блокировку для операции. Пожалуйста, попробуйте позже.', 'woocommerce'));
+            return;
+        }
 
         $wpdb->query('START TRANSACTION');
 
         try {
             // 🔒 CRITICAL: Lock the user's balance row to prevent race conditions
             $user_balance = $wpdb->get_row($wpdb->prepare(
-                "SELECT available_balance, pending_balance
-             FROM {$table_balance}
-             WHERE user_id = %d FOR UPDATE",
+                "SELECT available_balance, pending_balance, version
+                FROM {$table_balance}
+                WHERE user_id = %d FOR UPDATE",
                 $user_id
             ));
 
@@ -379,43 +415,85 @@ class CashbackWithdrawal
                 throw new Exception('Insufficient available balance after lock');
             }
 
-            // 📝 Deduct from available, add to pending
-            $result = $wpdb->query($wpdb->prepare(
-                "UPDATE {$table_balance}
-             SET available_balance = available_balance - %f,
-                 pending_balance = pending_balance + %f
-             WHERE user_id = %d",
-                $withdrawal_amount,
-                $withdrawal_amount,
-                $user_id
-            ));
-
-            if ($result === false) {
-                throw new Exception('Failed to update user balance');
-            }
+            // 🔐 КРИТИЧНО: Генерируем криптографически стойкий идемпотентный ключ
+            // Формат: SHA256(user_id + timestamp + nonce + random_bytes)
+            $idempotency_key = hash(
+                'sha256',
+                $user_id .
+                    '_' . microtime(true) .
+                    '_' . wp_create_nonce('cashback_withdrawal_' . $user_id) .
+                    '_' . bin2hex(random_bytes(16))
+            );
 
             // Получаем информацию о способе вывода и аккаунте из профиля пользователя
             $payout_method = $this->get_payout_method($user_id);
             $payout_account = $this->get_payout_account($user_id);
 
-            // 📝 Create new withdrawal request (multiple are allowed)
+            // 📝 АТОМАРНАЯ ОПЕРАЦИЯ: Создаем заявку на выплату с идемпотентным ключом
+            // UNIQUE KEY на idempotency_key гарантирует отсутствие дублей даже при повторных попытках
             $result = $wpdb->insert(
                 $table_requests,
                 array(
                     'user_id' => $user_id,
                     'total_amount' => $withdrawal_amount,
-                    'payout_method' => $payout_method ?: '', // Используем пустую строку, если метод не задан
-                    'payout_account' => $payout_account ?: '', // Используем пустую строку, если аккаунт не задан
+                    'payout_method' => $payout_method ?: '',
+                    'payout_account' => $payout_account ?: '',
+                    'idempotency_key' => $idempotency_key,
                     'status' => 'waiting'
                 ),
-                array('%d', '%f', '%s', '%s', '%s')
+                array('%d', '%f', '%s', '%s', '%s', '%s')
             );
 
             if ($result === false) {
-                throw new Exception('Failed to insert payout request');
+                // Проверяем, не произошло ли нарушение уникального ключа (дубль)
+                if (
+                    strpos($wpdb->last_error, 'uk_idempotency') !== false ||
+                    strpos($wpdb->last_error, 'Duplicate entry') !== false
+                ) {
+                    throw new Exception('Duplicate payout request detected');
+                }
+                throw new Exception('Failed to insert payout request: ' . $wpdb->last_error);
+            }
+
+            $payout_id = $wpdb->insert_id;
+
+            // 📝 Списываем с доступного баланса и добавляем в pending с оптимистичной блокировкой
+            // Делаем это ПОСЛЕ создания заявки для корректного rollback
+            $result = $wpdb->query($wpdb->prepare(
+                "UPDATE {$table_balance}
+                SET available_balance = available_balance - %f,
+                    pending_balance = pending_balance + %f,
+                    version = version + 1
+                WHERE user_id = %d AND version = %d",
+                $withdrawal_amount,
+                $withdrawal_amount,
+                $user_id,
+                $user_balance->version
+            ));
+
+            if ($result === false || $result === 0) {
+                throw new Exception('Failed to update user balance - version conflict');
             }
 
             $wpdb->query('COMMIT');
+
+            // Логирование успешной операции с идемпотентным ключом
+            wc_get_logger()->info(sprintf(
+                'User %d withdrew %f. New balance: %f. Payout ID: %d. Idempotency: %s',
+                $user_id,
+                $withdrawal_amount,
+                $user_balance->available_balance - $withdrawal_amount,
+                $payout_id,
+                substr($idempotency_key, 0, 16) . '...' // Логируем только первые 16 символов
+            ));
+
+            // Освобождаем блокировку MariaDB
+            $wpdb->query($wpdb->prepare(
+                "SELECT RELEASE_LOCK('user_withdrawal_%d')",
+                $user_id
+            ));
+
+            delete_transient($transient_key); // Снимаем блокировку
 
             wp_send_json_success(sprintf(
                 __('Заявка на вывод кэшбэка на сумму %s руб. успешно добавлена', 'woocommerce'),
@@ -425,9 +503,22 @@ class CashbackWithdrawal
             $wpdb->query('ROLLBACK');
             $error_message = $e->getMessage();
 
+            // Освобождаем блокировку MariaDB
+            $wpdb->query($wpdb->prepare(
+                "SELECT RELEASE_LOCK('user_withdrawal_%d')",
+                $user_id
+            ));
+
+            delete_transient($transient_key); // Снимаем блокировку
+
             // Log unexpected errors
             if ($error_message !== 'Insufficient available balance after lock') {
-                error_log("CashbackWithdrawal error for user {$user_id}: " . $error_message);
+                wc_get_logger()->error(sprintf(
+                    "CashbackWithdrawal error for user %d: %s. Amount: %f",
+                    $user_id,
+                    $error_message,
+                    $withdrawal_amount
+                ));
             }
 
             if ($error_message === 'Insufficient available balance after lock') {

@@ -1,11 +1,13 @@
 <?php
 
+declare(strict_types=1);
+
 if (!defined('ABSPATH')) {
     exit; // Защита от прямого доступа
 }
 
 /**
- * Основной класс плагина
+ * Основной класс плагина для управления базой данных кэшбэка
  */
 class Mariadb_Plugin
 {
@@ -16,8 +18,10 @@ class Mariadb_Plugin
 
     /**
      * Получить экземпляр класса
+     *
+     * @return self
      */
-    public static function get_instance()
+    public static function get_instance(): self
     {
         if (null === self::$instance) {
             self::$instance = new self();
@@ -36,8 +40,10 @@ class Mariadb_Plugin
 
     /**
      * Активация плагина
+     *
+     * @return void
      */
-    public static function activate()
+    public static function activate(): void
     {
         $instance = self::get_instance();
 
@@ -53,7 +59,7 @@ class Mariadb_Plugin
             ob_end_clean();
         } catch (Exception $e) {
             ob_end_clean();
-            error_log('Mariadb Plugin Activation Error: ' . $e->getMessage());
+            wc_get_logger()->error('Mariadb Plugin Activation Error: ' . $e->getMessage());
             wp_die('Ошибка активации плагина Mariadb: ' . esc_html($e->getMessage()));
         }
 
@@ -70,7 +76,7 @@ class Mariadb_Plugin
 
         $charset_collate = "DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
 
-        // Таблица cashback_payout_requests
+        // Таблица cashback_payout_requests с защитой от дублирования
         $table1 = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_payout_requests` (
             `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
             `user_id` bigint(20) unsigned NOT NULL,
@@ -79,40 +85,56 @@ class Mariadb_Plugin
             `payout_account` varchar(255) NOT NULL COMMENT 'Реквизиты получателя (номер телефона, карты и т.п.)',
             `provider` varchar(100) DEFAULT NULL COMMENT 'Идентификатор провайдера выплат (банк/сервис)',
             `provider_payout_id` varchar(255) DEFAULT NULL COMMENT 'ID операции у провайдера',
+            `idempotency_key` char(64) NOT NULL COMMENT 'Ключ идемпотентности для предотвращения дублирования выплат',
             `attempts` int(11) NOT NULL DEFAULT 0 COMMENT 'Количество попыток отправки выплаты',
             `fail_reason` text DEFAULT NULL COMMENT 'Код/описание ошибки последней попытки',
             `status` enum('waiting','processing','paid','failed','declined') NOT NULL DEFAULT 'waiting',
             `created_at` datetime DEFAULT current_timestamp(),
             `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp(),
             PRIMARY KEY (`id`),
+            UNIQUE KEY `uk_idempotency` (`idempotency_key`) COMMENT 'Гарантирует уникальность заявки на выплату',
             KEY `idx_user_status` (`user_id`,`status`),
             KEY `idx_status_updated` (`status`,`updated_at`),
             KEY `idx_provider_payout_id` (`provider_payout_id`),
-            CONSTRAINT `fk_payout_user` FOREIGN KEY (`user_id`) REFERENCES `{$wpdb->prefix}users` (`ID`) ON DELETE CASCADE
-        ) ENGINE=InnoDB {$charset_collate};";
+            CONSTRAINT `fk_payout_user` FOREIGN KEY (`user_id`) REFERENCES `{$wpdb->prefix}users` (`ID`) ON DELETE CASCADE,
+            CHECK (total_amount > 0)
+        ) ENGINE=InnoDB {$charset_collate} COMMENT='Заявки на выплаты с защитой от дублирования';";
 
         // Таблица cashback_transactions
         $table2 = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_transactions` (
-            `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-            `user_id` bigint(20) unsigned NOT NULL,
-            `order_number` varchar(255) NOT NULL,
-            `offer_name` varchar(255) DEFAULT NULL,
-            `order_status` enum('waiting','completed','declined','balance') NOT NULL DEFAULT 'waiting',
-            `partner` varchar(255) DEFAULT NULL,
-            `sum_order` decimal(10,2) DEFAULT NULL,
-            `commission` decimal(10,2) DEFAULT NULL,
-            `uniq_id` varchar(255) DEFAULT NULL,
-            `cashback` decimal(10,2) DEFAULT NULL,
-            `applied_cashback_rate` decimal(5,2) DEFAULT 60.00 COMMENT 'Процент кэшбэка на момент создания транзакции',
-            `created_at` timestamp NULL DEFAULT current_timestamp(),
-            `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+           `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+           `user_id` bigint(20) unsigned NOT NULL,
+           `order_number` varchar(255) NOT NULL,
+           `offer_name` varchar(255) DEFAULT NULL,
+           `order_status` enum('waiting','completed','declined','balance') NOT NULL DEFAULT 'waiting',
+           `partner` varchar(255) DEFAULT NULL,
+           `sum_order` decimal(10,2) DEFAULT NULL,
+           `commission` decimal(10,2) DEFAULT NULL,
+           `uniq_id` varchar(255) DEFAULT NULL,
+           `cashback` decimal(10,2) DEFAULT NULL,
+           `applied_cashback_rate` decimal(5,2) NOT NULL DEFAULT 60.00 COMMENT 'Процент кэшбэка на момент создания транзакции',
+           `processed_at` datetime DEFAULT NULL  COMMENT 'Когда транзакция была учтена в балансе',
+           `processed_batch_id` char(36) DEFAULT NULL COMMENT 'UUID батча начисления',
+           `idempotency_key` varchar(64) DEFAULT NULL COMMENT 'Ключ идемпотентности для предотвращения дублирования транзакций',
+           `created_at` timestamp NULL DEFAULT current_timestamp(),
+           `updated_at` timestamp NULL DEFAULT current_timestamp()
+           ON UPDATE current_timestamp(),
             PRIMARY KEY (`id`),
             UNIQUE KEY `unique_uniq_partner` (`uniq_id`,`partner`),
+            UNIQUE KEY `idx_idempotency_key` (`idempotency_key`),
             KEY `user_id` (`user_id`),
             KEY `idx_order_status_updated_cashback` (`order_status`,`updated_at`,`cashback`),
-            CONSTRAINT `fk_transactions_user` FOREIGN KEY (`user_id`) REFERENCES `{$wpdb->prefix}users` (`ID`) ON DELETE CASCADE,
-            CONSTRAINT `chk_applied_cashback_rate_range` CHECK (`applied_cashback_rate` BETWEEN 0.00 AND 100.00)
+            KEY `idx_processed` (`processed_at`),
+            KEY `idx_processed_batch_id` (`processed_batch_id`),
+            CONSTRAINT `fk_transactions_user`
+            FOREIGN KEY (`user_id`)
+            REFERENCES `{$wpdb->prefix}users` (`ID`)
+            ON DELETE CASCADE,
+            CONSTRAINT `chk_applied_cashback_rate_range`
+            CHECK (`applied_cashback_rate` BETWEEN 0.00 AND 100.00)
         ) ENGINE=InnoDB {$charset_collate};";
+
+
 
         // Таблица cashback_unregistered_transactions
         $table3 = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_unregistered_transactions` (
@@ -137,13 +159,23 @@ class Mariadb_Plugin
         // Таблица cashback_user_balance
         $table4 = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_user_balance` (
             `user_id` bigint(20) unsigned NOT NULL,
-            `available_balance` decimal(18,2) NOT NULL DEFAULT 0.0 COMMENT 'Доступный баланс пользователя',
-            `pending_balance` decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'В ожидании выплаты',
-            `paid_balance` decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'Выплачен',
+            `available_balance` decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'Доступный баланс пользователя',
+            `pending_balance`   decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'В ожидании выплаты',
+            `paid_balance`      decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'Выплачен',
             `frozen_balance`    decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'Заблокирован',
+            `version` int unsigned NOT NULL DEFAULT 0 COMMENT 'Версия строки для защиты от гонок',
+            `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+            ON UPDATE CURRENT_TIMESTAMP,
             PRIMARY KEY (`user_id`),
-            CONSTRAINT `fk_balance_user` FOREIGN KEY (`user_id`) REFERENCES `{$wpdb->prefix}users` (`ID`) ON DELETE CASCADE
-        ) ENGINE=InnoDB {$charset_collate}  COMMENT='Балансы пользователей кэшбэк-сервиса';";
+            CONSTRAINT `fk_balance_user`
+            FOREIGN KEY (`user_id`)
+            REFERENCES `{$wpdb->prefix}users` (`ID`)
+            ON DELETE CASCADE,
+            CHECK (available_balance >= 0),
+            CHECK (pending_balance >= 0),
+            CHECK (paid_balance >= 0),
+            CHECK (frozen_balance >= 0)
+        ) ENGINE=InnoDB {$charset_collate} COMMENT='Балансы пользователей кэшбэк-сервиса';";
 
         // Таблица cashback_webhooks
         $table5 = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_webhooks` (
@@ -199,8 +231,8 @@ class Mariadb_Plugin
         dbDelta($table3);
         dbDelta($table4);
         dbDelta($table5);
-        dbDelta($table6);
-        dbDelta($table7);
+        dbDelta($table7); // Создаем payout_methods ПЕРЕД user_profile
+        dbDelta($table6); // Создаем user_profile после payout_methods
 
         error_log('Mariadb Plugin: Tables created successfully');
     }
@@ -222,6 +254,7 @@ class Mariadb_Plugin
             "DROP TRIGGER IF EXISTS `{$wpdb->prefix}cashback_tr_prevent_update_final_status`;",
             "DROP TRIGGER IF EXISTS `{$wpdb->prefix}tr_prevent_delete_paid_payout`;",
             "DROP TRIGGER IF EXISTS `{$wpdb->prefix}tr_prevent_update_paid_payout`;",
+            "DROP TRIGGER IF EXISTS `{$wpdb->prefix}tr_banned_user_update_banned_at`;",
         ];
 
         foreach ($drop_triggers as $drop_trigger) {
@@ -258,7 +291,7 @@ class Mariadb_Plugin
             FOR EACH ROW
             --  'Рассчитывает кэшбэк для незарегистрированных пользователей по фиксированной ставке 60%'
             BEGIN
-                SET NEW.cashback = FLOOR(NEW.commission * 0.6);
+                SET NEW.cashback = ROUND(NEW.commission * 0.6, 2);
             END;",
 
             "CREATE TRIGGER `{$wpdb->prefix}calculate_cashback_before_update`
@@ -277,7 +310,7 @@ class Mariadb_Plugin
             --  'Пересчитывает кэшбэк для незарегистрированных пользователей при изменении commission'
             BEGIN
                 IF OLD.commission != NEW.commission THEN
-                    SET NEW.cashback = FLOOR(NEW.commission * 0.6);
+                    SET NEW.cashback = ROUND(NEW.commission * 0.6, 2);
                 END IF;
             END;",
 
@@ -361,55 +394,110 @@ class Mariadb_Plugin
 
         $events = [
             // Событие ежедневно проверяет одобренный кэшбэк если старше 14 дней переводит в доступный баланс
-            "CREATE EVENT IF NOT EXISTS `{$wpdb->prefix}cashback_ev_account_confirmed_cashback`
-            ON SCHEDULE EVERY 1 DAY STARTS NOW()
-            ON COMPLETION NOT PRESERVE
-            ENABLE
-            DO BEGIN
-                DROP TEMPORARY TABLE IF EXISTS tmp_new_balances;
-                CREATE TEMPORARY TABLE tmp_new_balances (
-                    user_id BIGINT UNSIGNED,
-                    add_amount DECIMAL(18,2)
-                ) AS
-                SELECT
-                    user_id,
-                    SUM(cashback) AS add_amount
-                FROM `{$wpdb->prefix}cashback_transactions`
-                WHERE
-                    order_status = 'completed'
-                    AND updated_at <= DATE_SUB(NOW(), INTERVAL 14 DAY)
-                    AND cashback IS NOT NULL
-                GROUP BY user_id;
+            // ПОЛНАЯ ЗАЩИТА ОТ ДУБЛИРОВАНИЯ: идемпотентность через processed_at и атомарные операции
+            "CREATE EVENT IF NOT EXISTS `{$wpdb->prefix}cashback_ev_confirmed_cashback`
+ON SCHEDULE EVERY 1 DAY
+STARTS CURRENT_TIMESTAMP
+ON COMPLETION PRESERVE
+ENABLE
+DO
+BEGIN
+    DECLARE v_batch_id CHAR(36);
+    DECLARE v_affected_rows INT DEFAULT 0;
+    DECLARE v_event_lock INT DEFAULT 0;
 
-                UPDATE `{$wpdb->prefix}cashback_user_balance` sub
-                JOIN tmp_new_balances tnb ON sub.user_id = tnb.user_id
-                SET sub.available_balance = sub.available_balance + tnb.add_amount;
+    -- Выход при любой ошибке SQL с rollback
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        DO RELEASE_LOCK('cashback_event_lock');
+    END;
 
-                INSERT INTO `{$wpdb->prefix}cashback_user_balance` (user_id, available_balance)
-                SELECT user_id, add_amount
-                FROM tmp_new_balances
-                ON DUPLICATE KEY UPDATE
-                available_balance = available_balance;
+    -- Блокировка события на уровне СУБД
+    SET v_event_lock = GET_LOCK('cashback_event_lock', 0);
+    
+    IF v_event_lock = 1 THEN
+        -- Генерируем UUID батча
+        SET v_batch_id = UUID();
 
-                UPDATE `{$wpdb->prefix}cashback_transactions`
-                SET
-                    order_status = 'balance',
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE
-                    order_status = 'completed'
-                    AND updated_at <= DATE_SUB(NOW(), INTERVAL 14 DAY)
-                    AND cashback IS NOT NULL;
+        START TRANSACTION;
 
-                DROP TEMPORARY TABLE IF EXISTS tmp_new_balances;
-            END;",
+        -- Временная таблица текущего батча
+        DROP TEMPORARY TABLE IF EXISTS tmp_cashback_batch;
+
+        CREATE TEMPORARY TABLE tmp_cashback_batch (
+            transaction_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+            user_id BIGINT UNSIGNED NOT NULL,
+            cashback DECIMAL(10,2) NOT NULL,
+            INDEX idx_user (user_id)
+        );
+
+        -- Захватываем транзакции с блокировкой
+        INSERT INTO tmp_cashback_batch (transaction_id, user_id, cashback)
+        SELECT id, user_id, cashback
+        FROM `{$wpdb->prefix}cashback_transactions`
+        WHERE
+            order_status = 'completed'
+            AND processed_at IS NULL
+            AND cashback IS NOT NULL
+            AND cashback > 0
+            AND updated_at <= DATE_SUB(NOW(), INTERVAL 14 DAY)
+        FOR UPDATE;
+
+        SET v_affected_rows = ROW_COUNT();
+
+        IF v_affected_rows > 0 THEN
+            -- ШАГ 1: КРИТИЧНО - Сначала маркируем транзакции через processed_at
+            -- Это источник истины для идемпотентности
+            -- Если после этого шага упадет БД, при повторном запуске эти транзакции НЕ попадут в tmp_cashback_batch
+            UPDATE `{$wpdb->prefix}cashback_transactions` ct
+            INNER JOIN tmp_cashback_batch tcb ON ct.id = tcb.transaction_id
+            SET
+                ct.processed_at = NOW(),
+                ct.processed_batch_id = v_batch_id
+            WHERE ct.processed_at IS NULL;
+
+            -- ШАГ 2: Начисляем баланс ТОЛЬКО для транзакций с processed_batch_id = v_batch_id
+            -- Используем processed_batch_id как источник данных (уже гарантированно уникальные)
+            INSERT INTO `{$wpdb->prefix}cashback_user_balance`
+                (user_id, available_balance, version)
+            SELECT
+                user_id,
+                SUM(cashback),
+                0
+            FROM `{$wpdb->prefix}cashback_transactions`
+            WHERE processed_batch_id = v_batch_id
+            GROUP BY user_id
+            ON DUPLICATE KEY UPDATE
+                available_balance = available_balance + VALUES(available_balance),
+                version = version + 1;
+
+            -- ШАГ 3: Финализируем статус (делаем транзакции неизменяемыми через триггер)
+            -- Только если processed_batch_id соответствует текущему батчу
+            UPDATE `{$wpdb->prefix}cashback_transactions`
+            SET order_status = 'balance'
+            WHERE
+                processed_batch_id = v_batch_id
+                AND order_status = 'completed';
+        END IF;
+
+        DROP TEMPORARY TABLE IF EXISTS tmp_cashback_batch;
+
+        COMMIT;
+
+        -- Освобождаем блокировку
+        DO RELEASE_LOCK('cashback_event_lock');
+    END IF;
+END;",
 
             // Событие ежедневно проверяет и удаляет старые вебхуки если старше 6 месяцев
             "CREATE EVENT IF NOT EXISTS `{$wpdb->prefix}cashback_ev_cleanup_cashback_webhooks_old`
-            ON SCHEDULE EVERY 1 DAY STARTS NOW()
+            ON SCHEDULE EVERY 1 DAY
+            STARTS CURRENT_TIMESTAMP
             ON COMPLETION NOT PRESERVE
             ENABLE
             DO DELETE FROM `{$wpdb->prefix}cashback_webhooks`
-            WHERE received_at < NOW() - INTERVAL 6 MONTH;",
+            WHERE received_at < NOW() - INTERVAL 6 MONTH",
 
             // Событие ежедневно проверяет и помечает неактивные профили если неактивны больше 6 месяцев
             "CREATE EVENT IF NOT EXISTS `{$wpdb->prefix}cashback_ev_mark_inactive_profiles`
@@ -465,7 +553,7 @@ class Mariadb_Plugin
         }
 
         foreach ($users as $user_id) {
-            $result = $this->add_user_to_cashback_tables($user_id);
+            $result = $this->add_user_to_cashback_tables((int) $user_id);
             if (!$result) {
                 throw new Exception("Failed to initialize user {$user_id}. Error: " . $wpdb->last_error);
             }
@@ -476,8 +564,12 @@ class Mariadb_Plugin
 
     /**
      * Добавление пользователя в профиль
+     *
+     * @param int $user_id ID пользователя.
+     *
+     * @return bool True при успехе, false при ошибке.
      */
-    public function add_user_to_profile($user_id)
+    public function add_user_to_profile(int $user_id): bool
     {
         global $wpdb;
 
@@ -494,32 +586,51 @@ class Mariadb_Plugin
         error_log('Mariadb Plugin: Profile exists check result: ' . $exists . ' for user ID: ' . $user_id);
 
         if (!$exists) {
-            $result = $wpdb->insert(
-                $table_name,
-                array(
-                    'user_id' => $user_id,
-                    'status' => 'active'
-                ),
-                array('%d', '%s')
-            );
+            // Начинаем транзакцию для атомарного создания профиля и баланса
+            $wpdb->query('START TRANSACTION');
 
-            if ($result === false) {
-                error_log('Mariadb Plugin Error: Failed to insert user profile for user ' . $user_id . '. Error: ' . $wpdb->last_error);
-                return false;
-            } else {
+            try {
+                $result = $wpdb->insert(
+                    $table_name,
+                    array(
+                        'user_id' => $user_id,
+                        'status' => 'active'
+                    ),
+                    array('%d', '%s')
+                );
+
+                if ($result === false) {
+                    throw new Exception('Failed to insert user profile: ' . $wpdb->last_error);
+                }
+
                 error_log('Mariadb Plugin: Successfully inserted user profile for user ID: ' . $user_id);
+
+                // Добавляем запись в таблицу баланса
+                $balance_result = $this->add_user_to_balance($user_id);
+
+                if (!$balance_result) {
+                    throw new Exception('Failed to create user balance');
+                }
+
+                // Если всё успешно, фиксируем транзакцию
+                $wpdb->query('COMMIT');
+                return true;
+            } catch (Exception $e) {
+                // В случае ошибки откатываем транзакцию
+                $wpdb->query('ROLLBACK');
+                error_log('Mariadb Plugin Error: Transaction failed for user ' . $user_id . '. Error: ' . $e->getMessage());
+                return false;
             }
         } else {
             error_log('Mariadb Plugin: User profile already exists for user ID: ' . $user_id);
+            return $this->add_user_to_balance($user_id);
         }
-
-        return $this->add_user_to_balance($user_id);
     }
 
     /**
      * Добавление пользователя в баланс
      */
-    public function add_user_to_balance($user_id)
+    public function add_user_to_balance(int $user_id): bool
     {
         global $wpdb;
 
@@ -563,7 +674,7 @@ class Mariadb_Plugin
     /**
      * Добавление пользователя в таблицы кэшбэка при регистрации
      */
-    public function add_user_to_cashback_tables($user_id)
+    public function add_user_to_cashback_tables(int $user_id): bool
     {
         error_log('Mariadb Plugin: Processing user registration for user ID: ' . $user_id);
 
@@ -589,6 +700,3 @@ function mariadb_plugin_init()
 
 // Инициализация плагина при полной загрузке WordPress
 add_action('plugins_loaded', 'mariadb_plugin_init');
-
-// Также добавим инициализацию при инициализации WordPress, чтобы убедиться, что хуки зарегистрированы
-add_action('init', 'mariadb_plugin_init');
