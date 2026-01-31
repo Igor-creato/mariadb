@@ -220,8 +220,8 @@ class Cashback_Payouts_Admin
                                     <td class="edit-field" data-field="fail_reason">
                                         <?php echo esc_html($payout['fail_reason'] ?? ''); ?>
                                     </td>
-                                    <td class="edit-field" data-field="status">
-                                        <?php echo esc_html($payout['status']); ?>
+                                    <td class="edit-field" data-field="status" title="<?php echo esc_attr($this->get_admin_status_description($payout['status'])); ?>">
+                                        <?php echo esc_html($this->get_admin_status_label($payout['status'])); ?>
                                     </td>
                                     <td><?php echo esc_html(date('Y-m-d H:i', strtotime($payout['created_at']))); ?></td>
                                     <td><?php echo esc_html(!empty($payout['updated_at']) ? date('Y-m-d H:i', strtotime($payout['updated_at'])) : ''); ?></td>
@@ -262,6 +262,15 @@ class Cashback_Payouts_Admin
             <!-- Скрипты для работы с формой -->
             <script type="text/javascript">
                 jQuery(document).ready(function($) {
+                    // Объект с описаниями статусов
+                    var statusDescriptions = {
+                        'waiting': 'Платеж еще не обрабатывался',
+                        'processing': 'Платеж осуществляется',
+                        'paid': 'Платеж выплачен',
+                        'failed': 'Выплату невозможно осуществить по каким либо причинам',
+                        'declined': 'Выплата заморожена из-за мошенничества',
+                        'needs_retry': 'Выплата не прошла, попробовать повторить выплату'
+                    };
                     // Обработка фильтра
                     $('#filter-submit').on('click', function() {
                         var status = $('#filter-status').val();
@@ -317,11 +326,12 @@ class Cashback_Payouts_Admin
                             if (field === 'status') {
                                 // Для поля status создаем select
                                 var selectHtml = '<select class="edit-input" data-field="' + field + '" style="width:100%; box-sizing:border-box;">';
-                                selectHtml += '<option value="waiting"' + (currentValue === 'waiting' ? ' selected' : '') + '>waiting</option>';
-                                selectHtml += '<option value="processing"' + (currentValue === 'processing' ? ' selected' : '') + '>processing</option>';
-                                selectHtml += '<option value="paid"' + (currentValue === 'paid' ? ' selected' : '') + '>paid</option>';
-                                selectHtml += '<option value="failed"' + (currentValue === 'failed' ? ' selected' : '') + '>failed</option>';
-                                selectHtml += '<option value="declined"' + (currentValue === 'declined' ? ' selected' : '') + '>declined</option>';
+                                selectHtml += '<option value="waiting"' + (currentValue === 'waiting' ? ' selected' : '') + '>Ожидает выплаты</option>';
+                                selectHtml += '<option value="processing"' + (currentValue === 'processing' ? ' selected' : '') + '>В обработке</option>';
+                                selectHtml += '<option value="paid"' + (currentValue === 'paid' ? ' selected' : '') + '>Выплачен</option>';
+                                selectHtml += '<option value="failed"' + (currentValue === 'failed' ? ' selected' : '') + '>Выплата не прошла</option>';
+                                selectHtml += '<option value="declined"' + (currentValue === 'declined' ? ' selected' : '') + '>Выплата заморожена</option>';
+                                selectHtml += '<option value="needs_retry"' + (currentValue === 'needs_retry' ? ' selected' : '') + '>Проверить выплату</option>';
                                 selectHtml += '</select>';
                                 cell.html(selectHtml);
                             } else if (field === 'attempts') {
@@ -402,7 +412,7 @@ class Cashback_Payouts_Admin
 
                         if (changedData.hasOwnProperty('status')) {
                             var status = changedData['status'];
-                            var allowedStatuses = ['waiting', 'processing', 'paid', 'failed', 'declined'];
+                            var allowedStatuses = ['waiting', 'processing', 'paid', 'failed', 'declined', 'needs_retry'];
                             if (allowedStatuses.indexOf(status) === -1) {
                                 alert('Недопустимый статус выплаты');
                                 return;
@@ -416,7 +426,29 @@ class Cashback_Payouts_Admin
                                 row.find('.edit-field[data-field="provider_payout_id"]').text(response.data.payout_data.provider_payout_id || '');
                                 row.find('.edit-field[data-field="attempts"]').text(response.data.payout_data.attempts);
                                 row.find('.edit-field[data-field="fail_reason"]').text(response.data.payout_data.fail_reason || '');
-                                row.find('.edit-field[data-field="status"]').text(response.data.payout_data.status);
+                                var statusText = response.data.payout_data.status;
+                                var statusLabel = statusText; // По умолчанию используем сам статус
+                                switch (statusText) {
+                                    case 'waiting':
+                                        statusLabel = 'Ожидает выплаты';
+                                        break;
+                                    case 'processing':
+                                        statusLabel = 'В обработке';
+                                        break;
+                                    case 'paid':
+                                        statusLabel = 'Выплачен';
+                                        break;
+                                    case 'failed':
+                                        statusLabel = 'Выплата не прошла';
+                                        break;
+                                    case 'declined':
+                                        statusLabel = 'Выплата заморожена';
+                                        break;
+                                    case 'needs_retry':
+                                        statusLabel = 'Проверить выплату';
+                                        break;
+                                }
+                                row.find('.edit-field[data-field="status"]').text(statusLabel).attr('title', statusDescriptions[statusText] || statusText);
 
                                 // Переключаем строку в режим просмотра
                                 row.find('.edit-input').each(function() {
@@ -441,8 +473,29 @@ class Cashback_Payouts_Admin
 
                                 // Добавляем обновленные опции статусов
                                 $.each(response.data.statuses, function(index, status) {
+                                    var statusText = status;
+                                    switch (status) {
+                                        case 'waiting':
+                                            statusText = 'Ожидает выплаты';
+                                            break;
+                                        case 'processing':
+                                            statusText = 'В обработке';
+                                            break;
+                                        case 'paid':
+                                            statusText = 'Выплачен';
+                                            break;
+                                        case 'failed':
+                                            statusText = 'Выплата не прошла';
+                                            break;
+                                        case 'declined':
+                                            statusText = 'Выплата заморожена';
+                                            break;
+                                        case 'needs_retry':
+                                            statusText = 'Проверить выплату';
+                                            break;
+                                    }
                                     var isSelected = (status === currentSelected) ? ' selected' : '';
-                                    statusFilter.append('<option value="' + status + '"' + isSelected + '>' + status + '</option>');
+                                    statusFilter.append('<option value="' + status + '"' + isSelected + '>' + statusText + '</option>');
                                 });
 
                                 // Показываем сообщение об успешном обновлении
@@ -494,7 +547,29 @@ class Cashback_Payouts_Admin
                             row.find('.edit-field[data-field="provider_payout_id"]').text(payoutData.provider_payout_id || '');
                             row.find('.edit-field[data-field="attempts"]').text(payoutData.attempts);
                             row.find('.edit-field[data-field="fail_reason"]').text(payoutData.fail_reason || '');
-                            row.find('.edit-field[data-field="status"]').text(payoutData.status);
+                            var statusText = payoutData.status;
+                            var statusLabel = statusText; // По умолчанию используем сам статус
+                            switch (statusText) {
+                                case 'waiting':
+                                    statusLabel = 'Ожидает выплаты';
+                                    break;
+                                case 'processing':
+                                    statusLabel = 'В обработке';
+                                    break;
+                                case 'paid':
+                                    statusLabel = 'Выплачен';
+                                    break;
+                                case 'failed':
+                                    statusLabel = 'Выплата не прошла';
+                                    break;
+                                case 'declined':
+                                    statusLabel = 'Выплата заморожена';
+                                    break;
+                                case 'needs_retry':
+                                    statusLabel = 'Проверить выплату';
+                                    break;
+                            }
+                            row.find('.edit-field[data-field="status"]').text(statusLabel).attr('title', statusDescriptions[statusText] || statusText);
 
                             // Восстанавливаем исходные стили ячеек
                             row.find('.edit-field').each(function() {
@@ -572,7 +647,7 @@ class Cashback_Payouts_Admin
             $status = sanitize_text_field($_POST['status']);
 
             // Проверяем, что статус допустим
-            $allowed_statuses = ['waiting', 'processing', 'paid', 'failed', 'declined'];
+            $allowed_statuses = ['waiting', 'processing', 'paid', 'failed', 'declined', 'needs_retry'];
             if (!in_array($status, $allowed_statuses)) {
                 wp_send_json_error(['message' => 'Недопустимый статус выплаты.']);
                 return;
@@ -868,6 +943,58 @@ class Cashback_Payouts_Admin
 
         // Возвращаем данные
         wp_send_json_success($payout_data);
+    }
+
+    /**
+     * Получение метки статуса для администратора
+     * 
+     * @param string $status Статус выплаты
+     * @return string Текстовое описание статуса
+     */
+    private function get_admin_status_label(string $status): string
+    {
+        switch ($status) {
+            case 'waiting':
+                return 'Ожидает выплаты';
+            case 'processing':
+                return 'В обработке';
+            case 'paid':
+                return 'Выплачен';
+            case 'failed':
+                return 'Выплата не прошла';
+            case 'declined':
+                return 'Выплата заморожена';
+            case 'needs_retry':
+                return 'Проверить выплату';
+            default:
+                return $status;
+        }
+    }
+
+    /**
+     * Получение описания статуса для администратора
+     * 
+     * @param string $status Статус выплаты
+     * @return string Описание статуса
+     */
+    private function get_admin_status_description(string $status): string
+    {
+        switch ($status) {
+            case 'waiting':
+                return 'Платеж еще не обрабатывался';
+            case 'processing':
+                return 'Платеж осуществляется';
+            case 'paid':
+                return 'Платеж выплачен';
+            case 'failed':
+                return 'Выплату невозможно осуществить по каким либо причинам';
+            case 'declined':
+                return 'Выплата заморожена из-за мошенничества';
+            case 'needs_retry':
+                return 'Выплата не прошла, попробовать повторить выплату';
+            default:
+                return $status;
+        }
     }
 
     /**

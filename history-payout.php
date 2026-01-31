@@ -224,10 +224,16 @@ class HistoryPayout
         switch ($status) {
             case 'waiting':
                 return __('В обработке', 'history-payout');
+            case 'processing':
+                return __('В обработке', 'history-payout');
             case 'paid':
                 return __('Выплачен', 'history-payout');
+            case 'failed':
+                return __('Выплата не прошла', 'history-payout');
             case 'declined':
-                return __('Отклонен', 'history-payout');
+                return __('Выплата заморожена', 'history-payout');
+            case 'needs_retry':
+                return __('В обработке', 'history-payout');
             default:
                 return esc_html($status ?: __('Неизвестно', 'history-payout'));
         }
