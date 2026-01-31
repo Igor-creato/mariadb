@@ -225,6 +225,60 @@ class Mariadb_Plugin
             UNIQUE KEY `uniq_slug` (`slug`)
         ) ENGINE=InnoDB {$charset_collate} COMMENT='Способы выплат пользователей';";
 
+        // Таблица тикетов
+        $tickets_table = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_tickets` (
+          `ticket_id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+          `user_id` bigint(20) UNSIGNED NOT NULL COMMENT 'ID пользователя WordPress',
+          `subject` varchar(255) NOT NULL COMMENT 'Тема тикета',
+          `status` enum('open','in_progress','resolved','closed') NOT NULL DEFAULT 'open',
+          `priority` enum('low','medium','high','urgent') NOT NULL DEFAULT 'medium',
+          `created_at` datetime NOT NULL DEFAULT current_timestamp(),
+          `updated_at` datetime NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+          `last_activity` datetime NOT NULL DEFAULT current_timestamp(),
+          
+          PRIMARY KEY (`ticket_id`),
+          KEY `user_id` (`user_id`),
+          KEY `status` (`status`),
+          KEY `created_at` (`created_at`)
+        ) ENGINE=InnoDB {$charset_collate} COMMENT='Таблица тикетов поддержки';";
+
+        // Таблица сообщений тикетов
+        $messages_table = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_ticket_messages` (
+          `message_id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+          `ticket_id` bigint(20) UNSIGNED NOT NULL,
+          `user_id` bigint(20) UNSIGNED NOT NULL COMMENT 'ID отправителя (пользователь или админ)',
+          `message` text NOT NULL,
+          `created_at` datetime NOT NULL DEFAULT current_timestamp(),
+          `is_admin` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1=админ, 0=пользователь',
+          
+          PRIMARY KEY (`message_id`),
+          KEY `ticket_id` (`ticket_id`),
+          KEY `user_id` (`user_id`),
+          KEY `created_at` (`created_at`),
+          CONSTRAINT `fk_ticket_messages_ticket_{$wpdb->prefix}` 
+            FOREIGN KEY (`ticket_id`) 
+            REFERENCES `{$wpdb->prefix}cashback_tickets` (`ticket_id`) 
+            ON DELETE CASCADE
+        ) ENGINE=InnoDB {$charset_collate} COMMENT='Сообщения в тикетах поддержки';";
+
+        // Таблица вложений к сообщениям тикетов
+        $attachments_table = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_ticket_attachments` (
+          `attachment_id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+          `message_id` bigint(20) UNSIGNED NOT NULL,
+          `file_name` varchar(255) NOT NULL,
+          `file_path` varchar(255) NOT NULL COMMENT 'Путь к файлу в uploads',
+          `file_size` int(11) NOT NULL COMMENT 'Размер в байтах',
+          `file_type` varchar(100) NOT NULL COMMENT 'MIME тип',
+          `uploaded_at` datetime NOT NULL DEFAULT current_timestamp(),
+          
+          PRIMARY KEY (`attachment_id`),
+          KEY `message_id` (`message_id`),
+          CONSTRAINT `fk_ticket_attachments_message_{$wpdb->prefix}` 
+            FOREIGN KEY (`message_id`) 
+            REFERENCES `{$wpdb->prefix}cashback_ticket_messages` (`message_id`) 
+            ON DELETE CASCADE
+        ) ENGINE=InnoDB {$charset_collate} COMMENT='Вложения к сообщениям тикетов';";
+
         require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
         dbDelta($table1);
         dbDelta($table2);
@@ -233,6 +287,9 @@ class Mariadb_Plugin
         dbDelta($table5);
         dbDelta($table7); // Создаем payout_methods ПЕРЕД user_profile
         dbDelta($table6); // Создаем user_profile после payout_methods
+        dbDelta($tickets_table);   // Создаем таблицу тикетов
+        dbDelta($messages_table);  // Создаем таблицу сообщений
+        dbDelta($attachments_table); // Создаем таблицу вложений
 
         error_log('Mariadb Plugin: Tables created successfully');
     }
