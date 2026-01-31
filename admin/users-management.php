@@ -59,47 +59,64 @@ class Cashback_Users_Management_Admin
         global $wpdb;
 
         // Получаем параметры для пагинации и фильтрации
-        $current_page = max(1, absint($_GET['paged'] ?? 0));
+        $current_page = isset($_GET['paged']) ? max(1, absint($_GET['paged'])) : 1;
         $per_page = 10;
         $offset = ($current_page - 1) * $per_page;
 
         // Получаем фильтр статуса
-        $filter_status = sanitize_text_field($_GET['status'] ?? '');
-
-        // Подготовка условий для фильтрации
-        $where_clause = '';
-        $where_params = [];
-
-        if (!empty($filter_status)) {
-            $where_clause = 'WHERE cup.status = %s';
-            $where_params[] = $filter_status;
-        }
+        $filter_status = isset($_GET['status']) ? sanitize_text_field($_GET['status']) : '';
 
         // Подсчет общего количества пользователей
-        $total_users = $wpdb->get_var(
-            $wpdb->prepare(
-                "SELECT COUNT(*) 
+        if (!empty($filter_status)) {
+            $total_users = $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT COUNT(*)
+                    FROM {$this->table_name} u
+                    LEFT JOIN {$this->profile_table_name} cup ON u.ID = cup.user_id
+                    WHERE cup.status = %s",
+                    $filter_status
+                )
+            );
+        } else {
+            $total_users = $wpdb->get_var(
+                "SELECT COUNT(*)
                 FROM {$this->table_name} u
-                LEFT JOIN {$this->profile_table_name} cup ON u.ID = cup.user_id
-                {$where_clause}",
-                $where_params
-            )
-        );
+                LEFT JOIN {$this->profile_table_name} cup ON u.ID = cup.user_id"
+            );
+        }
 
         // Получаем пользователей с профилями
-        $users = $wpdb->get_results(
-            $wpdb->prepare(
-                "SELECT u.ID, u.display_name, 
-                        cup.cashback_rate, cup.min_payout_amount, cup.status, cup.ban_reason, cup.banned_at
-                FROM {$this->table_name} u
-                LEFT JOIN {$this->profile_table_name} cup ON u.ID = cup.user_id
-                {$where_clause}
-                ORDER BY u.ID ASC
-                LIMIT %d OFFSET %d",
-                array_merge($where_params, [$per_page, $offset])
-            ),
-            'ARRAY_A'
-        );
+        if (!empty($filter_status)) {
+            $users = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT u.ID, u.display_name,
+                            cup.cashback_rate, cup.min_payout_amount, cup.status, cup.ban_reason, cup.banned_at
+                    FROM {$this->table_name} u
+                    LEFT JOIN {$this->profile_table_name} cup ON u.ID = cup.user_id
+                    WHERE cup.status = %s
+                    ORDER BY u.ID ASC
+                    LIMIT %d OFFSET %d",
+                    $filter_status,
+                    $per_page,
+                    $offset
+                ),
+                'ARRAY_A'
+            );
+        } else {
+            $users = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT u.ID, u.display_name,
+                            cup.cashback_rate, cup.min_payout_amount, cup.status, cup.ban_reason, cup.banned_at
+                    FROM {$this->table_name} u
+                    LEFT JOIN {$this->profile_table_name} cup ON u.ID = cup.user_id
+                    ORDER BY u.ID ASC
+                    LIMIT %d OFFSET %d",
+                    $per_page,
+                    $offset
+                ),
+                'ARRAY_A'
+            );
+        }
 
         // Получаем уникальные статусы для фильтра
         $statuses = $wpdb->get_col(
@@ -112,10 +129,11 @@ class Cashback_Users_Management_Admin
         // Выводим сообщения об ошибках или успехе
         $message = '';
         if (isset($_GET['message'])) {
-            if ($_GET['message'] === 'updated') {
-                $message = '<div class="notice notice-success is-dismissible"><p>Профиль пользователя успешно обновлен.</p></div>';
-            } elseif ($_GET['message'] === 'error') {
-                $message = '<div class="notice notice-error is-dismissible"><p>Ошибка при обновлении профиля пользователя.</p></div>';
+            $message_type = sanitize_text_field($_GET['message']);
+            if ($message_type === 'updated') {
+                $message = '<div class="notice notice-success is-dismissible"><p>' . esc_html__('Профиль пользователя успешно обновлен.', 'cashback-plugin') . '</p></div>';
+            } elseif ($message_type === 'error') {
+                $message = '<div class="notice notice-error is-dismissible"><p>' . esc_html__('Ошибка при обновлении профиля пользователя.', 'cashback-plugin') . '</p></div>';
             }
         }
 
@@ -124,7 +142,7 @@ class Cashback_Users_Management_Admin
             <h1 class="wp-heading-inline">Пользователи</h1>
             <hr class="wp-header-end">
 
-            <?php echo $message; ?>
+            <?php echo wp_kses_post($message); ?>
 
             <!-- Фильтр по статусу -->
             <div class="tablenav top">
@@ -200,7 +218,7 @@ class Cashback_Users_Management_Admin
                             <?php endforeach; ?>
                         <?php else: ?>
                             <tr>
-                                <td colspan="7">Нет пользователей для отображения.</td>
+                                <td colspan="8">Нет пользователей для отображения.</td>
                             </tr>
                         <?php endif; ?>
                     </tbody>
@@ -221,6 +239,26 @@ class Cashback_Users_Management_Admin
             $this->render_pagination($pagination_args);
             ?>
 
+            <!-- Стили для ограничения ширины полей -->
+            <style>
+                .edit-field .edit-input {
+                    max-width: 100%;
+                    width: 100%;
+                    box-sizing: border-box;
+                }
+
+                .edit-field input[type="text"],
+                .edit-field input[type="number"],
+                .edit-field select {
+                    max-width: 150px;
+                    width: 100%;
+                }
+
+                .edit-field[data-field="ban_reason"] input {
+                    max-width: 200px;
+                }
+            </style>
+
             <!-- Скрипты для работы с формой -->
             <script type="text/javascript">
                 jQuery(document).ready(function($) {
@@ -237,16 +275,18 @@ class Cashback_Users_Management_Admin
                         }
                         window.location.href = url.toString();
                     });
-
-                    // Обработка клика по кнопке "Редактировать"
-                    $('.edit-btn').on('click', function() {
+                    // Обработка клика по кнопке "Редактировать" (используем делегирование)
+                    $(document).on('click', '.edit-btn', function() {
                         var row = $(this).closest('tr');
                         var cells = row.find('.edit-field');
 
                         cells.each(function() {
                             var cell = $(this);
                             var field = cell.data('field');
-                            var currentValue = cell.text();
+                            var currentValue = cell.text().trim();
+
+                            // Сохраняем оригинальное значение в data-атрибуте
+                            cell.attr('data-original-value', currentValue);
 
                             if (field === 'status') {
                                 // Для поля status создаем select
@@ -259,13 +299,12 @@ class Cashback_Users_Management_Admin
                                 cell.html(selectHtml);
                             } else if (field === 'cashback_rate' || field === 'min_payout_amount') {
                                 // Для числовых полей создаем input с типом number
-                                var inputType = field === 'cashback_rate' ? 'number' : 'number';
-                                var step = field === 'cashback_rate' ? '0.01' : '0.01';
+                                var step = '0.01';
                                 var placeholder = field === 'cashback_rate' ? 'Ставка кэшбэка' : 'Мин. сумма';
-                                cell.html('<input type="number" step="' + step + '" class="edit-input regular-text" data-field="' + field + '" value="' + currentValue + '" placeholder="' + placeholder + '" />');
+                                cell.html('<input type="number" step="' + step + '" class="edit-input" data-field="' + field + '" value="' + currentValue + '" placeholder="' + placeholder + '" />');
                             } else {
                                 // Для остальных полей создаем input
-                                cell.html('<input type="text" class="edit-input regular-text" data-field="' + field + '" value="' + currentValue + '" />');
+                                cell.html('<input type="text" class="edit-input" data-field="' + field + '" value="' + currentValue + '" />');
                             }
                         });
 
@@ -273,35 +312,34 @@ class Cashback_Users_Management_Admin
                         row.find('.save-btn, .cancel-btn').show();
                     });
 
-                    // Обработка клика по кнопке "Отмена"
-                    $('.cancel-btn').on('click', function() {
+                    // Обработка клика по кнопке "Отмена" (используем делегирование)
+                    $(document).on('click', '.cancel-btn', function() {
                         var row = $(this).closest('tr');
                         resetRowToViewMode(row);
                     });
 
-                    // Обработка клика по кнопке "Сохранить"
-                    $('.save-btn').on('click', function() {
+                    // Обработка клика по кнопке "Сохранить" (используем делегирование)
+                    $(document).on('click', '.save-btn', function() {
                         var row = $(this).closest('tr');
                         var userId = row.data('user-id');
-                        var originalValues = {};
                         var changedData = {};
-
-                        // Сохраняем оригинальные значения из ячеек перед редактированием
-                        row.find('.edit-field').each(function() {
-                            var cell = $(this);
-                            var field = cell.data('field');
-                            originalValues[field] = cell.text();
-                        });
 
                         // Собираем только измененные данные
                         row.find('.edit-input').each(function() {
                             var input = $(this);
                             var field = input.data('field');
-                            var newValue = input.val();
-                            var originalValue = originalValues[field];
+                            var newValue = input.val().trim();
 
-                            // Проверяем, изменилось ли значение
-                            if (originalValue != newValue) {
+                            // Получаем оригинальное значение из data-атрибута ячейки
+                            var cell = input.closest('.edit-field');
+                            var originalValue = cell.attr('data-original-value');
+
+                            if (originalValue === undefined) {
+                                originalValue = '';
+                            }
+
+                            // Проверяем, изменилось ли значение (сравниваем как строки)
+                            if (originalValue.trim() !== newValue) {
                                 changedData[field] = newValue;
                             }
                         });
@@ -310,7 +348,7 @@ class Cashback_Users_Management_Admin
                         var data = {
                             'action': 'update_user_profile',
                             'user_id': userId,
-                            'nonce': '<?php echo wp_create_nonce('update_user_profile_nonce'); ?>'
+                            'nonce': '<?php echo esc_js(wp_create_nonce('update_user_profile_nonce')); ?>'
                         };
 
                         // Добавляем только измененные поля
@@ -322,8 +360,7 @@ class Cashback_Users_Management_Admin
                         if (!hasChanges) {
                             alert('Нет изменений для сохранения.');
                             // Переключаем строку обратно в режим просмотра
-                            row.find('.save-btn, .cancel-btn').hide();
-                            row.find('.edit-btn').show();
+                            resetRowToViewMode(row);
                             return;
                         }
 
@@ -392,7 +429,7 @@ class Cashback_Users_Management_Admin
                         var data = {
                             'action': 'get_user_profile',
                             'user_id': userId,
-                            'nonce': '<?php echo wp_create_nonce('get_user_profile_nonce'); ?>'
+                            'nonce': '<?php echo esc_js(wp_create_nonce('get_user_profile_nonce')); ?>'
                         };
 
                         $.post(ajaxurl, data, function(response) {
@@ -406,12 +443,9 @@ class Cashback_Users_Management_Admin
                                 // Если не удалось получить данные, восстанавливаем старые значения
                                 row.find('.edit-field').each(function() {
                                     var cell = $(this);
-                                    var field = cell.data('field');
-                                    var currentValue = cell.find('.edit-input').val();
-
-                                    if (field === 'status') {
-                                        cell.text(currentValue);
-                                    } else {
+                                    var input = cell.find('.edit-input');
+                                    if (input.length > 0) {
+                                        var currentValue = input.val();
                                         cell.text(currentValue);
                                     }
                                 });
@@ -420,12 +454,9 @@ class Cashback_Users_Management_Admin
                             // Если ошибка соединения, восстанавливаем старые значения
                             row.find('.edit-field').each(function() {
                                 var cell = $(this);
-                                var field = cell.data('field');
-                                var currentValue = cell.find('.edit-input').val();
-
-                                if (field === 'status') {
-                                    cell.text(currentValue);
-                                } else {
+                                var input = cell.find('.edit-input');
+                                if (input.length > 0) {
+                                    var currentValue = input.val();
                                     cell.text(currentValue);
                                 }
                             });
@@ -445,6 +476,12 @@ class Cashback_Users_Management_Admin
      */
     public function handle_update_user_profile(): void
     {
+        // Проверяем наличие nonce
+        if (!isset($_POST['nonce'])) {
+            wp_send_json_error(['message' => 'Отсутствует nonce.']);
+            return;
+        }
+
         // Проверяем nonce
         if (!wp_verify_nonce(sanitize_text_field($_POST['nonce']), 'update_user_profile_nonce')) {
             wp_send_json_error(['message' => 'Неверный nonce.']);
@@ -454,6 +491,12 @@ class Cashback_Users_Management_Admin
         // Проверяем права пользователя
         if (!current_user_can('manage_options')) {
             wp_send_json_error(['message' => 'Недостаточно прав для выполнения этого действия.']);
+            return;
+        }
+
+        // Проверяем наличие user_id
+        if (!isset($_POST['user_id'])) {
+            wp_send_json_error(['message' => 'Отсутствует ID пользователя.']);
             return;
         }
 
@@ -496,7 +539,7 @@ class Cashback_Users_Management_Admin
 
             // Проверяем, что статус допустим
             $allowed_statuses = ['active', 'noactive', 'banned', 'deleted'];
-            if (!in_array($status, $allowed_statuses)) {
+            if (!in_array($status, $allowed_statuses, true)) {
                 wp_send_json_error(['message' => 'Недопустимый статус пользователя.']);
                 return;
             }
@@ -555,6 +598,12 @@ class Cashback_Users_Management_Admin
      */
     public function handle_get_user_profile(): void
     {
+        // Проверяем наличие nonce
+        if (!isset($_POST['nonce'])) {
+            wp_send_json_error(['message' => 'Отсутствует nonce.']);
+            return;
+        }
+
         // Проверяем nonce
         if (!wp_verify_nonce(sanitize_text_field($_POST['nonce']), 'get_user_profile_nonce')) {
             wp_send_json_error(['message' => 'Неверный nonce.']);
@@ -564,6 +613,12 @@ class Cashback_Users_Management_Admin
         // Проверяем права пользователя
         if (!current_user_can('manage_options')) {
             wp_send_json_error(['message' => 'Недостаточно прав для выполнения этого действия.']);
+            return;
+        }
+
+        // Проверяем наличие user_id
+        if (!isset($_POST['user_id'])) {
+            wp_send_json_error(['message' => 'Отсутствует ID пользователя.']);
             return;
         }
 
@@ -630,9 +685,10 @@ class Cashback_Users_Management_Admin
                 echo '<div class="tablenav-pages">';
                 echo '<span class="displaying-num">' . sprintf(_n('%s запись', '%s записей', $total_items, 'cashback-plugin'), number_format_i18n($total_items)) . '</span>';
                 echo '<span class="pagination-links">';
-                echo $pagination_links;
+                echo wp_kses_post($pagination_links);
                 echo '</span>';
                 echo '<br class="clear"></div>';
+                echo '</div>';
             }
         } else {
             // Альтернативная реализация пагинации, если paginate_links недоступна
@@ -653,7 +709,7 @@ class Cashback_Users_Management_Admin
             if ($current_page > 1) {
                 $prev_page = $current_page - 1;
                 $prev_url = add_query_arg('paged', $prev_page, $base_url);
-                echo '<a class="prev-page button" href="' . esc_url($prev_url) . '">&lsaquo; ' . __('Предыдущая') . '</a>';
+                echo '<a class="prev-page button" href="' . esc_url($prev_url) . '">&lsaquo; ' . esc_html__('Предыдущая') . '</a>';
             }
 
             // Текущая страница
@@ -665,7 +721,7 @@ class Cashback_Users_Management_Admin
             if ($current_page < $total_pages) {
                 $next_page = $current_page + 1;
                 $next_url = add_query_arg('paged', $next_page, $base_url);
-                echo '<a class="next-page button" href="' . esc_url($next_url) . '">' . __('Следующая') . ' &rsaquo;</a>';
+                echo '<a class="next-page button" href="' . esc_url($next_url) . '">' . esc_html__('Следующая') . ' &rsaquo;</a>';
             }
 
             echo '</span>';
