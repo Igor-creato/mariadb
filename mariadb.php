@@ -106,7 +106,7 @@ class Mariadb_Plugin
            `user_id` bigint(20) unsigned NOT NULL,
            `order_number` varchar(255) NOT NULL,
            `offer_name` varchar(255) DEFAULT NULL,
-           `order_status` enum('waiting','completed','declined','balance') NOT NULL DEFAULT 'waiting',
+           `order_status` enum('waiting','completed','declined','balance','needs_retry') NOT NULL DEFAULT 'waiting',
            `partner` varchar(255) DEFAULT NULL,
            `sum_order` decimal(10,2) DEFAULT NULL,
            `commission` decimal(10,2) DEFAULT NULL,
