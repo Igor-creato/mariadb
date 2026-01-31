@@ -2,8 +2,12 @@
 
 declare(strict_types=1);
 
+namespace WP_Cashback_Plugin\Admin;
+
 /**
- * Файл для управления выплатами в админке WordPress
+ * Класс для управления выплатами кэшбэка в админ-панели.
+ *
+ * @package WP_Cashback_Plugin\Admin
  */
 
 // Проверяем, что файл вызывается из WordPress
@@ -11,15 +15,33 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+/**
+ * Класс управления выплатами в админ-панели
+ */
 class Cashback_Payouts_Admin
 {
-
+    /**
+     * Имя таблицы запросов на выплату
+     *
+     * @var string
+     */
     private string $table_name;
 
+    /**
+     * WooCommerce logger instance
+     *
+     * @var \WC_Logger|null
+     */
+    private ?\WC_Logger $logger = null;
+
+    /**
+     * Конструктор класса
+     */
     public function __construct()
     {
         global $wpdb;
         $this->table_name = $wpdb->prefix . 'cashback_payout_requests';
+        $this->logger = function_exists('wc_get_logger') ? wc_get_logger() : null;
 
         // Регистрируем хук для добавления пункта меню
         add_action('admin_menu', [$this, 'add_admin_menu']);
@@ -27,17 +49,61 @@ class Cashback_Payouts_Admin
         // Обработка AJAX запросов
         add_action('wp_ajax_update_payout_request', [$this, 'handle_update_payout_request']);
         add_action('wp_ajax_get_payout_request', [$this, 'handle_get_payout_request']);
+
+        // Подключение скриптов
+        add_action('admin_enqueue_scripts', [$this, 'enqueue_admin_scripts']);
+    }
+
+    /**
+     * Подключение скриптов и стилей для админ-панели
+     *
+     * @param string $hook Текущая страница админки
+     * @return void
+     */
+    public function enqueue_admin_scripts(string $hook): void
+    {
+        // Подключаем только на странице выплат
+        // Проверяем различные варианты идентификатора страницы
+        $allowed_hooks = [
+            'cashback-overview_page_cashback-payouts',
+            'toplevel_page_cashback-payouts',
+            'admin_page_cashback-payouts'
+        ];
+
+        // Также проверяем через $_GET параметр
+        $is_payouts_page = in_array($hook, $allowed_hooks, true) ||
+            (isset($_GET['page']) && $_GET['page'] === 'cashback-payouts');
+
+        if (!$is_payouts_page) {
+            return;
+        }
+
+        wp_enqueue_script(
+            'cashback-admin-payouts',
+            plugins_url('../assets/js/admin-payouts.js', __FILE__),
+            ['jquery'],
+            '1.0.1',
+            true
+        );
+
+        // Передаем данные в JavaScript
+        wp_localize_script('cashback-admin-payouts', 'cashbackPayoutsData', [
+            'updateNonce' => wp_create_nonce('update_payout_request_nonce'),
+            'getNonce' => wp_create_nonce('get_payout_request_nonce'),
+        ]);
     }
 
     /**
      * Добавляем подпункт меню в админке
+     *
+     * @return void
      */
     public function add_admin_menu(): void
     {
         add_submenu_page(
             'cashback-overview',
-            'Выплаты',
-            'Выплаты',
+            __('Выплаты', 'cashback-plugin'),
+            __('Выплаты', 'cashback-plugin'),
             'manage_options',
             'cashback-payouts',
             [$this, 'render_payouts_page']
@@ -46,6 +112,8 @@ class Cashback_Payouts_Admin
 
     /**
      * Отображаем страницу управления выплатами
+     *
+     * @return void
      */
     public function render_payouts_page(): void
     {
@@ -57,14 +125,28 @@ class Cashback_Payouts_Admin
         global $wpdb;
 
         // Получаем параметры для пагинации и фильтрации
-        $current_page = max(1, absint($_GET['paged'] ?? 0));
+        $current_page = max(1, absint($_GET['paged'] ?? 1));
         $per_page = 10;
         $offset = ($current_page - 1) * $per_page;
 
-        // Получаем фильтры
+        // Получаем фильтры с валидацией
         $filter_status = sanitize_text_field($_GET['status'] ?? '');
         $filter_date_from = sanitize_text_field($_GET['date_from'] ?? '');
         $filter_date_to = sanitize_text_field($_GET['date_to'] ?? '');
+
+        // Валидация дат
+        if (!empty($filter_date_from) && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $filter_date_from)) {
+            $filter_date_from = '';
+        }
+        if (!empty($filter_date_to) && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $filter_date_to)) {
+            $filter_date_to = '';
+        }
+
+        // Валидация статуса
+        $allowed_statuses = ['waiting', 'processing', 'paid', 'failed', 'declined', 'needs_retry'];
+        if (!empty($filter_status) && !in_array($filter_status, $allowed_statuses, true)) {
+            $filter_status = '';
+        }
 
         // Подготовка условий для фильтрации
         $where_conditions = [];
@@ -91,76 +173,110 @@ class Cashback_Payouts_Admin
         }
 
         // Подсчет общего количества выплат
-        $total_payouts = $wpdb->get_var(
-            $wpdb->prepare(
+        if (!empty($where_params)) {
+            $total_payouts = $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT COUNT(*) 
+            FROM {$this->table_name}
+            {$where_clause}",
+                    $where_params
+                )
+            );
+        } else {
+            $total_payouts = $wpdb->get_var(
                 "SELECT COUNT(*) 
-                FROM {$this->table_name}
-                {$where_clause}",
-                $where_params
-            )
-        );
+        FROM {$this->table_name}"
+            );
+        }
 
         // Получаем выплаты
-        $payouts = $wpdb->get_results(
-            $wpdb->prepare(
-                "SELECT id, user_id, total_amount, payout_method, payout_account, 
-                        provider, provider_payout_id, attempts, fail_reason, status, 
-                        created_at, updated_at
-                FROM {$this->table_name}
-                {$where_clause}
-                ORDER BY created_at DESC
-                LIMIT %d OFFSET %d",
-                array_merge($where_params, [$per_page, $offset])
-            ),
-            'ARRAY_A'
-        );
+        if (!empty($where_params)) {
+            $payouts = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT id, user_id, total_amount, payout_method, payout_account, 
+                    provider, provider_payout_id, attempts, fail_reason, status, 
+                    created_at, updated_at
+            FROM {$this->table_name}
+            {$where_clause}
+            ORDER BY created_at DESC
+            LIMIT %d OFFSET %d",
+                    array_merge($where_params, [$per_page, $offset])
+                ),
+                'ARRAY_A'
+            );
+        } else {
+            $payouts = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT id, user_id, total_amount, payout_method, payout_account, 
+                    provider, provider_payout_id, attempts, fail_reason, status, 
+                    created_at, updated_at
+            FROM {$this->table_name}
+            ORDER BY created_at DESC
+            LIMIT %d OFFSET %d",
+                    [$per_page, $offset]
+                ),
+                'ARRAY_A'
+            );
+        }
 
         // Получаем уникальные статусы для фильтра
         $statuses = $wpdb->get_col(
-            "SELECT DISTINCT status 
-            FROM {$this->table_name} 
-            WHERE status IS NOT NULL 
-            ORDER BY status ASC"
+            $wpdb->prepare(
+                "SELECT DISTINCT status 
+                FROM {$this->table_name} 
+                WHERE status IS NOT NULL 
+                ORDER BY status ASC 
+                LIMIT %d",
+                100
+            )
         );
 
         // Выводим сообщения об ошибках или успехе
         $message = '';
+        $message_type = '';
         if (isset($_GET['message'])) {
-            if ($_GET['message'] === 'updated') {
-                $message = '<div class="notice notice-success is-dismissible"><p>Запрос на выплату успешно обновлен.</p></div>';
-            } elseif ($_GET['message'] === 'error') {
-                $message = '<div class="notice notice-error is-dismissible"><p>Ошибка при обновлении запроса на выплату.</p></div>';
+            $message_code = sanitize_text_field($_GET['message']);
+            if ($message_code === 'updated') {
+                $message = __('Запрос на выплату успешно обновлен.', 'cashback-plugin');
+                $message_type = 'success';
+            } elseif ($message_code === 'error') {
+                $message = __('Ошибка при обновлении запроса на выплату.', 'cashback-plugin');
+                $message_type = 'error';
             }
         }
 
 ?>
         <div class="wrap">
-            <h1 class="wp-heading-inline">Выплаты</h1>
+            <h1 class="wp-heading-inline"><?php echo esc_html__('Выплаты', 'cashback-plugin'); ?></h1>
             <hr class="wp-header-end">
 
-            <?php echo $message; ?>
+            <?php if (!empty($message)): ?>
+                <div class="notice notice-<?php echo esc_attr($message_type); ?> is-dismissible">
+                    <p><?php echo esc_html($message); ?></p>
+                </div>
+            <?php endif; ?>
 
             <!-- Фильтры -->
             <div class="tablenav top">
                 <div class="alignleft actions bulkactions">
-                    <label for="filter-status" class="screen-reader-text">Фильтр по статусу</label>
+                    <label for="filter-status" class="screen-reader-text"><?php echo esc_html__('Фильтр по статусу', 'cashback-plugin'); ?></label>
                     <select name="filter-status" id="filter-status">
-                        <option value="">Все статусы</option>
+                        <option value=""><?php echo esc_html__('Все статусы', 'cashback-plugin'); ?></option>
                         <?php foreach ($statuses as $status): ?>
                             <option value="<?php echo esc_attr($status); ?>" <?php selected($filter_status, $status); ?>>
-                                <?php echo esc_html($status); ?>
+                                <?php echo esc_html($this->get_admin_status_label($status)); ?>
                             </option>
                         <?php endforeach; ?>
                     </select>
 
-                    <label for="filter-date-from" class="screen-reader-text">Дата от</label>
+                    <label for="filter-date-from" class="screen-reader-text"><?php echo esc_html__('Дата от', 'cashback-plugin'); ?></label>
                     <input type="date" id="filter-date-from" name="filter-date-from" value="<?php echo esc_attr($filter_date_from); ?>" />
 
-                    <label for="filter-date-to" class="screen-reader-text">Дата до</label>
+                    <label for="filter-date-to" class="screen-reader-text"><?php echo esc_html__('Дата до', 'cashback-plugin'); ?></label>
                     <input type="date" id="filter-date-to" name="filter-date-to" value="<?php echo esc_attr($filter_date_to); ?>" />
 
-                    <button type="submit" id="filter-submit" class="button action">Фильтровать</button>
-                    <button type="submit" id="filter-reset" class="button action">Сбросить</button>
+                    <button type="submit" id="filter-submit" class="button action"><?php echo esc_html__('Фильтровать', 'cashback-plugin'); ?></button>
+                    <button type="submit" id="filter-reset" class="button action"><?php echo esc_html__('Сбросить', 'cashback-plugin'); ?></button>
                 </div>
                 <br class="clear">
             </div>
@@ -170,34 +286,34 @@ class Cashback_Payouts_Admin
                 <table class="wp-list-table widefat fixed striped">
                     <thead>
                         <tr>
-                            <th scope="col">ID пользователя</th>
-                            <th scope="col">Сумма</th>
-                            <th scope="col">Платежная система</th>
-                            <th scope="col">Номер счета/телефона</th>
-                            <th scope="col">Банк</th>
-                            <th scope="col">ID Транзакции</th>
-                            <th scope="col">Количество попыток</th>
-                            <th scope="col">Описание ошибки</th>
-                            <th scope="col">Статус платежа</th>
-                            <th scope="col">Дата заявки на выплату</th>
-                            <th scope="col">Дата выплаты или ошибки выплаты</th>
-                            <th scope="col">Действия</th>
+                            <th scope="col"><?php echo esc_html__('ID пользователя', 'cashback-plugin'); ?></th>
+                            <th scope="col"><?php echo esc_html__('Сумма', 'cashback-plugin'); ?></th>
+                            <th scope="col"><?php echo esc_html__('Платежная система', 'cashback-plugin'); ?></th>
+                            <th scope="col"><?php echo esc_html__('Номер счета/телефона', 'cashback-plugin'); ?></th>
+                            <th scope="col"><?php echo esc_html__('Банк', 'cashback-plugin'); ?></th>
+                            <th scope="col"><?php echo esc_html__('ID Транзакции', 'cashback-plugin'); ?></th>
+                            <th scope="col"><?php echo esc_html__('Количество попыток', 'cashback-plugin'); ?></th>
+                            <th scope="col"><?php echo esc_html__('Описание ошибки', 'cashback-plugin'); ?></th>
+                            <th scope="col"><?php echo esc_html__('Статус платежа', 'cashback-plugin'); ?></th>
+                            <th scope="col"><?php echo esc_html__('Дата заявки на выплату', 'cashback-plugin'); ?></th>
+                            <th scope="col"><?php echo esc_html__('Дата выплаты или ошибки выплаты', 'cashback-plugin'); ?></th>
+                            <th scope="col"><?php echo esc_html__('Действия', 'cashback-plugin'); ?></th>
                         </tr>
                     </thead>
                     <tfoot>
                         <tr>
-                            <th scope="col">ID пользователя</th>
-                            <th scope="col">Сумма</th>
-                            <th scope="col">Платежная система</th>
-                            <th scope="col">Номер счета/телефона</th>
-                            <th scope="col">Банк</th>
-                            <th scope="col">ID Транзакции</th>
-                            <th scope="col">Количество попыток</th>
-                            <th scope="col">Описание ошибки</th>
-                            <th scope="col">Статус платежа</th>
-                            <th scope="col">Дата заявки на выплату</th>
-                            <th scope="col">Дата выплаты или ошибки выплаты</th>
-                            <th scope="col">Действия</th>
+                            <th scope="col"><?php echo esc_html__('ID пользователя', 'cashback-plugin'); ?></th>
+                            <th scope="col"><?php echo esc_html__('Сумма', 'cashback-plugin'); ?></th>
+                            <th scope="col"><?php echo esc_html__('Платежная система', 'cashback-plugin'); ?></th>
+                            <th scope="col"><?php echo esc_html__('Номер счета/телефона', 'cashback-plugin'); ?></th>
+                            <th scope="col"><?php echo esc_html__('Банк', 'cashback-plugin'); ?></th>
+                            <th scope="col"><?php echo esc_html__('ID Транзакции', 'cashback-plugin'); ?></th>
+                            <th scope="col"><?php echo esc_html__('Количество попыток', 'cashback-plugin'); ?></th>
+                            <th scope="col"><?php echo esc_html__('Описание ошибки', 'cashback-plugin'); ?></th>
+                            <th scope="col"><?php echo esc_html__('Статус платежа', 'cashback-plugin'); ?></th>
+                            <th scope="col"><?php echo esc_html__('Дата заявки на выплату', 'cashback-plugin'); ?></th>
+                            <th scope="col"><?php echo esc_html__('Дата выплаты или ошибки выплаты', 'cashback-plugin'); ?></th>
+                            <th scope="col"><?php echo esc_html__('Действия', 'cashback-plugin'); ?></th>
                         </tr>
                     </tfoot>
                     <tbody id="payouts-tbody">
@@ -226,15 +342,15 @@ class Cashback_Payouts_Admin
                                     <td><?php echo esc_html(date('Y-m-d H:i', strtotime($payout['created_at']))); ?></td>
                                     <td><?php echo esc_html(!empty($payout['updated_at']) ? date('Y-m-d H:i', strtotime($payout['updated_at'])) : ''); ?></td>
                                     <td>
-                                        <button class="button button-secondary edit-btn">Редактировать</button>
-                                        <button class="button button-primary save-btn" style="display:none;">Сохранить</button>
-                                        <button class="button button-default cancel-btn" style="display:none;">Отмена</button>
+                                        <button class="button button-secondary edit-btn"><?php echo esc_html__('Редактировать', 'cashback-plugin'); ?></button>
+                                        <button class="button button-primary save-btn" style="display:none;"><?php echo esc_html__('Сохранить', 'cashback-plugin'); ?></button>
+                                        <button class="button button-default cancel-btn" style="display:none;"><?php echo esc_html__('Отмена', 'cashback-plugin'); ?></button>
                                     </td>
                                 </tr>
                             <?php endforeach; ?>
                         <?php else: ?>
                             <tr>
-                                <td colspan="12">Нет выплат для отображения.</td>
+                                <td colspan="12"><?php echo esc_html__('Нет выплат для отображения.', 'cashback-plugin'); ?></td>
                             </tr>
                         <?php endif; ?>
                     </tbody>
@@ -258,355 +374,32 @@ class Cashback_Payouts_Admin
 
             $this->render_pagination($pagination_args);
             ?>
-
-            <!-- Скрипты для работы с формой -->
-            <script type="text/javascript">
-                jQuery(document).ready(function($) {
-                    // Объект с описаниями статусов
-                    var statusDescriptions = {
-                        'waiting': 'Платеж еще не обрабатывался',
-                        'processing': 'Платеж осуществляется',
-                        'paid': 'Платеж выплачен',
-                        'failed': 'Выплату невозможно осуществить по каким либо причинам',
-                        'declined': 'Выплата заморожена из-за мошенничества',
-                        'needs_retry': 'Выплата не прошла, попробовать повторить выплату'
-                    };
-                    // Обработка фильтра
-                    $('#filter-submit').on('click', function() {
-                        var status = $('#filter-status').val();
-                        var dateFrom = $('#filter-date-from').val();
-                        var dateTo = $('#filter-date-to').val();
-
-                        var url = new URL(window.location);
-                        if (status) {
-                            url.searchParams.set('status', status);
-                        } else {
-                            url.searchParams.delete('status');
-                        }
-
-                        if (dateFrom) {
-                            url.searchParams.set('date_from', dateFrom);
-                        } else {
-                            url.searchParams.delete('date_from');
-                        }
-
-                        if (dateTo) {
-                            url.searchParams.set('date_to', dateTo);
-                        } else {
-                            url.searchParams.delete('date_to');
-                        }
-
-                        url.searchParams.delete('paged'); // Сброс пагинации
-                        window.location.href = url.toString();
-                    });
-
-                    // Сброс фильтров
-                    $('#filter-reset').on('click', function() {
-                        var url = new URL(window.location);
-                        url.searchParams.delete('status');
-                        url.searchParams.delete('date_from');
-                        url.searchParams.delete('date_to');
-                        url.searchParams.delete('paged');
-                        window.location.href = url.toString();
-                    });
-
-                    // Обработка клика по кнопке "Редактировать"
-                    $('.edit-btn').on('click', function() {
-                        var row = $(this).closest('tr');
-                        var cells = row.find('.edit-field');
-
-                        cells.each(function() {
-                            var cell = $(this);
-                            var field = cell.data('field');
-                            var currentValue = cell.text();
-
-                            // Устанавливаем минимальную ширину для ячейки, чтобы она не сжималась
-                            cell.css('min-width', cell.width() + 'px');
-
-                            if (field === 'status') {
-                                // Для поля status создаем select
-                                var selectHtml = '<select class="edit-input" data-field="' + field + '" style="width:100%; box-sizing:border-box;">';
-                                selectHtml += '<option value="waiting"' + (currentValue === 'waiting' ? ' selected' : '') + '>Ожидает выплаты</option>';
-                                selectHtml += '<option value="processing"' + (currentValue === 'processing' ? ' selected' : '') + '>В обработке</option>';
-                                selectHtml += '<option value="paid"' + (currentValue === 'paid' ? ' selected' : '') + '>Выплачен</option>';
-                                selectHtml += '<option value="failed"' + (currentValue === 'failed' ? ' selected' : '') + '>Выплата не прошла</option>';
-                                selectHtml += '<option value="declined"' + (currentValue === 'declined' ? ' selected' : '') + '>Выплата заморожена</option>';
-                                selectHtml += '<option value="needs_retry"' + (currentValue === 'needs_retry' ? ' selected' : '') + '>Проверить выплату</option>';
-                                selectHtml += '</select>';
-                                cell.html(selectHtml);
-                            } else if (field === 'attempts') {
-                                // Для числового поля attempts создаем input
-                                cell.html('<input type="number" min="0" class="edit-input regular-text" data-field="' + field + '" value="' + currentValue + '" style="width:100%; box-sizing:border-box;" />');
-                            } else {
-                                // Для остальных полей создаем input
-                                cell.html('<input type="text" class="edit-input regular-text" data-field="' + field + '" value="' + currentValue + '" style="width:100%; box-sizing:border-box;" />');
-                            }
-                        });
-
-                        row.find('.edit-btn').hide();
-                        row.find('.save-btn, .cancel-btn').show();
-                    });
-
-                    // Обработка клика по кнопке "Отмена"
-                    $('.cancel-btn').on('click', function() {
-                        var row = $(this).closest('tr');
-                        resetRowToViewMode(row);
-                    });
-
-                    // Обработка клика по кнопке "Сохранить"
-                    $('.save-btn').on('click', function() {
-                        var row = $(this).closest('tr');
-                        var payoutId = row.data('payout-id');
-                        var originalValues = {};
-                        var changedData = {};
-
-                        // Сохраняем оригинальные значения из ячеек перед редактированием
-                        row.find('.edit-field').each(function() {
-                            var cell = $(this);
-                            var field = cell.data('field');
-                            originalValues[field] = cell.text();
-                        });
-
-                        // Собираем только измененные данные
-                        row.find('.edit-input').each(function() {
-                            var input = $(this);
-                            var field = input.data('field');
-                            var newValue = input.val();
-                            var originalValue = originalValues[field];
-
-                            // Проверяем, изменилось ли значение
-                            if (originalValue != newValue) {
-                                changedData[field] = newValue;
-                            }
-                        });
-
-                        // Добавляем только необходимые данные для обновления
-                        var data = {
-                            'action': 'update_payout_request',
-                            'payout_id': payoutId,
-                            'nonce': '<?php echo wp_create_nonce('update_payout_request_nonce'); ?>'
-                        };
-
-                        // Добавляем только измененные поля
-                        Object.assign(data, changedData);
-
-                        // Проверяем, есть ли вообще изменения
-                        var hasChanges = Object.keys(changedData).length > 0;
-
-                        if (!hasChanges) {
-                            alert('Нет изменений для сохранения.');
-                            // Переключаем строку обратно в режим просмотра
-                            row.find('.save-btn, .cancel-btn').hide();
-                            row.find('.edit-btn').show();
-                            return;
-                        }
-
-                        // Валидация только измененных данных
-                        if (changedData.hasOwnProperty('attempts')) {
-                            var attempts = parseInt(changedData['attempts']);
-                            if (isNaN(attempts) || attempts < 0) {
-                                alert('Количество попыток должно быть неотрицательным числом');
-                                return;
-                            }
-                        }
-
-                        if (changedData.hasOwnProperty('status')) {
-                            var status = changedData['status'];
-                            var allowedStatuses = ['waiting', 'processing', 'paid', 'failed', 'declined', 'needs_retry'];
-                            if (allowedStatuses.indexOf(status) === -1) {
-                                alert('Недопустимый статус выплаты');
-                                return;
-                            }
-                        }
-
-                        $.post(ajaxurl, data, function(response) {
-                            if (response.success) {
-                                // Обновляем все значения в ячейках, используя полученные данные из базы
-                                row.find('.edit-field[data-field="provider"]').text(response.data.payout_data.provider || '');
-                                row.find('.edit-field[data-field="provider_payout_id"]').text(response.data.payout_data.provider_payout_id || '');
-                                row.find('.edit-field[data-field="attempts"]').text(response.data.payout_data.attempts);
-                                row.find('.edit-field[data-field="fail_reason"]').text(response.data.payout_data.fail_reason || '');
-                                var statusText = response.data.payout_data.status;
-                                var statusLabel = statusText; // По умолчанию используем сам статус
-                                switch (statusText) {
-                                    case 'waiting':
-                                        statusLabel = 'Ожидает выплаты';
-                                        break;
-                                    case 'processing':
-                                        statusLabel = 'В обработке';
-                                        break;
-                                    case 'paid':
-                                        statusLabel = 'Выплачен';
-                                        break;
-                                    case 'failed':
-                                        statusLabel = 'Выплата не прошла';
-                                        break;
-                                    case 'declined':
-                                        statusLabel = 'Выплата заморожена';
-                                        break;
-                                    case 'needs_retry':
-                                        statusLabel = 'Проверить выплату';
-                                        break;
-                                }
-                                row.find('.edit-field[data-field="status"]').text(statusLabel).attr('title', statusDescriptions[statusText] || statusText);
-
-                                // Переключаем строку в режим просмотра
-                                row.find('.edit-input').each(function() {
-                                    var cell = $(this).closest('.edit-field');
-                                    var field = $(this).data('field');
-                                    cell.text(response.data.payout_data[field] || '');
-
-                                    // Восстанавливаем исходные стили ячейки
-                                    cell.css('min-width', '');
-                                });
-
-                                row.find('.save-btn, .cancel-btn').hide();
-                                row.find('.edit-btn').show();
-
-                                // Обновляем выпадающий список фильтра по статусам
-                                var statusFilter = $('#filter-status');
-                                var currentSelected = statusFilter.val(); // Сохраняем текущий выбранный статус
-
-                                // Очищаем текущие опции, кроме "Все статусы"
-                                statusFilter.empty();
-                                statusFilter.append('<option value="">Все статусы</option>');
-
-                                // Добавляем обновленные опции статусов
-                                $.each(response.data.statuses, function(index, status) {
-                                    var statusText = status;
-                                    switch (status) {
-                                        case 'waiting':
-                                            statusText = 'Ожидает выплаты';
-                                            break;
-                                        case 'processing':
-                                            statusText = 'В обработке';
-                                            break;
-                                        case 'paid':
-                                            statusText = 'Выплачен';
-                                            break;
-                                        case 'failed':
-                                            statusText = 'Выплата не прошла';
-                                            break;
-                                        case 'declined':
-                                            statusText = 'Выплата заморожена';
-                                            break;
-                                        case 'needs_retry':
-                                            statusText = 'Проверить выплату';
-                                            break;
-                                    }
-                                    var isSelected = (status === currentSelected) ? ' selected' : '';
-                                    statusFilter.append('<option value="' + status + '"' + isSelected + '>' + statusText + '</option>');
-                                });
-
-                                // Показываем сообщение об успешном обновлении
-                                $('.wp-header-end').after('<div class="notice notice-success is-dismissible"><p>Запрос на выплату успешно обновлен.</p></div>');
-                                setTimeout(function() {
-                                    $('.notice-success').fadeOut().remove();
-                                }, 3000);
-                            } else {
-                                alert('Ошибка при обновлении запроса на выплату: ' + response.data.message);
-                            }
-                        }).fail(function() {
-                            alert('Ошибка соединения при обновлении запроса на выплату');
-                        });
-                    });
-
-                    // Загрузка актуальных данных из базы
-                    function loadPayoutData(payoutId, callback) {
-                        var data = {
-                            'action': 'get_payout_request',
-                            'payout_id': payoutId,
-                            'nonce': '<?php echo wp_create_nonce('get_payout_request_nonce'); ?>'
-                        };
-
-                        $.post(ajaxurl, data, function(response) {
-                            if (response.success) {
-                                callback(null, response.data);
-                            } else {
-                                callback(response.data.message || 'Ошибка при загрузке данных выплаты', null);
-                            }
-                        }).fail(function() {
-                            callback('Ошибка соединения при загрузке данных выплаты', null);
-                        });
-                    }
-
-                    // Сброс строки к режиму просмотра
-                    function resetRowToViewMode(row) {
-                        var payoutId = row.data('payout-id');
-
-                        // Загружаем актуальные данные из базы
-                        loadPayoutData(payoutId, function(error, payoutData) {
-                            if (error) {
-                                console.error('Ошибка загрузки данных выплаты:', error);
-                                alert('Ошибка загрузки данных выплаты: ' + error);
-                                return;
-                            }
-
-                            // Обновляем все значения в ячейках, используя полученные данные из базы
-                            row.find('.edit-field[data-field="provider"]').text(payoutData.provider || '');
-                            row.find('.edit-field[data-field="provider_payout_id"]').text(payoutData.provider_payout_id || '');
-                            row.find('.edit-field[data-field="attempts"]').text(payoutData.attempts);
-                            row.find('.edit-field[data-field="fail_reason"]').text(payoutData.fail_reason || '');
-                            var statusText = payoutData.status;
-                            var statusLabel = statusText; // По умолчанию используем сам статус
-                            switch (statusText) {
-                                case 'waiting':
-                                    statusLabel = 'Ожидает выплаты';
-                                    break;
-                                case 'processing':
-                                    statusLabel = 'В обработке';
-                                    break;
-                                case 'paid':
-                                    statusLabel = 'Выплачен';
-                                    break;
-                                case 'failed':
-                                    statusLabel = 'Выплата не прошла';
-                                    break;
-                                case 'declined':
-                                    statusLabel = 'Выплата заморожена';
-                                    break;
-                                case 'needs_retry':
-                                    statusLabel = 'Проверить выплату';
-                                    break;
-                            }
-                            row.find('.edit-field[data-field="status"]').text(statusLabel).attr('title', statusDescriptions[statusText] || statusText);
-
-                            // Восстанавливаем исходные стили ячеек
-                            row.find('.edit-field').each(function() {
-                                var cell = $(this);
-                                cell.css('min-width', '');
-                            });
-
-                            row.find('.save-btn, .cancel-btn').hide();
-                            row.find('.edit-btn').show();
-                        });
-                    }
-                });
-            </script>
         </div>
 <?php
     }
 
     /**
      * Обработка AJAX запроса на обновление запроса выплаты
+     *
+     * @return void
      */
     public function handle_update_payout_request(): void
     {
         // Проверяем nonce
-        if (!wp_verify_nonce(sanitize_text_field($_POST['nonce']), 'update_payout_request_nonce')) {
-            wp_send_json_error(['message' => 'Неверный nonce.']);
+        if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field($_POST['nonce']), 'update_payout_request_nonce')) {
+            wp_send_json_error(['message' => __('Неверный nonce.', 'cashback-plugin')]);
             return;
         }
 
         // Проверяем права пользователя
         if (!current_user_can('manage_options')) {
-            wp_send_json_error(['message' => 'Недостаточно прав для выполнения этого действия.']);
+            wp_send_json_error(['message' => __('Недостаточно прав для выполнения этого действия.', 'cashback-plugin')]);
             return;
         }
 
         global $wpdb;
 
-        $payout_id = intval($_POST['payout_id']);
+        $payout_id = intval($_POST['payout_id'] ?? 0);
 
         // Подготовим массив для обновления, включая только те поля, которые были переданы
         $update_data = array();
@@ -629,7 +422,7 @@ class Cashback_Payouts_Admin
             $attempts = intval($_POST['attempts']);
 
             if ($attempts < 0) {
-                wp_send_json_error(['message' => 'Количество попыток должно быть неотрицательным числом.']);
+                wp_send_json_error(['message' => __('Количество попыток должно быть неотрицательным числом.', 'cashback-plugin')]);
                 return;
             }
 
@@ -648,8 +441,8 @@ class Cashback_Payouts_Admin
 
             // Проверяем, что статус допустим
             $allowed_statuses = ['waiting', 'processing', 'paid', 'failed', 'declined', 'needs_retry'];
-            if (!in_array($status, $allowed_statuses)) {
-                wp_send_json_error(['message' => 'Недопустимый статус выплаты.']);
+            if (!in_array($status, $allowed_statuses, true)) {
+                wp_send_json_error(['message' => __('Недопустимый статус выплаты.', 'cashback-plugin')]);
                 return;
             }
 
@@ -687,7 +480,7 @@ class Cashback_Payouts_Admin
         );
 
         if ($result === false) {
-            wp_send_json_error(['message' => 'Ошибка при обновлении запроса выплаты в базе данных.']);
+            wp_send_json_error(['message' => __('Ошибка при обновлении запроса выплаты в базе данных.', 'cashback-plugin')]);
             return;
         }
 
@@ -703,16 +496,20 @@ class Cashback_Payouts_Admin
         );
 
         if (!$updated_payout_data) {
-            wp_send_json_error(['message' => 'Не удалось получить обновленные данные запроса выплаты.']);
+            wp_send_json_error(['message' => __('Не удалось получить обновленные данные запроса выплаты.', 'cashback-plugin')]);
             return;
         }
 
         // Получаем уникальные статусы для обновления фильтра
         $statuses = $wpdb->get_col(
-            "SELECT DISTINCT status 
-            FROM {$this->table_name} 
-            WHERE status IS NOT NULL 
-            ORDER BY status ASC"
+            $wpdb->prepare(
+                "SELECT DISTINCT status 
+                FROM {$this->table_name} 
+                WHERE status IS NOT NULL 
+                ORDER BY status ASC
+                LIMIT %d",
+                100
+            )
         );
 
         // Возвращаем обновленные данные и статусы
@@ -742,7 +539,7 @@ class Cashback_Payouts_Admin
         );
 
         if (!$payout_request) {
-            error_log("Cashback_Payouts_Admin: Не найден запрос на выплату с ID {$payout_id}");
+            $this->log_error("Не найден запрос на выплату с ID {$payout_id}");
             return false;
         }
 
@@ -764,7 +561,7 @@ class Cashback_Payouts_Admin
             );
 
             if (!$current_balance) {
-                error_log("Cashback_Payouts_Admin: Не найден баланс для пользователя {$user_id}");
+                $this->log_error("Не найден баланс для пользователя {$user_id}");
                 $wpdb->query('ROLLBACK');
                 return false;
             }
@@ -772,7 +569,7 @@ class Cashback_Payouts_Admin
             // Проверяем, достаточно ли средств в pending_balance
             $pending_balance = floatval($current_balance['pending_balance']);
             if ($pending_balance < $amount) {
-                error_log("Cashback_Payouts_Admin: Недостаточно средств в pending_balance для пользователя {$user_id}. Требуется: {$amount}, доступно: {$pending_balance}");
+                $this->log_error("Недостаточно средств в pending_balance для пользователя {$user_id}. Требуется: {$amount}, доступно: {$pending_balance}");
                 $wpdb->query('ROLLBACK');
                 return false;
             }
@@ -793,7 +590,7 @@ class Cashback_Payouts_Admin
             );
 
             if ($result === false) {
-                error_log("Cashback_Payouts_Admin: Ошибка обновления баланса пользователя {$user_id}");
+                $this->log_error("Ошибка обновления баланса пользователя {$user_id}");
                 $wpdb->query('ROLLBACK');
                 return false;
             }
@@ -802,13 +599,13 @@ class Cashback_Payouts_Admin
             $wpdb->query('COMMIT');
 
             // Логируем изменение баланса
-            error_log("Cashback_Payouts_Admin: Баланс пользователя {$user_id} обновлен. Выплачено: {$amount}, pending_balance: {$new_pending_balance}, paid_balance: {$new_paid_balance}");
+            $this->log_info("Баланс пользователя {$user_id} обновлен. Выплачено: {$amount}, pending_balance: {$new_pending_balance}, paid_balance: {$new_paid_balance}");
 
             return true;
-        } catch (Exception $e) {
+        } catch (\Exception $e) {
             // Откатываем транзакцию в случае ошибки
             $wpdb->query('ROLLBACK');
-            error_log("Cashback_Payouts_Admin: Ошибка при обновлении баланса пользователя {$user_id}: " . $e->getMessage());
+            $this->log_error("Ошибка при обновлении баланса пользователя {$user_id}: " . $e->getMessage());
             return false;
         }
     }
@@ -833,7 +630,7 @@ class Cashback_Payouts_Admin
         );
 
         if (!$payout_request) {
-            error_log("Cashback_Payouts_Admin: Не найден запрос на выплату с ID {$payout_id}");
+            $this->log_error("Не найден запрос на выплату с ID {$payout_id}");
             return false;
         }
 
@@ -855,7 +652,7 @@ class Cashback_Payouts_Admin
             );
 
             if (!$current_balance) {
-                error_log("Cashback_Payouts_Admin: Не найден баланс для пользователя {$user_id}");
+                $this->log_error("Не найден баланс для пользователя {$user_id}");
                 $wpdb->query('ROLLBACK');
                 return false;
             }
@@ -863,7 +660,7 @@ class Cashback_Payouts_Admin
             // Проверяем, достаточно ли средств в pending_balance
             $pending_balance = floatval($current_balance['pending_balance']);
             if ($pending_balance < $amount) {
-                error_log("Cashback_Payouts_Admin: Недостаточно средств в pending_balance для пользователя {$user_id}. Требуется: {$amount}, доступно: {$pending_balance}");
+                $this->log_error("Недостаточно средств в pending_balance для пользователя {$user_id}. Требуется: {$amount}, доступно: {$pending_balance}");
                 $wpdb->query('ROLLBACK');
                 return false;
             }
@@ -884,7 +681,7 @@ class Cashback_Payouts_Admin
             );
 
             if ($result === false) {
-                error_log("Cashback_Payouts_Admin: Ошибка обновления баланса пользователя {$user_id}");
+                $this->log_error("Ошибка обновления баланса пользователя {$user_id}");
                 $wpdb->query('ROLLBACK');
                 return false;
             }
@@ -893,37 +690,39 @@ class Cashback_Payouts_Admin
             $wpdb->query('COMMIT');
 
             // Логируем изменение баланса
-            error_log("Cashback_Payouts_Admin: Баланс пользователя {$user_id} обновлен при отклонении выплаты. Сумма: {$amount}, pending_balance: {$new_pending_balance}, frozen_balance: {$new_frozen_balance}");
+            $this->log_info("Баланс пользователя {$user_id} обновлен при отклонении выплаты. Сумма: {$amount}, pending_balance: {$new_pending_balance}, frozen_balance: {$new_frozen_balance}");
 
             return true;
-        } catch (Exception $e) {
+        } catch (\Exception $e) {
             // Откатываем транзакцию в случае ошибки
             $wpdb->query('ROLLBACK');
-            error_log("Cashback_Payouts_Admin: Ошибка при обновлении баланса пользователя {$user_id} при отклонении выплаты: " . $e->getMessage());
+            $this->log_error("Ошибка при обновлении баланса пользователя {$user_id} при отклонении выплаты: " . $e->getMessage());
             return false;
         }
     }
 
     /**
      * Обработка AJAX запроса на получение данных запроса выплаты
+     *
+     * @return void
      */
     public function handle_get_payout_request(): void
     {
         // Проверяем nonce
-        if (!wp_verify_nonce(sanitize_text_field($_POST['nonce']), 'get_payout_request_nonce')) {
-            wp_send_json_error(['message' => 'Неверный nonce.']);
+        if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field($_POST['nonce']), 'get_payout_request_nonce')) {
+            wp_send_json_error(['message' => __('Неверный nonce.', 'cashback-plugin')]);
             return;
         }
 
         // Проверяем права пользователя
         if (!current_user_can('manage_options')) {
-            wp_send_json_error(['message' => 'Недостаточно прав для выполнения этого действия.']);
+            wp_send_json_error(['message' => __('Недостаточно прав для выполнения этого действия.', 'cashback-plugin')]);
             return;
         }
 
         global $wpdb;
 
-        $payout_id = intval($_POST['payout_id']);
+        $payout_id = intval($_POST['payout_id'] ?? 0);
 
         // Получаем данные из базы
         $payout_data = $wpdb->get_row(
@@ -937,7 +736,7 @@ class Cashback_Payouts_Admin
         );
 
         if (!$payout_data) {
-            wp_send_json_error(['message' => 'Не удалось получить данные запроса выплаты.']);
+            wp_send_json_error(['message' => __('Не удалось получить данные запроса выплаты.', 'cashback-plugin')]);
             return;
         }
 
@@ -953,22 +752,16 @@ class Cashback_Payouts_Admin
      */
     private function get_admin_status_label(string $status): string
     {
-        switch ($status) {
-            case 'waiting':
-                return 'Ожидает выплаты';
-            case 'processing':
-                return 'В обработке';
-            case 'paid':
-                return 'Выплачен';
-            case 'failed':
-                return 'Выплата не прошла';
-            case 'declined':
-                return 'Выплата заморожена';
-            case 'needs_retry':
-                return 'Проверить выплату';
-            default:
-                return $status;
-        }
+        $labels = [
+            'waiting' => __('Ожидает выплаты', 'cashback-plugin'),
+            'processing' => __('В обработке', 'cashback-plugin'),
+            'paid' => __('Выплачен', 'cashback-plugin'),
+            'failed' => __('Выплата не прошла', 'cashback-plugin'),
+            'declined' => __('Выплата заморожена', 'cashback-plugin'),
+            'needs_retry' => __('Проверить выплату', 'cashback-plugin'),
+        ];
+
+        return $labels[$status] ?? $status;
     }
 
     /**
@@ -979,26 +772,23 @@ class Cashback_Payouts_Admin
      */
     private function get_admin_status_description(string $status): string
     {
-        switch ($status) {
-            case 'waiting':
-                return 'Платеж еще не обрабатывался';
-            case 'processing':
-                return 'Платеж осуществляется';
-            case 'paid':
-                return 'Платеж выплачен';
-            case 'failed':
-                return 'Выплату невозможно осуществить по каким либо причинам';
-            case 'declined':
-                return 'Выплата заморожена из-за мошенничества';
-            case 'needs_retry':
-                return 'Выплата не прошла, попробовать повторить выплату';
-            default:
-                return $status;
-        }
+        $descriptions = [
+            'waiting' => __('Платеж еще не обрабатывался', 'cashback-plugin'),
+            'processing' => __('Платеж осуществляется', 'cashback-plugin'),
+            'paid' => __('Платеж выплачен', 'cashback-plugin'),
+            'failed' => __('Выплату невозможно осуществить по каким либо причинам', 'cashback-plugin'),
+            'declined' => __('Выплата заморожена из-за мошенничества', 'cashback-plugin'),
+            'needs_retry' => __('Выплата не прошла, попробовать повторить выплату', 'cashback-plugin'),
+        ];
+
+        return $descriptions[$status] ?? $status;
     }
 
     /**
      * Вывод пагинации
+     *
+     * @param array $args Параметры пагинации
+     * @return void
      */
     private function render_pagination(array $args): void
     {
@@ -1020,9 +810,9 @@ class Cashback_Payouts_Admin
                 'current' => $current_page,
                 'format' => $format,
                 'add_args' => $add_args,
-                'type' => 'plain',  // Используем plain для более гибкого контроля над HTML
-                'prev_text' => '&lsaquo; ' . __('Предыдущая'),
-                'next_text' => __('Следующая') . ' &rsaquo;',
+                'type' => 'plain',
+                'prev_text' => '&lsaquo; ' . __('Предыдущая', 'cashback-plugin'),
+                'next_text' => __('Следующая', 'cashback-plugin') . ' &rsaquo;',
             ]);
 
             if ($pagination_links) {
@@ -1030,18 +820,17 @@ class Cashback_Payouts_Admin
                 echo '<div class="tablenav-pages">';
                 echo '<span class="displaying-num">' . sprintf(_n('%s запись', '%s записей', $total_items, 'cashback-plugin'), number_format_i18n($total_items)) . '</span>';
                 echo '<span class="pagination-links">';
-                echo $pagination_links;
+                echo wp_kses_post($pagination_links);
                 echo '</span>';
                 echo '<br class="clear"></div>';
             }
         } else {
-            // Альтернативная реализация пагинации, если paginate_links недоступна
+            // Альтернативная реализация пагинации
             echo '<div class="tablenav bottom">';
             echo '<div class="tablenav-pages">';
             echo '<span class="displaying-num">' . sprintf(_n('%s запись', '%s записей', $total_items, 'cashback-plugin'), number_format_i18n($total_items)) . '</span>';
             echo '<span class="pagination-links">';
 
-            // Создаем простую пагинацию вручную
             $base_url = admin_url('admin.php?page=cashback-payouts');
             if (!empty($add_args)) {
                 foreach ($add_args as $key => $value) {
@@ -1053,24 +842,50 @@ class Cashback_Payouts_Admin
             if ($current_page > 1) {
                 $prev_page = $current_page - 1;
                 $prev_url = add_query_arg('paged', $prev_page, $base_url);
-                echo '<a class="prev-page button" href="' . esc_url($prev_url) . '">&lsaquo; ' . __('Предыдущая') . '</a>';
+                echo '<a class="prev-page button" href="' . esc_url($prev_url) . '">&lsaquo; ' . esc_html__('Предыдущая', 'cashback-plugin') . '</a>';
             }
 
             // Текущая страница
             echo '<span class="paging-input">';
-            echo '<span class="tablenav-paging-text">' . esc_html($current_page) . ' из ' . esc_html($total_pages) . '</span>';
+            echo '<span class="tablenav-paging-text">' . esc_html($current_page) . ' ' . esc_html__('из', 'cashback-plugin') . ' ' . esc_html($total_pages) . '</span>';
             echo '</span>';
 
             // Следующая страница
             if ($current_page < $total_pages) {
                 $next_page = $current_page + 1;
                 $next_url = add_query_arg('paged', $next_page, $base_url);
-                echo '<a class="next-page button" href="' . esc_url($next_url) . '">' . __('Следующая') . ' &rsaquo;</a>';
+                echo '<a class="next-page button" href="' . esc_url($next_url) . '">' . esc_html__('Следующая', 'cashback-plugin') . ' &rsaquo;</a>';
             }
 
             echo '</span>';
             echo '</div>';
             echo '<br class="clear"></div>';
+        }
+    }
+
+    /**
+     * Логирование ошибок
+     *
+     * @param string $message Сообщение об ошибке
+     * @return void
+     */
+    private function log_error(string $message): void
+    {
+        if ($this->logger) {
+            $this->logger->error($message, ['source' => 'cashback-payouts']);
+        }
+    }
+
+    /**
+     * Логирование информационных сообщений
+     *
+     * @param string $message Информационное сообщение
+     * @return void
+     */
+    private function log_info(string $message): void
+    {
+        if ($this->logger) {
+            $this->logger->info($message, ['source' => 'cashback-payouts']);
         }
     }
 }
