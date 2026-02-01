@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 if (!defined('ABSPATH')) {
     exit;
 }
@@ -88,6 +90,21 @@ class WC_Affiliate_URL_Params
      */
     public function save_custom_fields(int $post_id): void
     {
+        // Проверка autosave
+        if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) {
+            return;
+        }
+
+        // Проверка прав пользователя
+        if (!current_user_can('edit_product', $post_id)) {
+            return;
+        }
+
+        // Проверка nonce
+        if (!isset($_POST['_wpnonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_wpnonce'])), 'update-post_' . $post_id)) {
+            return;
+        }
+
         $product = wc_get_product($post_id);
 
         if (!$product || $product->get_type() !== 'external') {
@@ -96,11 +113,11 @@ class WC_Affiliate_URL_Params
 
         for ($i = 1; $i <= self::PARAM_COUNT; $i++) {
             $param_key = isset($_POST["_affiliate_param_{$i}_key"])
-                ? sanitize_text_field($_POST["_affiliate_param_{$i}_key"])
+                ? sanitize_text_field(wp_unslash($_POST["_affiliate_param_{$i}_key"]))
                 : '';
 
             $param_value = isset($_POST["_affiliate_param_{$i}_value"])
-                ? sanitize_text_field($_POST["_affiliate_param_{$i}_value"])
+                ? sanitize_text_field(wp_unslash($_POST["_affiliate_param_{$i}_value"]))
                 : '';
 
             update_post_meta($post_id, "_affiliate_param_{$i}_key", $param_key);
@@ -177,12 +194,13 @@ class WC_Affiliate_URL_Params
     public function add_product_id_to_link(string $link, WC_Product $product): string
     {
         if ($product->get_type() === 'external') {
-            $link = str_replace('<a ', '<a data-product-id="' . $product->get_id() . '" target="_blank" ', $link);
+            $link = str_replace('<a ', '<a data-product-id="' . esc_attr((string) $product->get_id()) . '" target="_blank" ', $link);
         }
         return $link;
     }
 
     /**
+     /**
      * Модифицируем кнопку внешнего товара на странице товара
      */
     public function modify_single_product_button(): void
@@ -200,12 +218,11 @@ class WC_Affiliate_URL_Params
 
         // Выводим кнопку с data-product-id
         echo '<p class="cart">';
-        echo '<a href="' . esc_url($product_url) . '" class="single_add_to_cart_button button alt" data-product-id="' . $product->get_id() . '" target="_blank">';
+        echo '<a href="' . esc_url($product_url) . '" class="single_add_to_cart_button button alt" data-product-id="' . esc_attr((string) $product->get_id()) . '" target="_blank">';
         echo esc_html($button_text);
         echo '</a>';
         echo '</p>';
     }
-
     // Этот метод больше не нужен, так как мы используем data-атрибуты
     // public function modify_external_url_button_text(string $text, WC_Product $product): string ...
 
@@ -269,7 +286,7 @@ class WC_Affiliate_URL_Params
 }
 
 // Объявление совместимости с HPOS
-add_action('before_woocommerce_init', function () {
+add_action('before_woocommerce_init', function (): void {
     if (class_exists(\Automattic\WooCommerce\Utilities\FeaturesUtil::class)) {
         \Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility(
             'custom_order_tables',

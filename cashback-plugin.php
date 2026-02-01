@@ -101,12 +101,10 @@ class CashbackPlugin
             HistoryPayout::get_instance();
         }
 
-        // WC_Affiliate_URL_Params будет инициализирован через хук, когда будет доступен WooCommerce
-        add_action('init', function () {
-            if (class_exists('WooCommerce') && class_exists('WC_Affiliate_URL_Params')) {
-                new WC_Affiliate_URL_Params();
-            }
-        });
+        // Инициализация WC_Affiliate_URL_Params
+        if (class_exists('WC_Affiliate_URL_Params')) {
+            new WC_Affiliate_URL_Params();
+        }
     }
 
     public function woocommerce_required_notice()
