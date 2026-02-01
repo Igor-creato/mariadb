@@ -240,7 +240,7 @@ class CashbackWithdrawal
             echo '<input type="number" class="input-text" name="withdrawal_amount" id="withdrawal-amount" placeholder="' . __('Введите сумму', 'woocommerce') . '" value="" min="0" max="0" step="0.01" disabled/>';
             echo '</p>';
             echo '<p class="form-row">';
-            echo '<button type="submit" class="button alt" id="withdrawal-submit" name="withdrawal_submit" value="' . esc_attr__('Вывести', 'woocommerce') . '" disabled>' . __('Вывести', 'woocommerce') . '</button>';
+            echo '<button type="submit" class="woocommerce-Button button" id="withdrawal-submit" name="withdrawal_submit" value="' . esc_attr__('Вывести', 'woocommerce') . '" disabled>' . __('Вывести', 'woocommerce') . '</button>';
             echo '</p>';
             echo '<div id="withdrawal-messages"></div>';
             echo '</form>';
@@ -281,7 +281,7 @@ class CashbackWithdrawal
         echo '<input type="number" class="input-text" name="withdrawal_amount" id="withdrawal-amount" placeholder="' . __('Введите сумму', 'woocommerce') . '" value="" step="0.01" />';
         echo '</p>';
         echo '<p class="form-row">';
-        echo '<button type="submit" class="button alt" id="withdrawal-submit" name="withdrawal_submit" value="' . esc_attr__('Вывести', 'woocommerce') . '">' . __('Вывести', 'woocommerce') . '</button>';
+        echo '<button type="submit" class="woocommerce-Button button" id="withdrawal-submit" name="withdrawal_submit" value="' . esc_attr__('Вывести', 'woocommerce') . '">' . __('Вывести', 'woocommerce') . '</button>';
         echo '</p>';
         echo '<div id="withdrawal-messages"></div>';
         echo '</form>';
