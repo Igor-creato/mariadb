@@ -187,8 +187,9 @@
     box-sizing: border-box;
 }
 
-/* Применяем стили темы WoodMart к кнопке вывода кэшбэка */
-button[name="withdrawal_submit"] {
+/* Применяем стили темы WoodMart к кнопкам */
+button[name="withdrawal_submit"],
+button#save_payout_details_btn {
     border-radius: var(--btn-accented-brd-radius) !important;
     color: var(--btn-accented-color) !important;
     box-shadow: var(--btn-accented-box-shadow) !important;
@@ -197,6 +198,14 @@ button[name="withdrawal_submit"] {
     font-weight: var(--btn-accented-font-weight, var(--btn-font-weight, 600)) !important;
     font-family: var(--btn-accented-font-family, var(--btn-font-family, inherit)) !important;
     font-style: var(--btn-accented-font-style, var(--btn-font-style, unset)) !important;
+}
+
+/* Hover эффект для кнопок */
+button[name="withdrawal_submit"]:hover,
+button#save_payout_details_btn:hover {
+    color: var(--btn-accented-color-hover) !important;
+    box-shadow: var(--btn-accented-box-shadow-hover) !important;
+    background-color: var(--btn-accented-bgcolor-hover) !important;
 }
 
 #withdrawal-messages {

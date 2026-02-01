@@ -753,7 +753,7 @@ class Cashback_Payouts_Admin
     private function get_admin_status_label(string $status): string
     {
         $labels = [
-            'waiting' => __('Ожидает выплаты', 'cashback-plugin'),
+            'waiting' => __('Не выплачен', 'cashback-plugin'),
             'processing' => __('В обработке', 'cashback-plugin'),
             'paid' => __('Выплачен', 'cashback-plugin'),
             'failed' => __('Выплата не прошла', 'cashback-plugin'),
