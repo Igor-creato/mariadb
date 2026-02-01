@@ -118,13 +118,8 @@ class Cashback_Users_Management_Admin
             );
         }
 
-        // Получаем уникальные статусы для фильтра
-        $statuses = $wpdb->get_col(
-            "SELECT DISTINCT status 
-            FROM {$this->profile_table_name} 
-            WHERE status IS NOT NULL 
-            ORDER BY status ASC"
-        );
+        // Определяем все доступные статусы для фильтра
+        $statuses = ['active', 'noactive', 'banned', 'deleted'];
 
         // Выводим сообщения об ошибках или успехе
         $message = '';
