@@ -6,11 +6,27 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+/**
+ * WC Affiliate URL Params
+ *
+ * Управление партнерскими параметрами URL для внешних товаров WooCommerce.
+ *
+ * @since 1.0.0
+ */
 class WC_Affiliate_URL_Params
 {
-
     private const PARAM_COUNT = 3;
+    private const CACHE_GROUP = 'wc_affiliate_url_params';
+    private const CACHE_EXPIRATION = 3600; // 1 час
+    private const LOGGER_SOURCE = 'wc-affiliate-url-params';
 
+    /**
+     * Конструктор класса.
+     *
+     * Регистрирует все необходимые хуки WordPress и WooCommerce.
+     *
+     * @since 1.0.0
+     */
     public function __construct()
     {
         // Хуки для добавления полей в админке
@@ -34,7 +50,14 @@ class WC_Affiliate_URL_Params
     }
 
     /**
-     * Добавление полей в Product Data метабокс
+     * Добавление полей в Product Data метабокс.
+     *
+     * Отображает поля для настройки партнерских параметров URL
+     * только для внешних товаров WooCommerce.
+     *
+     * @since 1.0.0
+     *
+     * @return void
      */
     public function add_custom_fields(): void
     {
@@ -86,7 +109,16 @@ class WC_Affiliate_URL_Params
     }
 
     /**
-     * Сохранение данных полей
+     * Сохранение данных полей партнерских параметров.
+     *
+     * Выполняет проверки безопасности (autosave, nonce, права доступа)
+     * и сохраняет данные партнерских параметров в post meta.
+     *
+     * @since 1.0.0
+     *
+     * @param int $post_id ID товара.
+     *
+     * @return void
      */
     public function save_custom_fields(int $post_id): void
     {
@@ -122,11 +154,25 @@ class WC_Affiliate_URL_Params
 
             update_post_meta($post_id, "_affiliate_param_{$i}_key", $param_key);
             update_post_meta($post_id, "_affiliate_param_{$i}_value", $param_value);
+
+            // Очищаем кэш при сохранении
+            wp_cache_delete('affiliate_params_' . $post_id, self::CACHE_GROUP);
         }
     }
 
     /**
-     * Модификация URL внешнего товара
+     * Модификация URL внешнего товара с добавлением партнерских параметров.
+     *
+     * Добавляет настроенные партнерские параметры к URL внешнего товара.
+     * Поддерживает динамическую подстановку ID пользователя через ключевое слово "user".
+     * Использует кэширование для оптимизации производительности.
+     *
+     * @since 1.0.0
+     *
+     * @param string     $url     Исходный URL товара.
+     * @param WC_Product $product Объект товара WooCommerce.
+     *
+     * @return string Модифицированный URL с партнерскими параметрами.
      */
     public function modify_external_url(string $url, WC_Product $product): string
     {
@@ -134,54 +180,75 @@ class WC_Affiliate_URL_Params
             return $url;
         }
 
-        error_log('WC Affiliate: Modifying URL for product ' . $product->get_id() . ', original URL: ' . $url);
+        $logger = wc_get_logger();
+        $product_id = $product->get_id();
+
+        $logger->debug(
+            sprintf('Modifying URL for product %d, original URL: %s', $product_id, $url),
+            ['source' => self::LOGGER_SOURCE]
+        );
+
+        // Проверяем кэш
+        $cache_key = 'affiliate_params_' . $product_id;
+        $cached_params = wp_cache_get($cache_key, self::CACHE_GROUP);
+
+        if (false === $cached_params) {
+            $cached_params = $this->get_affiliate_params($product_id);
+            wp_cache_set($cache_key, $cached_params, self::CACHE_GROUP, self::CACHE_EXPIRATION);
+        }
+
+        if (empty($cached_params)) {
+            $logger->debug('No params to add, returning original URL', ['source' => self::LOGGER_SOURCE]);
+            return $url;
+        }
 
         $params = [];
         $has_user_param = false;
 
-        for ($i = 1; $i <= self::PARAM_COUNT; $i++) {
-            $param_key = get_post_meta($product->get_id(), "_affiliate_param_{$i}_key", true);
-            $param_value = get_post_meta($product->get_id(), "_affiliate_param_{$i}_value", true);
-
-            if (empty($param_key) || empty($param_value)) {
+        foreach ($cached_params as $i => $param) {
+            if (empty($param['key']) || empty($param['value'])) {
                 continue;
             }
 
-            error_log('WC Affiliate: Param ' . $i . ': key=' . $param_key . ', value=' . $param_value);
+            $logger->debug(
+                sprintf('Param %d: key=%s, value=%s', $i, $param['key'], $param['value']),
+                ['source' => self::LOGGER_SOURCE]
+            );
 
             // Проверка на ключевое слово "user"
-            if (strtolower(trim($param_value)) === 'user') {
+            if (strtolower(trim($param['value'])) === 'user') {
                 $has_user_param = true;
 
                 if (is_user_logged_in()) {
-                    $params[$param_key] = get_current_user_id();
-                    error_log('WC Affiliate: User logged in, using user ID: ' . get_current_user_id());
+                    $params[$param['key']] = get_current_user_id();
+                    $logger->debug(
+                        sprintf('User logged in, using user ID: %d', get_current_user_id()),
+                        ['source' => self::LOGGER_SOURCE]
+                    );
                 } else {
                     // Для неавторизованных пользователей добавим placeholder
-                    $params[$param_key] = 'USER_PLACEHOLDER_' . $i;
-                    error_log('WC Affiliate: User not logged in, using placeholder: USER_PLACEHOLDER_' . $i);
+                    $params[$param['key']] = 'USER_PLACEHOLDER_' . $i;
+                    $logger->debug(
+                        sprintf('User not logged in, using placeholder: USER_PLACEHOLDER_%d', $i),
+                        ['source' => self::LOGGER_SOURCE]
+                    );
                 }
             } else {
-                $params[$param_key] = $param_value;
+                $params[$param['key']] = $param['value'];
             }
-        }
-
-        if (empty($params)) {
-            error_log('WC Affiliate: No params to add, returning original URL');
-            return $url;
         }
 
         // Добавляем параметры в URL
         $url = add_query_arg($params, $url);
-        error_log('WC Affiliate: Final URL: ' . $url);
+        $logger->debug(sprintf('Final URL: %s', $url), ['source' => self::LOGGER_SOURCE]);
 
         // Сохраняем информацию о необходимости проверки авторизации
         if ($has_user_param) {
             $product->update_meta_data('_requires_auth_warning', 'yes');
-            error_log('WC Affiliate: Set _requires_auth_warning to yes');
+            $logger->debug('Set _requires_auth_warning to yes', ['source' => self::LOGGER_SOURCE]);
         } else {
             $product->delete_meta_data('_requires_auth_warning');
-            error_log('WC Affiliate: Removed _requires_auth_warning');
+            $logger->debug('Removed _requires_auth_warning', ['source' => self::LOGGER_SOURCE]);
         }
         $product->save_meta_data();
 
@@ -189,7 +256,43 @@ class WC_Affiliate_URL_Params
     }
 
     /**
-     * Добавляем data-product-id к ссылкам внешних товаров для JavaScript
+     * Получение партнерских параметров из метаданных товара.
+     *
+     * @since 1.0.0
+     *
+     * @param int $product_id ID товара.
+     *
+     * @return array Массив партнерских параметров.
+     */
+    private function get_affiliate_params(int $product_id): array
+    {
+        $params = [];
+
+        for ($i = 1; $i <= self::PARAM_COUNT; $i++) {
+            $param_key = get_post_meta($product_id, "_affiliate_param_{$i}_key", true);
+            $param_value = get_post_meta($product_id, "_affiliate_param_{$i}_value", true);
+
+            $params[$i] = [
+                'key' => $param_key,
+                'value' => $param_value,
+            ];
+        }
+
+        return $params;
+    }
+
+    /**
+     * Добавление data-product-id к ссылкам внешних товаров.
+     *
+     * Добавляет атрибут data-product-id для обработки JavaScript
+     * и target="_blank" для открытия в новой вкладке.
+     *
+     * @since 1.0.0
+     *
+     * @param string     $link    HTML код ссылки.
+     * @param WC_Product $product Объект товара WooCommerce.
+     *
+     * @return string Модифицированная ссылка с data-атрибутом.
      */
     public function add_product_id_to_link(string $link, WC_Product $product): string
     {
@@ -200,8 +303,14 @@ class WC_Affiliate_URL_Params
     }
 
     /**
-     /**
-     * Модифицируем кнопку внешнего товара на странице товара
+     * Модификация кнопки внешнего товара на странице товара.
+     *
+     * Выводит кастомную кнопку с партнерскими параметрами
+     * и data-атрибутом для JavaScript обработки.
+     *
+     * @since 1.0.0
+     *
+     * @return void
      */
     public function modify_single_product_button(): void
     {
@@ -227,7 +336,14 @@ class WC_Affiliate_URL_Params
     // public function modify_external_url_button_text(string $text, WC_Product $product): string ...
 
     /**
-     * Подключение скриптов для фронтенда
+     * Подключение скриптов и стилей для фронтенда.
+     *
+     * Загружает JavaScript для обработки кликов по партнерским ссылкам
+     * и CSS для модального окна авторизации.
+     *
+     * @since 1.0.0
+     *
+     * @return void
      */
     public function enqueue_frontend_scripts(): void
     {
@@ -262,9 +378,18 @@ class WC_Affiliate_URL_Params
     }
 
     /**
-     * Подключение скриптов для админки
+     * Подключение стилей для админки.
+     *
+     * Загружает CSS для стилизации полей партнерских параметров
+     * в админ-панели редактирования товара.
+     *
+     * @since 1.0.0
+     *
+     * @param string $hook Текущая страница админки.
+     *
+     * @return void
      */
-    public function enqueue_admin_scripts($hook): void
+    public function enqueue_admin_scripts(string $hook): void
     {
         if ($hook !== 'post.php' && $hook !== 'post-new.php') {
             return;
