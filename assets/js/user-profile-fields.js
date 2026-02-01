@@ -46,6 +46,24 @@ jQuery(document).ready(function ($) {
             .removeClass('error')
             .addClass('success')
             .text(response.data.message);
+
+          // Обновляем блок с текущими данными
+          if (response.data.current_data_html) {
+            const $currentDataBlock = $('.payout-current-data');
+
+            if ($currentDataBlock.length) {
+              // Если блок существует, добавляем класс для анимации
+              $currentDataBlock.addClass('updating');
+
+              // Через короткую задержку заменяем содержимое
+              setTimeout(() => {
+                $currentDataBlock.replaceWith(response.data.current_data_html);
+              }, 150);
+            } else {
+              // Если блока нет, добавляем его после сообщения
+              $('#payout_details_message').parent().after(response.data.current_data_html);
+            }
+          }
         } else {
           $('#payout_details_message')
             .removeClass('success')

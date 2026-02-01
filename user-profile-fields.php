@@ -81,7 +81,7 @@ class CashbackUserProfileFields
                 </div>
             <?php endif; ?>
         </fieldset>
-<?php
+    <?php
     }
 
     /**
@@ -146,10 +146,40 @@ class CashbackUserProfileFields
         $result = $this->update_user_payout_details($user_id, $payout_method_id, $payout_account);
 
         if ($result) {
-            wp_send_json_success(array('message' => 'Данные успешно сохранены.'));
+            // Получаем обновленные данные для отображения
+            $method_name = $this->get_payout_method_name($payout_method_id);
+            $current_data_html = $this->get_current_data_html($method_name, $payout_account);
+
+            wp_send_json_success(array(
+                'message' => 'Данные успешно сохранены.',
+                'current_data_html' => $current_data_html
+            ));
         } else {
             wp_send_json_error(array('message' => 'Ошибка при сохранении данных.'));
         }
+    }
+
+    /**
+     * Получить HTML блока с текущими данными
+     *
+     * @param string $method_name Название способа вывода.
+     * @param string $payout_account Номер счета/телефона.
+     *
+     * @return string HTML блока с текущими данными.
+     */
+    private function get_current_data_html($method_name, $payout_account)
+    {
+        ob_start();
+    ?>
+        <div class="payout-current-data">
+            <p class="woocommerce-info">
+                <strong>Текущие данные:</strong><br>
+                Способ вывода: <?php echo esc_html($method_name); ?><br>
+                Номер счета/телефона: <?php echo esc_html($payout_account); ?>
+            </p>
+        </div>
+<?php
+        return ob_get_clean();
     }
 
     /**

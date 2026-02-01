@@ -324,10 +324,30 @@ button#save_payout_details_btn:hover {
     background-color: #f9f9f9;
     border: 1px solid #eee;
     border-radius: 4px;
+    transition: all 0.3s ease;
+    animation: fadeIn 0.5s ease;
 }
 
 .payout-current-data .woocommerce-info {
     margin: 0;
+}
+
+/* Анимация появления блока с текущими данными */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Анимация обновления блока */
+.payout-current-data.updating {
+    opacity: 0.5;
+    transform: scale(0.98);
 }
 
 
