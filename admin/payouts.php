@@ -322,7 +322,7 @@ class Cashback_Payouts_Admin
                                 <tr data-payout-id="<?php echo esc_attr($payout['id']); ?>">
                                     <td><?php echo esc_html($payout['user_id']); ?></td>
                                     <td><?php echo esc_html(number_format(floatval($payout['total_amount']), 2, '.', ' ')); ?></td>
-                                    <td><?php echo esc_html($payout['payout_method']); ?></td>
+                                    <td><?php echo esc_html($this->get_payout_method_name_by_slug($payout['payout_method'])); ?></td>
                                     <td><?php echo esc_html($payout['payout_account']); ?></td>
                                     <td class="edit-field" data-field="provider">
                                         <?php echo esc_html($payout['provider'] ?? ''); ?>
@@ -887,6 +887,27 @@ class Cashback_Payouts_Admin
         if ($this->logger) {
             $this->logger->info($message, ['source' => 'cashback-payouts']);
         }
+    }
+
+    /**
+     * Получить название платежной системы по slug
+     *
+     * @param string $slug Slug платежной системы
+     * @return string Название платежной системы
+     */
+    private function get_payout_method_name_by_slug(string $slug): string
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'cashback_payout_methods';
+        $method_name = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT name FROM {$table_name} WHERE slug = %s",
+                $slug
+            )
+        );
+
+        return $method_name ?: $slug;
     }
 }
 
