@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 /**
  * Plugin Name: Cashback Plugin
  * Description: Объединенный плагин для системы кэшбэка и аффилиат-партнерства
@@ -11,15 +13,24 @@
 // Запрет прямого доступа
 defined('ABSPATH') or die('No script kiddies please!');
 
+/**
+ * Основной класс плагина Cashback
+ */
 class CashbackPlugin
 {
 
+    /**
+     * Конструктор класса
+     */
     public function __construct()
     {
         register_activation_hook(__FILE__, array($this, 'activate'));
         add_action('plugins_loaded', array($this, 'init'));
     }
 
+    /**
+     * Метод активации плагина
+     */
     public function activate()
     {
         // Подключаем файл mariadb.php для активации
@@ -53,6 +64,9 @@ class CashbackPlugin
         flush_rewrite_rules();
     }
 
+    /**
+     * Инициализация основного функционала плагина
+     */
     public function init()
     {
         // Проверяем, что WooCommerce активирован
@@ -64,6 +78,9 @@ class CashbackPlugin
         }
     }
 
+    /**
+     * Загрузка зависимостей плагина
+     */
     public function load_dependencies()
     {
         // Подключение зависимых файлов
@@ -78,6 +95,11 @@ class CashbackPlugin
         $this->require_file('admin/payouts.php');
     }
 
+    /**
+     * Подключение файла
+     *
+     * @param string $filename Имя файла для подключения
+     */
     private function require_file($filename)
     {
         $filepath = plugin_dir_path(__FILE__) . $filename;
@@ -86,6 +108,9 @@ class CashbackPlugin
         }
     }
 
+    /**
+     * Инициализация компонентов плагина
+     */
     private function initialize_components()
     {
         // Инициализация компонентов
@@ -107,6 +132,9 @@ class CashbackPlugin
         }
     }
 
+    /**
+     * Уведомление о необходимости установки WooCommerce
+     */
     public function woocommerce_required_notice()
     {
         echo '<div class="notice notice-error"><p><strong>Cashback Plugin</strong> requires WooCommerce to be installed and active.</p></div>';

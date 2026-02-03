@@ -233,13 +233,19 @@ class Mariadb_Plugin
           `status` enum('open','in_progress','resolved','closed') NOT NULL DEFAULT 'open',
           `priority` enum('low','medium','high','urgent') NOT NULL DEFAULT 'medium',
           `created_at` datetime NOT NULL DEFAULT current_timestamp(),
+          `assigned_to` bigint(20) UNSIGNED DEFAULT NULL COMMENT 'ID админа, ответственного за тикет',
+          `category` varchar(50) DEFAULT 'general' COMMENT 'Категория: технический, финансовый и т.д.',
+          `resolved_at` datetime DEFAULT NULL COMMENT 'Когда решён',
+          `closed_at` datetime DEFAULT NULL COMMENT 'Когда закрыт'
           `updated_at` datetime NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
           `last_activity` datetime NOT NULL DEFAULT current_timestamp(),
           
           PRIMARY KEY (`ticket_id`),
           KEY `user_id` (`user_id`),
           KEY `status` (`status`),
-          KEY `created_at` (`created_at`)
+          KEY `created_at` (`created_at`),
+          KEY `assigned_to` (`assigned_to`),
+          KEY `category` (`category`)
         ) ENGINE=InnoDB {$charset_collate} COMMENT='Таблица тикетов поддержки';";
 
         // Таблица сообщений тикетов
@@ -250,6 +256,7 @@ class Mariadb_Plugin
           `message` text NOT NULL,
           `created_at` datetime NOT NULL DEFAULT current_timestamp(),
           `is_admin` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1=админ, 0=пользователь',
+          `is_read` tinyint(1) NOT NULL DEFAULT 0 COMMENT 'Прочитано ли сообщение',
           
           PRIMARY KEY (`message_id`),
           KEY `ticket_id` (`ticket_id`),
