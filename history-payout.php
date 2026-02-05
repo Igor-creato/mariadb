@@ -232,7 +232,7 @@ class HistoryPayout
             case 'paid':
                 return __('Выплачен', 'history-payout');
             case 'failed':
-                return __('Выплата не прошла', 'history-payout');
+                return __('Возврат в доступный баланс', 'history-payout');
             case 'declined':
                 return __('Выплата заморожена', 'history-payout');
             case 'needs_retry':

@@ -754,7 +754,7 @@ class Cashback_Payouts_Admin
             'waiting' => __('Не выплачен', 'cashback-plugin'),
             'processing' => __('В обработке', 'cashback-plugin'),
             'paid' => __('Выплачен', 'cashback-plugin'),
-            'failed' => __('Выплата не прошла', 'cashback-plugin'),
+            'failed' => __('Возврат в доступный баланс', 'cashback-plugin'),
             'declined' => __('Выплата заморожена', 'cashback-plugin'),
             'needs_retry' => __('Проверить выплату', 'cashback-plugin'),
         ];
@@ -774,7 +774,7 @@ class Cashback_Payouts_Admin
             'waiting' => __('Платеж еще не обрабатывался', 'cashback-plugin'),
             'processing' => __('Платеж осуществляется', 'cashback-plugin'),
             'paid' => __('Платеж выплачен', 'cashback-plugin'),
-            'failed' => __('Выплату невозможно осуществить по каким либо причинам', 'cashback-plugin'),
+            'failed' => __('Выплату невозможно осуществить по каким либо причинам и она возвращена в доступный баланс', 'cashback-plugin'),
             'declined' => __('Выплата заморожена из-за мошенничества', 'cashback-plugin'),
             'needs_retry' => __('Выплата не прошла, попробовать повторить выплату', 'cashback-plugin'),
         ];
