@@ -89,6 +89,7 @@ class Mariadb_Plugin
             `attempts` int(11) NOT NULL DEFAULT 0 COMMENT 'Количество попыток отправки выплаты',
             `fail_reason` text DEFAULT NULL COMMENT 'Код/описание ошибки последней попытки',
             `status` enum('waiting','processing','paid','failed','declined','needs_retry') NOT NULL DEFAULT 'waiting',
+            `refunded_at` datetime DEFAULT NULL COMMENT 'Время возврата средств после failed-статуса',
             `created_at` datetime DEFAULT current_timestamp(),
             `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp(),
             PRIMARY KEY (`id`),
@@ -96,6 +97,7 @@ class Mariadb_Plugin
             KEY `idx_user_status` (`user_id`,`status`),
             KEY `idx_status_updated` (`status`,`updated_at`),
             KEY `idx_provider_payout_id` (`provider_payout_id`),
+            KEY `idx_refunded` (`refunded_at`),
             CONSTRAINT `fk_payout_user` FOREIGN KEY (`user_id`) REFERENCES `{$wpdb->prefix}users` (`ID`) ON DELETE CASCADE,
             CHECK (total_amount > 0)
         ) ENGINE=InnoDB {$charset_collate} COMMENT='Заявки на выплаты с защитой от дублирования';";
@@ -336,6 +338,8 @@ class Mariadb_Plugin
             "DROP TRIGGER IF EXISTS `{$wpdb->prefix}cashback_tr_prevent_update_final_status`;",
             "DROP TRIGGER IF EXISTS `{$wpdb->prefix}tr_prevent_delete_paid_payout`;",
             "DROP TRIGGER IF EXISTS `{$wpdb->prefix}tr_prevent_update_paid_payout`;",
+            "DROP TRIGGER IF EXISTS `{$wpdb->prefix}tr_prevent_delete_failed_payout`;",
+            "DROP TRIGGER IF EXISTS `{$wpdb->prefix}tr_prevent_update_failed_payout`;",
             "DROP TRIGGER IF EXISTS `{$wpdb->prefix}tr_banned_user_update_banned_at`;",
         ];
 
@@ -437,6 +441,28 @@ class Mariadb_Plugin
                 IF OLD.status = 'paid' THEN
                     SIGNAL SQLSTATE '45000'
                     SET MESSAGE_TEXT = 'Изменение запрещено: выплаченная заявка не может быть изменена.';
+                END IF;
+            END;",
+
+            "CREATE TRIGGER `{$wpdb->prefix}tr_prevent_delete_failed_payout`
+            BEFORE DELETE ON `{$wpdb->prefix}cashback_payout_requests`
+            FOR EACH ROW
+            --  'Запрещает удаление заявок на выплату со статусом ''failed'' (возвращено в баланс)'
+            BEGIN
+                IF OLD.status = 'failed' THEN
+                    SIGNAL SQLSTATE '45000'
+                    SET MESSAGE_TEXT = 'Удаление запрещено: заявка со статусом failed не может быть удалена.';
+                END IF;
+            END;",
+
+            "CREATE TRIGGER `{$wpdb->prefix}tr_prevent_update_failed_payout`
+            BEFORE UPDATE ON `{$wpdb->prefix}cashback_payout_requests`
+            FOR EACH ROW
+            --  'Запрещает изменение заявок на выплату со статусом ''failed'' (возвращено в баланс)'
+            BEGIN
+                IF OLD.status = 'failed' THEN
+                    SIGNAL SQLSTATE '45000'
+                    SET MESSAGE_TEXT = 'Изменение запрещено: заявка со статусом failed не может быть изменена.';
                 END IF;
             END;",
 

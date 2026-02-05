@@ -462,6 +462,16 @@ class Cashback_Payouts_Admin
             if ($old_status !== 'declined' && $status === 'declined') {
                 $this->update_user_balance_on_declined($payout_id);
             }
+
+            // Если статус меняется с любого другого на 'failed', возвращаем средства в available_balance
+            if ($old_status !== 'failed' && $status === 'failed') {
+                $refund_result = $this->update_user_balance_on_failed($payout_id);
+
+                if (!$refund_result) {
+                    wp_send_json_error(['message' => __('Ошибка при возврате средств в баланс.', 'cashback-plugin')]);
+                    return;
+                }
+            }
         }
 
         // Добавляем дату обновления
@@ -695,6 +705,132 @@ class Cashback_Payouts_Admin
             // Откатываем транзакцию в случае ошибки
             $wpdb->query('ROLLBACK');
             $this->log_error("Ошибка при обновлении баланса пользователя {$user_id} при отклонении выплаты: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Обновление баланса пользователя при изменении статуса выплаты на "failed"
+     * Возвращает средства из pending_balance в available_balance
+     *
+     * @param int $payout_id ID запроса на выплату
+     * @return bool Результат операции
+     */
+    private function update_user_balance_on_failed(int $payout_id): bool
+    {
+        global $wpdb;
+
+        // Получаем информацию о запросе на выплату
+        $payout_request = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT user_id, total_amount, status, refunded_at FROM {$this->table_name} WHERE id = %d",
+                $payout_id
+            ),
+            ARRAY_A
+        );
+
+        if (!$payout_request) {
+            $this->log_error("Не найден запрос на выплату с ID {$payout_id}");
+            return false;
+        }
+
+        // Проверка на повторный возврат средств (защита от дублирования)
+        if (!empty($payout_request['refunded_at'])) {
+            $this->log_error("Средства для заявки {$payout_id} уже были возвращены ранее: " . $payout_request['refunded_at']);
+            return false;
+        }
+
+        $user_id = $payout_request['user_id'];
+        $amount = floatval($payout_request['total_amount']);
+
+        // Начинаем транзакцию для обеспечения целостности данных
+        $wpdb->query('START TRANSACTION');
+
+        try {
+            // Получаем текущий баланс пользователя с блокировкой строки
+            $balance_table = $wpdb->prefix . 'cashback_user_balance';
+            $current_balance = $wpdb->get_row(
+                $wpdb->prepare(
+                    "SELECT pending_balance, available_balance, version
+                     FROM {$balance_table}
+                     WHERE user_id = %d
+                     FOR UPDATE",
+                    $user_id
+                ),
+                ARRAY_A
+            );
+
+            if (!$current_balance) {
+                $this->log_error("Не найден баланс для пользователя {$user_id}");
+                $wpdb->query('ROLLBACK');
+                return false;
+            }
+
+            // Проверяем, достаточно ли средств в pending_balance
+            $pending_balance = floatval($current_balance['pending_balance']);
+            if ($pending_balance < $amount) {
+                $this->log_error("Недостаточно средств в pending_balance для пользователя {$user_id}. Требуется: {$amount}, доступно: {$pending_balance}");
+                $wpdb->query('ROLLBACK');
+                return false;
+            }
+
+            // Обновляем баланс: вычитаем из pending_balance и добавляем к available_balance
+            $new_pending_balance = $pending_balance - $amount;
+            $new_available_balance = floatval($current_balance['available_balance']) + $amount;
+            $old_version = intval($current_balance['version']);
+
+            // Используем оптимистичную блокировку через version
+            $result = $wpdb->update(
+                $balance_table,
+                [
+                    'pending_balance' => $new_pending_balance,
+                    'available_balance' => $new_available_balance,
+                    'version' => $old_version + 1
+                ],
+                [
+                    'user_id' => $user_id,
+                    'version' => $old_version
+                ],
+                ['%f', '%f', '%d'],
+                ['%d', '%d']
+            );
+
+            if ($result === false || $result === 0) {
+                $this->log_error("Ошибка обновления баланса пользователя {$user_id} или конфликт версий");
+                $wpdb->query('ROLLBACK');
+                return false;
+            }
+
+            // Обновляем запись заявки, устанавливаем refunded_at для предотвращения повторного возврата
+            $refund_time = current_time('mysql');
+            $update_result = $wpdb->update(
+                $this->table_name,
+                [
+                    'refunded_at' => $refund_time,
+                    'updated_at' => $refund_time
+                ],
+                ['id' => $payout_id],
+                ['%s', '%s'],
+                ['%d']
+            );
+
+            if ($update_result === false) {
+                $this->log_error("Ошибка обновления поля refunded_at для заявки {$payout_id}");
+                $wpdb->query('ROLLBACK');
+                return false;
+            }
+
+            // Фиксируем транзакцию
+            $wpdb->query('COMMIT');
+
+            // Логируем успешное изменение баланса
+            $this->log_info("Баланс пользователя {$user_id} обновлен при failed-статусе. Возвращено: {$amount}, pending_balance: {$new_pending_balance}, available_balance: {$new_available_balance}, refunded_at: {$refund_time}");
+
+            return true;
+        } catch (\Exception $e) {
+            // Откатываем транзакцию в случае ошибки
+            $wpdb->query('ROLLBACK');
+            $this->log_error("Ошибка при обновлении баланса пользователя {$user_id} при failed-статусе: " . $e->getMessage());
             return false;
         }
     }
