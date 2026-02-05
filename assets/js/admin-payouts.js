@@ -24,7 +24,7 @@
    * Метки статусов для отображения
    */
   const statusLabels = {
-    waiting: 'Ожидает выплаты',
+    waiting: 'Не выплачен',
     processing: 'В обработке',
     paid: 'Выплачен',
     failed: 'Возврат в доступный баланс',
@@ -301,7 +301,6 @@
       $.post(ajaxurl, data, function (response) {
         if (response.success) {
           updateRowData(row, response.data.payout_data);
-          updateStatusFilter(response.data.statuses);
           showSuccessNotice('Запрос на выплату успешно обновлен.');
 
           row.find('.save-btn, .cancel-btn').hide();
@@ -360,31 +359,6 @@
     const bank = banks.find((b) => b.bank_code === bankCode);
 
     return bank ? bank.name : bankCode;
-  }
-
-  /**
-   * Обновление фильтра статусов
-   *
-   * @param {Array} statuses - Массив статусов
-   */
-  function updateStatusFilter(statuses) {
-    const statusFilter = $('#filter-status');
-    const currentSelected = statusFilter.val();
-
-    statusFilter.empty();
-    statusFilter.append($('<option>').val('').text('Все статусы'));
-
-    statuses.forEach(function (status) {
-      const option = $('<option>')
-        .val(status)
-        .text(statusLabels[status] || status);
-
-      if (status === currentSelected) {
-        option.prop('selected', true);
-      }
-
-      statusFilter.append(option);
-    });
   }
 
   /**

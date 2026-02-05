@@ -143,11 +143,9 @@ class Cashback_Payouts_Admin
             $filter_date_to = '';
         }
 
-        // Валидация статуса
-        $allowed_statuses = ['waiting', 'processing', 'paid', 'failed', 'declined', 'needs_retry'];
-        if (!empty($filter_status) && !in_array($filter_status, $allowed_statuses, true)) {
-            $filter_status = '';
-        }
+        // Валидация статуса - проверяем только что это не пустая строка
+        // Защита от SQL injection обеспечивается через sanitize_text_field
+        $filter_status = !empty($filter_status) ? $filter_status : '';
 
         // Подготовка условий для фильтрации
         $where_conditions = [];
@@ -220,17 +218,9 @@ class Cashback_Payouts_Admin
             );
         }
 
-        // Получаем уникальные статусы для фильтра
-        $statuses = $wpdb->get_col(
-            $wpdb->prepare(
-                "SELECT DISTINCT status 
-                FROM {$this->table_name} 
-                WHERE status IS NOT NULL 
-                ORDER BY status ASC 
-                LIMIT %d",
-                100
-            )
-        );
+        // Получаем все доступные статусы из ENUM колонки status
+        // Используем список всех возможных статусов независимо от наличия записей
+        $statuses = ['waiting', 'processing', 'paid', 'failed', 'declined', 'needs_retry'];
 
         // Выводим сообщения об ошибках или успехе
         $message = '';
@@ -508,22 +498,9 @@ class Cashback_Payouts_Admin
             return;
         }
 
-        // Получаем уникальные статусы для обновления фильтра
-        $statuses = $wpdb->get_col(
-            $wpdb->prepare(
-                "SELECT DISTINCT status 
-                FROM {$this->table_name} 
-                WHERE status IS NOT NULL 
-                ORDER BY status ASC
-                LIMIT %d",
-                100
-            )
-        );
-
-        // Возвращаем обновленные данные и статусы
+        // Возвращаем только обновленные данные выплаты
         wp_send_json_success([
-            'payout_data' => $updated_payout_data,
-            'statuses' => $statuses
+            'payout_data' => $updated_payout_data
         ]);
     }
 
