@@ -47,6 +47,9 @@ class CashbackWithdrawal
         // AJAX обработчик для обновления баланса
         add_action('wp_ajax_get_user_balance', array($this, 'get_user_balance_ajax'));
         add_action('wp_ajax_nopriv_get_user_balance', array($this, 'get_user_balance_ajax'));
+        // AJAX обработчик для сохранения настроек вывода
+        add_action('wp_ajax_save_payout_settings', array($this, 'save_payout_settings'));
+        add_action('wp_ajax_nopriv_save_payout_settings', array($this, 'save_payout_settings'));
     }
 
     /**
@@ -116,6 +119,90 @@ class CashbackWithdrawal
         ));
 
         return (float) ($balance ?: 0.0);
+    }
+
+    /**
+     * Get all active payout methods
+     *
+     * @return array
+     */
+    private function get_payout_methods(): array
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'cashback_payout_methods';
+        $methods = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT id, name FROM {$table_name} WHERE is_active = %d ORDER BY sort_order ASC, name ASC",
+                1
+            ),
+            ARRAY_A
+        );
+
+        return $methods ?: array();
+    }
+
+    /**
+     * Get all active banks
+     *
+     * @return array
+     */
+    private function get_banks(): array
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'cashback_banks';
+        $banks = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT id, name FROM {$table_name} WHERE is_active = %d ORDER BY sort_order ASC, name ASC",
+                1
+            ),
+            ARRAY_A
+        );
+
+        return $banks ?: array();
+    }
+
+    /**
+     * Get user's payout method ID
+     *
+     * @param int $user_id
+     * @return int
+     */
+    private function get_user_payout_method_id(int $user_id): int
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'cashback_user_profile';
+        $payout_method_id = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT payout_method_id FROM {$table_name} WHERE user_id = %d",
+                $user_id
+            )
+        );
+
+        return $payout_method_id ? intval($payout_method_id) : 0;
+    }
+
+    /**
+     * Get user's bank ID
+     *
+     * @param int $user_id
+     * @return int
+     */
+    private function get_user_bank_id(int $user_id): int
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'cashback_user_profile';
+        $bank_id = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT bank_id FROM {$table_name} WHERE user_id = %d",
+                $user_id
+            )
+        );
+
+        return $bank_id ? intval($bank_id) : 0;
     }
 
     /**
@@ -276,8 +363,13 @@ class CashbackWithdrawal
         $min_payout_amount = $this->get_min_payout_amount($user_id);
 
         // Получаем информацию о способе вывода и номере счета
-        $payout_method = $this->get_payout_method($user_id);
+        $payout_method_id = $this->get_user_payout_method_id($user_id);
         $payout_account = $this->get_payout_account($user_id);
+        $bank_id = $this->get_user_bank_id($user_id);
+
+        // Получаем доступные способы вывода и банки
+        $payout_methods = $this->get_payout_methods();
+        $banks = $this->get_banks();
 
         echo '<div class="cashback-withdrawal-container">';
         echo '<h2>' . __('Вывод кэшбэка', 'woocommerce') . '</h2>';
@@ -286,15 +378,46 @@ class CashbackWithdrawal
         echo '</div>';
         echo '<p>' . __('Минимальная сумма выплаты:', 'woocommerce') . ' <span class="min-payout-amount">' . wc_price($min_payout_amount) . '</span></p>';
 
-        // Отображаем способ вывода и номер счета
-        echo '<div class="payout-details">';
-        if ($payout_method && $payout_account) {
-            echo '<p>' . __('Способ вывода:', 'woocommerce') . ' <strong>' . $this->get_payout_method_label($payout_method) . '</strong></p>';
-            echo '<p>' . __('Номер счета:', 'woocommerce') . ' <strong>' . esc_html($payout_account) . '</strong></p>';
-        } else {
-            echo '<p class="no-payout-details">' . __('Выберите способ вывода и номер счета.', 'woocommerce') . '</p>';
+        // Форма настройки способа вывода
+        echo '<div class="payout-settings-form woocommerce-EditAccountForm edit-account">';
+        echo '<h3>' . __('Настройки вывода', 'woocommerce') . '</h3>';
+        echo '<div id="payout_settings_message"></div>';
+        echo '<form id="payout-settings-form">';
+
+        echo '<p class="woocommerce-form-row woocommerce-form-row--first form-row form-row-first">';
+        echo '<label for="payout_method_id">' . __('Способ вывода', 'woocommerce') . ' <span class="required">*</span></label>';
+        echo '<select name="payout_method_id" id="payout_method_id" class="woocommerce-Input woocommerce-Input--text input-text">';
+        echo '<option value="">' . __('Выберите платежную систему', 'woocommerce') . '</option>';
+        foreach ($payout_methods as $method) {
+            $selected = ($payout_method_id === intval($method['id'])) ? 'selected' : '';
+            echo '<option value="' . esc_attr($method['id']) . '" ' . $selected . '>' . esc_html($method['name']) . '</option>';
         }
-        echo '</div>';
+        echo '</select>';
+        echo '</p>';
+
+        echo '<p class="woocommerce-form-row woocommerce-form-row--last form-row form-row-last">';
+        echo '<label for="payout_account">' . __('Номер счета или телефона', 'woocommerce') . ' <span class="required">*</span></label>';
+        echo '<input type="text" class="woocommerce-Input woocommerce-Input--text input-text" name="payout_account" id="payout_account" value="' . esc_attr($payout_account) . '" />';
+        echo '</p>';
+
+        echo '<p class="woocommerce-form-row woocommerce-form-row--wide form-row form-row-wide">';
+        echo '<label for="bank_id">' . __('Банк', 'woocommerce') . ' <span class="required">*</span></label>';
+        echo '<select name="bank_id" id="bank_id" class="woocommerce-Input woocommerce-Input--text input-text">';
+        echo '<option value="">' . __('Выберите банк', 'woocommerce') . '</option>';
+        foreach ($banks as $bank) {
+            $selected = ($bank_id === intval($bank['id'])) ? 'selected' : '';
+            echo '<option value="' . esc_attr($bank['id']) . '" ' . $selected . '>' . esc_html($bank['name']) . '</option>';
+        }
+        echo '</select>';
+        echo '</p>';
+
+        echo '<div class="clear"></div>';
+
+        echo '<p class="woocommerce-form-row form-row">';
+        echo '<button type="button" class="woocommerce-Button button" id="save_payout_settings_btn">' . __('Сохранить настройки', 'woocommerce') . '</button>';
+        echo '</p>';
+
+        echo '</form>';
         echo '</div>';
 
         // Добавляем форму вывода кэшбэка
@@ -569,7 +692,7 @@ class CashbackWithdrawal
                 'cashback-withdrawal-styles',
                 plugins_url('assets/css/frontend.css', __FILE__),
                 array(),
-                '1.0.0'
+                '1.0.2'
             );
 
             // Подключаем скрипты для обработки формы вывода
@@ -577,7 +700,7 @@ class CashbackWithdrawal
                 'cashback-withdrawal-js',
                 plugins_url('assets/js/frontend.js', __FILE__),
                 array('jquery'),
-                '1.0.0',
+                '1.0.2',
                 true
             );
 
@@ -587,6 +710,242 @@ class CashbackWithdrawal
                 'nonce' => wp_create_nonce('cashback_withdrawal_nonce')
             ));
         }
+    }
+
+    /**
+     * AJAX обработчик для сохранения настроек вывода
+     */
+    public function save_payout_settings()
+    {
+        // Проверяем nonce
+        if (!wp_verify_nonce($_POST['security'] ?? '', 'cashback_withdrawal_nonce')) {
+            wp_send_json_error(array('message' => __('Неверный nonce.', 'woocommerce')));
+            return;
+        }
+
+        // Проверяем авторизацию пользователя
+        if (!is_user_logged_in()) {
+            wp_send_json_error(array('message' => __('Пользователь не авторизован.', 'woocommerce')));
+            return;
+        }
+
+        $user_id = get_current_user_id();
+
+        if (!$user_id) {
+            wp_send_json_error(array('message' => __('Пользователь не найден.', 'woocommerce')));
+            return;
+        }
+
+        $payout_method_id = intval($_POST['payout_method_id'] ?? 0);
+        $payout_account = sanitize_text_field($_POST['payout_account'] ?? '');
+        $bank_id = intval($_POST['bank_id'] ?? 0);
+
+        // Валидация данных
+        if (empty($payout_method_id)) {
+            wp_send_json_error(array('message' => __('Пожалуйста, выберите способ вывода.', 'woocommerce')));
+            return;
+        }
+
+        if (empty($payout_account)) {
+            wp_send_json_error(array('message' => __('Пожалуйста, введите номер счета или телефона.', 'woocommerce')));
+            return;
+        }
+
+        if (!$bank_id || $bank_id <= 0) {
+            wp_send_json_error(array('message' => __('Пожалуйста, выберите банк.', 'woocommerce')));
+            return;
+        }
+
+        // Проверяем, что способ вывода существует и активен
+        $valid_method = $this->validate_payout_method($payout_method_id);
+        if (!$valid_method) {
+            wp_send_json_error(array('message' => __('Недопустимый способ вывода.', 'woocommerce')));
+            return;
+        }
+
+        // Проверяем, что банк существует и активен
+        $valid_bank = $this->validate_bank($bank_id);
+        if (!$valid_bank) {
+            wp_send_json_error(array('message' => __('Недопустимый банк.', 'woocommerce')));
+            return;
+        }
+
+        // Обновляем данные пользователя
+        $result = $this->update_user_payout_details($user_id, $payout_method_id, $payout_account, $bank_id);
+
+        if ($result) {
+            wp_send_json_success(array(
+                'message' => __('Настройки успешно сохранены.', 'woocommerce')
+            ));
+        } else {
+            wp_send_json_error(array('message' => __('Ошибка при сохранении данных.', 'woocommerce')));
+        }
+    }
+
+    /**
+     * Validate payout method
+     *
+     * @param int $method_id
+     * @return bool
+     */
+    private function validate_payout_method(int $method_id): bool
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'cashback_payout_methods';
+        $method = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT id FROM {$table_name} WHERE id = %d AND is_active = %d",
+                $method_id,
+                1
+            ),
+            ARRAY_A
+        );
+
+        return !empty($method);
+    }
+
+    /**
+     * Validate bank
+     *
+     * @param int $bank_id
+     * @return bool
+     */
+    private function validate_bank(int $bank_id): bool
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'cashback_banks';
+        $bank = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT id FROM {$table_name} WHERE id = %d AND is_active = %d",
+                $bank_id,
+                1
+            ),
+            ARRAY_A
+        );
+
+        return !empty($bank);
+    }
+
+    /**
+     * Update user payout details
+     *
+     * @param int $user_id
+     * @param int $payout_method_id
+     * @param string $payout_account
+     * @param int $bank_id
+     * @return bool
+     */
+    private function update_user_payout_details(int $user_id, int $payout_method_id, string $payout_account, int $bank_id): bool
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'cashback_user_profile';
+
+        // Проверяем, существует ли запись профиля для пользователя
+        $existing_record = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT user_id FROM {$table_name} WHERE user_id = %d",
+                $user_id
+            )
+        );
+
+        if ($existing_record) {
+            // Обновляем существующую запись
+            $result = $wpdb->update(
+                $table_name,
+                array(
+                    'payout_method_id' => $payout_method_id,
+                    'payout_account' => $payout_account,
+                    'bank_id' => $bank_id,
+                    'payout_details_updated_at' => current_time('mysql')
+                ),
+                array('user_id' => $user_id),
+                array('%d', '%s', '%d', '%s'),
+                array('%d')
+            );
+        } else {
+            // Создаем новую запись
+            $result = $wpdb->insert(
+                $table_name,
+                array(
+                    'user_id' => $user_id,
+                    'payout_method_id' => $payout_method_id,
+                    'payout_account' => $payout_account,
+                    'bank_id' => $bank_id,
+                    'payout_details_updated_at' => current_time('mysql')
+                ),
+                array('%d', '%d', '%s', '%d', '%s')
+            );
+        }
+
+        if ($result !== false) {
+            // Обновляем записи в истории выплат со статусом "waiting" для этого пользователя
+            $this->update_payout_requests_for_user($user_id, $payout_method_id, $payout_account);
+        }
+
+        return $result !== false;
+    }
+
+    /**
+     * Update payout requests for user
+     *
+     * @param int $user_id
+     * @param int $payout_method_id
+     * @param string $payout_account
+     * @return bool
+     */
+    private function update_payout_requests_for_user(int $user_id, int $payout_method_id, string $payout_account): bool
+    {
+        global $wpdb;
+
+        // Получаем slug способа выплаты по его ID
+        $payout_method_slug = $this->get_payout_method_slug($payout_method_id);
+
+        if (!$payout_method_slug) {
+            return false;
+        }
+
+        $payout_requests_table = $wpdb->prefix . 'cashback_payout_requests';
+
+        // Обновляем только записи со статусом "waiting"
+        $result = $wpdb->update(
+            $payout_requests_table,
+            array(
+                'payout_method' => $payout_method_slug,
+                'payout_account' => $payout_account
+            ),
+            array(
+                'user_id' => $user_id,
+                'status' => 'waiting'
+            ),
+            array('%s', '%s'),
+            array('%d', '%s')
+        );
+
+        return $result !== false;
+    }
+
+    /**
+     * Get payout method slug by ID
+     *
+     * @param int $method_id
+     * @return string|null
+     */
+    private function get_payout_method_slug(int $method_id): ?string
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'cashback_payout_methods';
+        $method_slug = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT slug FROM {$table_name} WHERE id = %d",
+                $method_id
+            )
+        );
+
+        return $method_slug ?: null;
     }
 
     /**

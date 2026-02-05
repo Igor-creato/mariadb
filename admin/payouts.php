@@ -325,7 +325,7 @@ class Cashback_Payouts_Admin
                                     <td><?php echo esc_html($this->get_payout_method_name_by_slug($payout['payout_method'])); ?></td>
                                     <td><?php echo esc_html($payout['payout_account']); ?></td>
                                     <td class="edit-field" data-field="provider">
-                                        <?php echo esc_html($payout['provider'] ?? ''); ?>
+                                        <?php echo esc_html($this->get_bank_name_by_code($payout['provider'] ?? '')); ?>
                                     </td>
                                     <td class="edit-field" data-field="provider_payout_id">
                                         <?php echo esc_html($payout['provider_payout_id'] ?? ''); ?>
@@ -908,6 +908,31 @@ class Cashback_Payouts_Admin
         );
 
         return $method_name ?: $slug;
+    }
+
+    /**
+     * Получить название банка по коду
+     *
+     * @param string $bank_code Код банка
+     * @return string Название банка
+     */
+    private function get_bank_name_by_code(string $bank_code): string
+    {
+        global $wpdb;
+
+        if (empty($bank_code)) {
+            return '';
+        }
+
+        $table_name = $wpdb->prefix . 'cashback_banks';
+        $bank_name = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT name FROM {$table_name} WHERE bank_code = %s",
+                $bank_code
+            )
+        );
+
+        return $bank_name ?: $bank_code;
     }
 }
 

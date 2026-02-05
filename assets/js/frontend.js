@@ -288,3 +288,100 @@ function updateBalanceDisplay() {
     },
   });
 }
+
+/**
+ * Обработчик для кнопки "Сохранить настройки" на странице вывода кэшбэка
+ */
+jQuery(document).ready(function ($) {
+  // Проверяем наличие cashback_ajax
+  if (typeof cashback_ajax === 'undefined') {
+    console.error('cashback_ajax is not defined');
+    return;
+  }
+
+  console.log('Payout settings handler loaded', cashback_ajax);
+
+  $(document).on('click', '#save_payout_settings_btn', function (e) {
+    e.preventDefault();
+    console.log('Save payout settings button clicked');
+
+    const payoutMethodId = $('#payout_method_id').val();
+    const payoutAccount = $('#payout_account').val();
+    const bankId = $('#bank_id').val();
+    const nonce = cashback_ajax.nonce;
+
+    console.log('Form values:', { payoutMethodId, payoutAccount, bankId });
+
+    // Валидация
+    if (!payoutMethodId || payoutMethodId === '' || payoutMethodId === '0') {
+      $('#payout_settings_message')
+        .removeClass('success')
+        .addClass('error')
+        .text('Пожалуйста, выберите способ вывода');
+      return;
+    }
+
+    if (!payoutAccount || !payoutAccount.trim()) {
+      $('#payout_settings_message')
+        .removeClass('success')
+        .addClass('error')
+        .text('Пожалуйста, введите номер счета или телефона');
+      return;
+    }
+
+    if (!bankId || bankId === '' || bankId === '0' || parseInt(bankId, 10) <= 0) {
+      $('#payout_settings_message')
+        .removeClass('success')
+        .addClass('error')
+        .text('Пожалуйста, выберите банк');
+      return;
+    }
+
+    // Очищаем предыдущие сообщения
+    $('#payout_settings_message').text('').removeClass('success error');
+
+    console.log('Sending AJAX request to:', cashback_ajax.ajax_url);
+
+    // Отправляем AJAX-запрос
+    $.ajax({
+      url: cashback_ajax.ajax_url,
+      type: 'POST',
+      data: {
+        action: 'save_payout_settings',
+        payout_method_id: payoutMethodId,
+        payout_account: payoutAccount,
+        bank_id: bankId,
+        security: nonce,
+      },
+      beforeSend: function () {
+        console.log('AJAX request started');
+        $('#save_payout_settings_btn').prop('disabled', true).text('Сохранение...');
+      },
+      success: function (response) {
+        console.log('AJAX response:', response);
+        if (response.success) {
+          $('#payout_settings_message')
+            .removeClass('error')
+            .addClass('success')
+            .text(response.data.message);
+        } else {
+          $('#payout_settings_message')
+            .removeClass('success')
+            .addClass('error')
+            .text(response.data.message || 'Ошибка при сохранении данных');
+        }
+      },
+      error: function (xhr, status, error) {
+        console.error('AJAX error:', xhr, status, error);
+        $('#payout_settings_message')
+          .removeClass('success')
+          .addClass('error')
+          .text('Ошибка соединения');
+      },
+      complete: function () {
+        console.log('AJAX request completed');
+        $('#save_payout_settings_btn').prop('disabled', false).text('Сохранить настройки');
+      },
+    });
+  });
+});
