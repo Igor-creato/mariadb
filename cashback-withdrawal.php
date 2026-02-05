@@ -881,8 +881,9 @@ class CashbackWithdrawal
         }
 
         if ($result !== false) {
-            // Обновляем записи в истории выплат со статусом "waiting" для этого пользователя
-            $this->update_payout_requests_for_user($user_id, $payout_method_id, $payout_account);
+            // Обновляем ТОЛЬКО записи со статусом "waiting" для этого пользователя
+            // Для других статусов банк не меняется, так как выплата уже в обработке
+            $this->update_payout_requests_for_user($user_id, $payout_method_id, $payout_account, $bank_id);
         }
 
         return $result !== false;
@@ -894,9 +895,10 @@ class CashbackWithdrawal
      * @param int $user_id
      * @param int $payout_method_id
      * @param string $payout_account
+     * @param int $bank_id
      * @return bool
      */
-    private function update_payout_requests_for_user(int $user_id, int $payout_method_id, string $payout_account): bool
+    private function update_payout_requests_for_user(int $user_id, int $payout_method_id, string $payout_account, int $bank_id): bool
     {
         global $wpdb;
 
@@ -907,6 +909,13 @@ class CashbackWithdrawal
             return false;
         }
 
+        // Получаем код банка по его ID
+        $bank_code = $this->get_bank_code_by_id($bank_id);
+
+        if (!$bank_code) {
+            return false;
+        }
+
         $payout_requests_table = $wpdb->prefix . 'cashback_payout_requests';
 
         // Обновляем только записи со статусом "waiting"
@@ -914,13 +923,14 @@ class CashbackWithdrawal
             $payout_requests_table,
             array(
                 'payout_method' => $payout_method_slug,
-                'payout_account' => $payout_account
+                'payout_account' => $payout_account,
+                'provider' => $bank_code
             ),
             array(
                 'user_id' => $user_id,
                 'status' => 'waiting'
             ),
-            array('%s', '%s'),
+            array('%s', '%s', '%s'),
             array('%d', '%s')
         );
 
@@ -946,6 +956,27 @@ class CashbackWithdrawal
         );
 
         return $method_slug ?: null;
+    }
+
+    /**
+     * Get bank code by bank ID
+     *
+     * @param int $bank_id
+     * @return string|null
+     */
+    private function get_bank_code_by_id(int $bank_id): ?string
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'cashback_banks';
+        $bank_code = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT bank_code FROM {$table_name} WHERE id = %d",
+                $bank_id
+            )
+        );
+
+        return $bank_code ?: null;
     }
 
     /**

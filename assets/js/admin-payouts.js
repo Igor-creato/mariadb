@@ -113,25 +113,38 @@
     $('.edit-btn').on('click', function () {
       const row = $(this).closest('tr');
       const cells = row.find('.edit-field');
+      const payoutId = row.data('payout-id');
 
-      cells.each(function () {
-        const cell = $(this);
-        const field = cell.data('field');
-        const currentValue = cell.text().trim();
-
-        cell.css('min-width', cell.width() + 'px');
-
-        if (field === 'status') {
-          createStatusSelect(cell, currentValue);
-        } else if (field === 'attempts') {
-          createNumberInput(cell, field, currentValue);
-        } else {
-          createTextInput(cell, field, currentValue);
+      // Получаем текущие данные о выплате из базы
+      loadPayoutData(payoutId, function (error, payoutData) {
+        if (error) {
+          console.error('Ошибка загрузки данных выплаты:', error);
+          alert('Ошибка загрузки данных выплаты: ' + error);
+          return;
         }
-      });
 
-      row.find('.edit-btn').hide();
-      row.find('.save-btn, .cancel-btn').show();
+        cells.each(function () {
+          const cell = $(this);
+          const field = cell.data('field');
+          const currentValue = cell.text().trim();
+
+          cell.css('min-width', cell.width() + 'px');
+
+          // Поле provider (банк) не редактируется
+          if (field === 'provider') {
+            return; // Пропускаем это поле, оставляем только для отображения
+          } else if (field === 'status') {
+            createStatusSelect(cell, currentValue);
+          } else if (field === 'attempts') {
+            createNumberInput(cell, field, currentValue);
+          } else {
+            createTextInput(cell, field, currentValue);
+          }
+        });
+
+        row.find('.edit-btn').hide();
+        row.find('.save-btn, .cancel-btn').show();
+      });
     });
   }
 
@@ -311,7 +324,11 @@
    * @param {Object} payoutData - Данные выплаты
    */
   function updateRowData(row, payoutData) {
-    row.find('.edit-field[data-field="provider"]').text(payoutData.provider || '');
+    // Обновляем поле банка: находим название банка по коду
+    const bankCode = payoutData.provider || '';
+    const bankName = getBankNameByCode(bankCode);
+    row.find('.edit-field[data-field="provider"]').text(bankName);
+
     row
       .find('.edit-field[data-field="provider_payout_id"]')
       .text(payoutData.provider_payout_id || '');
@@ -325,6 +342,23 @@
     row.find('.edit-field[data-field="status"]').text(statusLabel).attr('title', statusDescription);
 
     row.find('.edit-field').css('min-width', '');
+  }
+
+  /**
+   * Получить название банка по коду
+   *
+   * @param {string} bankCode - Код банка
+   * @returns {string} Название банка
+   */
+  function getBankNameByCode(bankCode) {
+    if (!bankCode) {
+      return '';
+    }
+
+    const banks = cashbackPayoutsData.banks || [];
+    const bank = banks.find((b) => b.bank_code === bankCode);
+
+    return bank ? bank.name : bankCode;
   }
 
   /**

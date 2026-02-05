@@ -82,7 +82,7 @@ class Cashback_Payouts_Admin
             'cashback-admin-payouts',
             plugins_url('../assets/js/admin-payouts.js', __FILE__),
             ['jquery'],
-            '1.0.1',
+            '1.0.2',
             true
         );
 
@@ -90,6 +90,7 @@ class Cashback_Payouts_Admin
         wp_localize_script('cashback-admin-payouts', 'cashbackPayoutsData', [
             'updateNonce' => wp_create_nonce('update_payout_request_nonce'),
             'getNonce' => wp_create_nonce('get_payout_request_nonce'),
+            'banks' => $this->get_all_banks(), // Передаем список банков
         ]);
     }
 
@@ -324,7 +325,7 @@ class Cashback_Payouts_Admin
                                     <td><?php echo esc_html(number_format(floatval($payout['total_amount']), 2, '.', ' ')); ?></td>
                                     <td><?php echo esc_html($this->get_payout_method_name_by_slug($payout['payout_method'])); ?></td>
                                     <td><?php echo esc_html($payout['payout_account']); ?></td>
-                                    <td class="edit-field" data-field="provider">
+                                    <td>
                                         <?php echo esc_html($this->get_bank_name_by_code($payout['provider'] ?? '')); ?>
                                     </td>
                                     <td class="edit-field" data-field="provider_payout_id">
@@ -406,11 +407,8 @@ class Cashback_Payouts_Admin
         $update_formats = array();
 
         // Проверяем и добавляем только измененные поля
-        if (isset($_POST['provider'])) {
-            $provider = sanitize_text_field($_POST['provider']);
-            $update_data['provider'] = $provider;
-            $update_formats[] = '%s';
-        }
+        // Поле provider (банк) НЕ редактируется администратором вручную
+        // Оно обновляется автоматически только для статуса 'waiting' при изменении настроек пользователя
 
         if (isset($_POST['provider_payout_id'])) {
             $provider_payout_id = sanitize_text_field($_POST['provider_payout_id']);
@@ -933,6 +931,52 @@ class Cashback_Payouts_Admin
         );
 
         return $bank_name ?: $bank_code;
+    }
+
+    /**
+     * Получить код банка по ID
+     *
+     * @param int $bank_id ID банка
+     * @return string|null Код банка
+     */
+    private function get_bank_code_by_id(int $bank_id): ?string
+    {
+        global $wpdb;
+
+        if ($bank_id <= 0) {
+            return null;
+        }
+
+        $table_name = $wpdb->prefix . 'cashback_banks';
+        $bank_code = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT bank_code FROM {$table_name} WHERE id = %d",
+                $bank_id
+            )
+        );
+
+        return $bank_code ?: null;
+    }
+
+    /**
+     * Получить все активные банки с их кодами
+     *
+     * @return array Массив банков
+     */
+    private function get_all_banks(): array
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'cashback_banks';
+        $banks = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT id, bank_code, name FROM {$table_name} WHERE is_active = %d ORDER BY name ASC",
+                1
+            ),
+            ARRAY_A
+        );
+
+        return $banks ?: [];
     }
 }
 
