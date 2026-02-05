@@ -3,12 +3,13 @@ jQuery(document).ready(function ($) {
   $(document).on('click', '#save_payout_details_btn', function (e) {
     e.preventDefault();
 
-    var payoutMethodId = $('#payout_method_id').val();
-    var payoutAccount = $('#payout_account').val();
-    var nonce = ajax_object.nonce; // Получаем nonce из локализованного объекта
+    const payoutMethodId = $('#payout_method_id').val();
+    const payoutAccount = $('#payout_account').val();
+    const bankId = $('#bank_id').val();
+    const nonce = ajax_object.nonce; // Получаем nonce из локализованного объекта
 
     // Валидация
-    if (!payoutMethodId) {
+    if (!payoutMethodId || payoutMethodId === '' || payoutMethodId === '0') {
       $('#payout_details_message')
         .removeClass('success')
         .addClass('error')
@@ -16,11 +17,19 @@ jQuery(document).ready(function ($) {
       return;
     }
 
-    if (!payoutAccount.trim()) {
+    if (!payoutAccount || !payoutAccount.trim()) {
       $('#payout_details_message')
         .removeClass('success')
         .addClass('error')
         .text('Пожалуйста, введите номер счета или телефона');
+      return;
+    }
+
+    if (!bankId || bankId === '' || bankId === '0' || parseInt(bankId, 10) <= 0) {
+      $('#payout_details_message')
+        .removeClass('success')
+        .addClass('error')
+        .text('Пожалуйста, выберите банк');
       return;
     }
 
@@ -35,6 +44,7 @@ jQuery(document).ready(function ($) {
         action: 'save_payout_details',
         payout_method_id: payoutMethodId,
         payout_account: payoutAccount,
+        bank_id: bankId,
         security: nonce,
       },
       beforeSend: function () {
@@ -85,10 +95,11 @@ jQuery(document).ready(function ($) {
 
   // Также добавим валидацию при отправке всей формы
   $(document).on('submit', 'form.edit-account', function () {
-    var payoutMethodId = $('#payout_method_id').val();
-    var payoutAccount = $('#payout_account').val();
+    const payoutMethodId = $('#payout_method_id').val();
+    const payoutAccount = $('#payout_account').val();
+    const bankId = $('#bank_id').val();
 
-    if (!payoutMethodId) {
+    if (!payoutMethodId || payoutMethodId === '' || payoutMethodId === '0') {
       $('#payout_details_message')
         .removeClass('success')
         .addClass('error')
@@ -96,11 +107,19 @@ jQuery(document).ready(function ($) {
       return false;
     }
 
-    if (!payoutAccount.trim()) {
+    if (!payoutAccount || !payoutAccount.trim()) {
       $('#payout_details_message')
         .removeClass('success')
         .addClass('error')
         .text('Пожалуйста, введите номер счета или телефона');
+      return false;
+    }
+
+    if (!bankId || bankId === '' || bankId === '0' || parseInt(bankId, 10) <= 0) {
+      $('#payout_details_message')
+        .removeClass('success')
+        .addClass('error')
+        .text('Пожалуйста, выберите банк');
       return false;
     }
 

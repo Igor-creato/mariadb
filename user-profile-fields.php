@@ -42,6 +42,9 @@ class CashbackUserProfileFields
 
         // Получаем доступные способы вывода
         $payout_methods = $this->get_payout_methods();
+
+        // Получаем доступные банки
+        $banks = $this->get_banks();
 ?>
         <fieldset>
             <legend>Настройки вывода кэшбэка</legend>
@@ -61,6 +64,18 @@ class CashbackUserProfileFields
             <p class="woocommerce-form-row woocommerce-form-row--last form-row form-row-last">
                 <label for="payout_account">Номер счета или телефона *</label>
                 <input type="text" class="woocommerce-Input Input--withAddon" name="payout_account" id="payout_account" value="<?php echo esc_attr($payout_account); ?>" />
+            </p>
+
+            <p class="woocommerce-form-row woocommerce-form-row--wide form-row form-row-wide">
+                <label for="bank_id">Банк *</label>
+                <select name="bank_id" id="bank_id" class="woocommerce-Input woocommerce-Select">
+                    <option value="">Выберите банк</option>
+                    <?php foreach ($banks as $bank): ?>
+                        <option value="<?php echo esc_attr($bank['id']); ?>" <?php selected($this->get_user_bank_id($user_id), $bank['id']); ?>>
+                            <?php echo esc_html($bank['name']); ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
             </p>
 
             <p class="woocommerce-form-row form-row">
@@ -89,11 +104,12 @@ class CashbackUserProfileFields
      */
     public function save_payout_fields($user_id)
     {
-        if (isset($_POST['payout_method_id']) && isset($_POST['payout_account'])) {
+        if (isset($_POST['payout_method_id']) && isset($_POST['payout_account']) && isset($_POST['bank_id'])) {
             $payout_method_id = intval($_POST['payout_method_id']);
             $payout_account = sanitize_text_field($_POST['payout_account']);
+            $bank_id = intval($_POST['bank_id']);
 
-            $this->update_user_payout_details($user_id, $payout_method_id, $payout_account);
+            $this->update_user_payout_details($user_id, $payout_method_id, $payout_account, $bank_id);
         }
     }
 
@@ -123,6 +139,7 @@ class CashbackUserProfileFields
 
         $payout_method_id = intval($_POST['payout_method_id']);
         $payout_account = sanitize_text_field($_POST['payout_account']);
+        $bank_id = intval($_POST['bank_id']);
 
         // Валидация данных
         if (empty($payout_method_id)) {
@@ -135,6 +152,11 @@ class CashbackUserProfileFields
             return;
         }
 
+        if (!$bank_id || $bank_id <= 0) {
+            wp_send_json_error(array('message' => 'Пожалуйста, выберите банк.'));
+            return;
+        }
+
         // Проверяем, что способ вывода существует и активен
         $valid_method = $this->get_payout_method_by_id($payout_method_id);
         if (!$valid_method) {
@@ -142,8 +164,15 @@ class CashbackUserProfileFields
             return;
         }
 
+        // Проверяем, что банк существует и активен
+        $valid_bank = $this->get_bank_by_id($bank_id);
+        if (!$valid_bank) {
+            wp_send_json_error(array('message' => 'Недопустимый банк.'));
+            return;
+        }
+
         // Обновляем данные пользователя
-        $result = $this->update_user_payout_details($user_id, $payout_method_id, $payout_account);
+        $result = $this->update_user_payout_details($user_id, $payout_method_id, $payout_account, $bank_id);
 
         if ($result) {
             // Получаем обновленные данные для отображения
@@ -222,6 +251,63 @@ class CashbackUserProfileFields
     }
 
     /**
+     * Получить список банков
+     */
+    private function get_banks()
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'cashback_banks';
+        $banks = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT id, name FROM {$table_name} WHERE is_active = %d ORDER BY sort_order ASC, name ASC",
+                1
+            ),
+            ARRAY_A
+        );
+
+        return $banks ?: array();
+    }
+
+    /**
+     * Получить ID банка пользователя
+     */
+    private function get_user_bank_id($user_id)
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'cashback_user_profile';
+        $bank_id = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT bank_id FROM {$table_name} WHERE user_id = %d",
+                $user_id
+            )
+        );
+
+        return $bank_id ? intval($bank_id) : 0;
+    }
+
+    /**
+     * Получить банк по ID
+     */
+    private function get_bank_by_id($bank_id)
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'cashback_banks';
+        $bank = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT id, name, is_active FROM {$table_name} WHERE id = %d AND is_active = %d",
+                $bank_id,
+                1
+            ),
+            ARRAY_A
+        );
+
+        return $bank ?: null;
+    }
+
+    /**
      * Получить название способа вывода по ID
      */
     private function get_payout_method_name($method_id)
@@ -278,7 +364,7 @@ class CashbackUserProfileFields
     /**
      * Обновить детали вывода пользователя
      */
-    private function update_user_payout_details($user_id, $payout_method_id, $payout_account)
+    private function update_user_payout_details($user_id, $payout_method_id, $payout_account, $bank_id = null)
     {
         global $wpdb;
 
@@ -294,28 +380,48 @@ class CashbackUserProfileFields
 
         if ($existing_record) {
             // Обновляем существующую запись
+            $update_data = array(
+                'payout_method_id' => $payout_method_id,
+                'payout_account' => $payout_account,
+                'payout_details_updated_at' => current_time('mysql')
+            );
+
+            $update_format = array('%d', '%s', '%s');
+
+            // Добавляем bank_id, если он передан
+            if ($bank_id !== null) {
+                $update_data['bank_id'] = $bank_id;
+                $update_format[] = '%d';
+            }
+
             $result = $wpdb->update(
                 $table_name,
-                array(
-                    'payout_method_id' => $payout_method_id,
-                    'payout_account' => $payout_account,
-                    'payout_details_updated_at' => current_time('mysql')
-                ),
+                $update_data,
                 array('user_id' => $user_id),
-                array('%d', '%s', '%s'),
+                $update_format,
                 array('%d')
             );
         } else {
             // Создаем новую запись
+            $insert_data = array(
+                'user_id' => $user_id,
+                'payout_method_id' => $payout_method_id,
+                'payout_account' => $payout_account,
+                'payout_details_updated_at' => current_time('mysql')
+            );
+
+            $insert_format = array('%d', '%d', '%s', '%s');
+
+            // Добавляем bank_id, если он передан
+            if ($bank_id !== null) {
+                $insert_data['bank_id'] = $bank_id;
+                $insert_format[] = '%d';
+            }
+
             $result = $wpdb->insert(
                 $table_name,
-                array(
-                    'user_id' => $user_id,
-                    'payout_method_id' => $payout_method_id,
-                    'payout_account' => $payout_account,
-                    'payout_details_updated_at' => current_time('mysql')
-                ),
-                array('%d', '%d', '%s', '%s')
+                $insert_data,
+                $insert_format
             );
         }
 

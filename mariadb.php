@@ -194,6 +194,7 @@ class Mariadb_Plugin
             `payout_method_id` bigint(20) unsigned DEFAULT NULL COMMENT 'ID способа выплаты, привязанного к wp_cashback_payout_methods.id',
             `payout_account` varchar(255) DEFAULT NULL COMMENT 'Телефон, номер карты или кошелёк',
             `payout_full_name` varchar(255) DEFAULT NULL COMMENT 'ФИО для выплат',
+            `bank_id` bigint(20) unsigned DEFAULT NULL COMMENT 'ID банка, привязанного к wp_cashback_banks.id',
             `cashback_rate` decimal(5,2) NOT NULL DEFAULT 60.00 COMMENT 'Процент кэшбэка (60 = 60%)' CHECK (`cashback_rate` BETWEEN 0.00 AND 100.00),
             `is_verified` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = реквизиты подтверждены',
             `payout_details_updated_at` datetime DEFAULT NULL COMMENT 'Дата и время обновления реквизитов',
@@ -202,14 +203,16 @@ class Mariadb_Plugin
             `status` enum('active','noactive','banned','deleted') NOT NULL DEFAULT 'active' COMMENT 'Статус профиля',
             `banned_at` datetime DEFAULT NULL COMMENT 'Дата и время блокировки',
             `ban_reason` varchar(25) DEFAULT NULL COMMENT 'Причина блокировки',
-            `last_active_at` datetime DEFAULT NULL COMMENT 'Дата и время последней активности',
+            `last_active_at` datetime DEFAULT NULL COMMENT 'Дата и времени последней активности',
             `created_at` datetime DEFAULT current_timestamp(),
             `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp(),
             PRIMARY KEY (`user_id`),
             KEY `idx_active_check` (`status`,`last_active_at`,`created_at`),
             KEY `idx_payout_method` (`payout_method_id`),
+            KEY `idx_bank_id` (`bank_id`),
             CONSTRAINT `fk_profile_wp_user` FOREIGN KEY (`user_id`) REFERENCES `{$wpdb->prefix}users` (`ID`) ON DELETE CASCADE,
-            CONSTRAINT `fk_payout_method` FOREIGN KEY (`payout_method_id`) REFERENCES `{$wpdb->prefix}cashback_payout_methods` (`id`) ON DELETE SET NULL
+            CONSTRAINT `fk_payout_method` FOREIGN KEY (`payout_method_id`) REFERENCES `{$wpdb->prefix}cashback_payout_methods` (`id`) ON DELETE SET NULL,
+            CONSTRAINT `fk_bank_id` FOREIGN KEY (`bank_id`) REFERENCES `{$wpdb->prefix}cashback_banks` (`id`) ON DELETE SET NULL
         ) ENGINE=InnoDB {$charset_collate};";
 
         // Таблица способов выплат
@@ -224,6 +227,20 @@ class Mariadb_Plugin
             PRIMARY KEY (`id`),
             UNIQUE KEY `uniq_slug` (`slug`)
         ) ENGINE=InnoDB {$charset_collate} COMMENT='Способы выплат пользователей';";
+
+        // Таблица банков
+        $table8 = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_banks` (
+            `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            `bank_code` varchar(50) NOT NULL COMMENT 'Уникальный код банка (например: sber, tinkoff, vtbc)',
+            `name` varchar(100) NOT NULL COMMENT 'Полное название банка',
+            `short_name` varchar(50) DEFAULT NULL COMMENT 'Краткое название банка',
+            `is_active` tinyint(1) NOT NULL DEFAULT 1 COMMENT '1 = банк доступен для выбора',
+            `sort_order` int(11) NOT NULL DEFAULT 0 COMMENT 'Порядок сортировки в интерфейсе',
+            `created_at` datetime DEFAULT current_timestamp(),
+            `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uniq_bank_code` (`bank_code`)
+        ) ENGINE=InnoDB {$charset_collate} COMMENT='Список банков для выплат';";
 
         // Таблица тикетов
         $tickets_table = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_tickets` (
@@ -293,7 +310,8 @@ class Mariadb_Plugin
         dbDelta($table4);
         dbDelta($table5);
         dbDelta($table7); // Создаем payout_methods ПЕРЕД user_profile
-        dbDelta($table6); // Создаем user_profile после payout_methods
+        dbDelta($table8); // Создаем banks ПЕРЕД user_profile
+        dbDelta($table6); // Создаем user_profile после payout_methods и banks
         dbDelta($tickets_table);   // Создаем таблицу тикетов
         dbDelta($messages_table);  // Создаем таблицу сообщений
         dbDelta($attachments_table); // Создаем таблицу вложений

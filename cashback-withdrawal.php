@@ -162,6 +162,30 @@ class CashbackWithdrawal
     }
 
     /**
+     * Get bank info for user
+     *
+     * @param int $user_id
+     * @return array|null Array containing bank id, code and name
+     */
+    private function get_user_bank_info(int $user_id): ?array
+    {
+        global $wpdb;
+
+        $table_profile = $wpdb->prefix . 'cashback_user_profile';
+        $table_banks = $wpdb->prefix . 'cashback_banks';
+
+        $bank_info = $wpdb->get_row($wpdb->prepare(
+            "SELECT b.id, b.bank_code, b.name
+             FROM {$table_profile} up
+             LEFT JOIN {$table_banks} b ON up.bank_id = b.id AND b.is_active = 1
+             WHERE up.user_id = %d",
+            $user_id
+        ), ARRAY_A);
+
+        return $bank_info ?: null;
+    }
+
+    /**
      * Get payout account for user
      *
      * @param int $user_id
@@ -425,9 +449,14 @@ class CashbackWithdrawal
                     '_' . bin2hex(random_bytes(16))
             );
 
-            // Получаем информацию о способе вывода и аккаунте из профиля пользователя
+            // Получаем информацию о способе вывода, аккаунте и банке из профиля пользователя
             $payout_method = $this->get_payout_method($user_id);
             $payout_account = $this->get_payout_account($user_id);
+            $bank_info = $this->get_user_bank_info($user_id);
+
+            // Получаем bank_id и bank_code для сохранения в заявку
+            $bank_id = $bank_info['id'] ?? null;
+            $bank_code = $bank_info['bank_code'] ?? '';
 
             // 📝 АТОМАРНАЯ ОПЕРАЦИЯ: Создаем заявку на выплату с идемпотентным ключом
             // UNIQUE KEY на idempotency_key гарантирует отсутствие дублей даже при повторных попытках
@@ -438,10 +467,11 @@ class CashbackWithdrawal
                     'total_amount' => $withdrawal_amount,
                     'payout_method' => $payout_method ?: '',
                     'payout_account' => $payout_account ?: '',
+                    'provider' => $bank_code, // Сохраняем код банка как провайдера
                     'idempotency_key' => $idempotency_key,
                     'status' => 'waiting'
                 ),
-                array('%d', '%f', '%s', '%s', '%s', '%s')
+                array('%d', '%f', '%s', '%s', '%s', '%s', '%s')
             );
 
             if ($result === false) {
