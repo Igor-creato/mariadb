@@ -617,8 +617,6 @@ END;",
     {
         global $wpdb;
 
-        error_log('Mariadb Plugin: Adding user profile for user ID: ' . $user_id);
-
         $table_name = $wpdb->prefix . 'cashback_user_profile';
 
         // Проверяем, существует ли уже запись
@@ -626,8 +624,6 @@ END;",
             "SELECT COUNT(*) FROM {$table_name} WHERE user_id = %d",
             $user_id
         ));
-
-        error_log('Mariadb Plugin: Profile exists check result: ' . $exists . ' for user ID: ' . $user_id);
 
         if (!$exists) {
             // Начинаем транзакцию для атомарного создания профиля и баланса
@@ -647,10 +643,10 @@ END;",
                     throw new Exception('Failed to insert user profile: ' . $wpdb->last_error);
                 }
 
-                error_log('Mariadb Plugin: Successfully inserted user profile for user ID: ' . $user_id);
+                error_log('Mariadb Plugin: Created new profile for user ID: ' . $user_id);
 
                 // Добавляем запись в таблицу баланса
-                $balance_result = $this->add_user_to_balance($user_id);
+                $balance_result = $this->add_user_to_balance($user_id, true);
 
                 if (!$balance_result) {
                     throw new Exception('Failed to create user balance');
@@ -666,19 +662,21 @@ END;",
                 return false;
             }
         } else {
-            error_log('Mariadb Plugin: User profile already exists for user ID: ' . $user_id);
-            return $this->add_user_to_balance($user_id);
+            return $this->add_user_to_balance($user_id, false);
         }
     }
 
     /**
      * Добавление пользователя в баланс
+     *
+     * @param int  $user_id     ID пользователя.
+     * @param bool $is_new_user Флаг нового пользователя (для логирования).
+     *
+     * @return bool True при успехе, false при ошибке.
      */
-    public function add_user_to_balance(int $user_id): bool
+    public function add_user_to_balance(int $user_id, bool $is_new_user = true): bool
     {
         global $wpdb;
-
-        error_log('Mariadb Plugin: Adding user balance for user ID: ' . $user_id);
 
         $table_name = $wpdb->prefix . 'cashback_user_balance';
 
@@ -687,8 +685,6 @@ END;",
             "SELECT COUNT(*) FROM {$table_name} WHERE user_id = %d",
             $user_id
         ));
-
-        error_log('Mariadb Plugin: Balance exists check result: ' . $exists . ' for user ID: ' . $user_id);
 
         if (!$exists) {
             $result = $wpdb->insert(
@@ -703,13 +699,13 @@ END;",
             );
 
             if ($result === false) {
-                error_log('Mariadb Plugin Error: Failed to insert user balance for user ' . $user_id . '. Error: ' . $wpdb->last_error);
+                error_log('Mariadb Plugin Error: Failed to insert balance for user ' . $user_id . ': ' . $wpdb->last_error);
                 return false;
-            } else {
-                error_log('Mariadb Plugin: Successfully inserted user balance for user ID: ' . $user_id);
             }
-        } else {
-            error_log('Mariadb Plugin: User balance already exists for user ID: ' . $user_id);
+
+            if ($is_new_user) {
+                error_log('Mariadb Plugin: Created new balance for user ID: ' . $user_id);
+            }
         }
 
         return true;
@@ -717,18 +713,44 @@ END;",
 
     /**
      * Добавление пользователя в таблицы кэшбэка при регистрации
+     *
+     * @param int $user_id ID пользователя.
+     *
+     * @return bool True при успехе, false при ошибке.
      */
     public function add_user_to_cashback_tables(int $user_id): bool
     {
-        error_log('Mariadb Plugin: Processing user registration for user ID: ' . $user_id);
+        global $wpdb;
+
+        // Проверяем, существует ли профиль пользователя
+        $table_profile = $wpdb->prefix . 'cashback_user_profile';
+        $table_balance = $wpdb->prefix . 'cashback_user_balance';
+
+        $profile_exists = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$table_profile} WHERE user_id = %d",
+            $user_id
+        ));
+
+        $balance_exists = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$table_balance} WHERE user_id = %d",
+            $user_id
+        ));
+
+        $is_new_user = !$profile_exists && !$balance_exists;
+
+        if ($is_new_user) {
+            error_log('Mariadb Plugin: Initializing new user ID: ' . $user_id);
+        }
 
         // Сначала добавляем в профиль, который в свою очередь добавит в баланс
         $result = $this->add_user_to_profile($user_id);
 
-        if ($result) {
-            error_log('Mariadb Plugin: Successfully added user ' . $user_id . ' to cashback tables');
+        if ($result && $is_new_user) {
+            error_log('Mariadb Plugin: Successfully created cashback profile and balance for user ID: ' . $user_id);
+        } elseif ($result && !$is_new_user) {
+            error_log('Mariadb Plugin: User ID ' . $user_id . ' already initialized (skipped)');
         } else {
-            error_log('Mariadb Plugin: Failed to add user ' . $user_id . ' to cashback tables');
+            error_log('Mariadb Plugin Error: Failed to initialize user ID: ' . $user_id);
         }
 
         return $result;
