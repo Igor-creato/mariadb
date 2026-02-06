@@ -1,9 +1,16 @@
 <?php
 
+declare(strict_types=1);
+
 if (!defined('ABSPATH')) {
     exit; // Exit if accessed directly
 }
 
+/**
+ * Cashback History page for WooCommerce My Account.
+ *
+ * Displays user's cashback transaction history with AJAX pagination.
+ */
 class CashbackHistory
 {
     private const PER_PAGE = 10;
@@ -11,6 +18,11 @@ class CashbackHistory
 
     private static $instance = null;
 
+    /**
+     * Get singleton instance.
+     *
+     * @return self
+     */
     public static function get_instance()
     {
         if (null === self::$instance) {
@@ -26,21 +38,37 @@ class CashbackHistory
         add_filter('woocommerce_account_menu_items', array($this, 'add_menu_item'));
         add_action('woocommerce_account_cashback-history_endpoint', array($this, 'content'));
         add_action('wp_ajax_load_page_transactions', array($this, 'ajax_load_page'));
-        add_action('wp_ajax_nopriv_load_page_transactions', array($this, 'ajax_load_page'));
         add_action('wp_enqueue_scripts', array($this, 'enqueue_scripts'));
     }
 
+    /**
+     * Register WooCommerce account endpoint.
+     *
+     * @return void
+     */
     public function register_endpoint()
     {
         add_rewrite_endpoint('cashback-history', EP_ROOT | EP_PAGES);
     }
 
+    /**
+     * Add query vars for the endpoint.
+     *
+     * @param array $vars Query vars.
+     * @return array Modified query vars.
+     */
     public function add_query_vars($vars)
     {
         $vars[] = 'cashback-history';
         return $vars;
     }
 
+    /**
+     * Add menu item to WooCommerce account menu.
+     *
+     * @param array $items Menu items.
+     * @return array Modified menu items.
+     */
     public function add_menu_item($items)
     {
         if (isset($items['customer-logout'])) {
@@ -54,6 +82,11 @@ class CashbackHistory
         return $items;
     }
 
+    /**
+     * Render cashback history content.
+     *
+     * @return void
+     */
     public function content()
     {
         $user_id = get_current_user_id();
@@ -112,6 +145,13 @@ class CashbackHistory
         echo '</div>';
     }
 
+    /**
+     * Render pagination links.
+     *
+     * @param int $current_page Current page number.
+     * @param int $total_pages  Total number of pages.
+     * @return void
+     */
     private function render_pagination($current_page, $total_pages)
     {
         echo '<nav class="woocommerce-pagination">';
@@ -124,6 +164,14 @@ class CashbackHistory
         echo '</nav>';
     }
 
+    /**
+     * Get transactions for a user with pagination.
+     *
+     * @param int $user_id User ID.
+     * @param int $limit   Number of records per page.
+     * @param int $offset  Offset for pagination.
+     * @return array Array of transaction objects.
+     */
     private function get_transactions($user_id, $limit, $offset)
     {
         global $wpdb;
@@ -140,6 +188,12 @@ class CashbackHistory
         ));
     }
 
+    /**
+     * Get total number of transactions for a user.
+     *
+     * @param int $user_id User ID.
+     * @return int Total transaction count.
+     */
     private function get_total_transactions($user_id)
     {
         global $wpdb;
@@ -150,9 +204,17 @@ class CashbackHistory
         ));
     }
 
-    public function ajax_load_page()
+    /**
+     * Handle AJAX request to load transactions page.
+     *
+     * @return void
+     */
+    public function ajax_load_page(): void
     {
-        check_ajax_referer('load_page_transactions_nonce', 'nonce');
+        // Verify nonce
+        if (!isset($_POST['nonce']) || !check_ajax_referer('load_page_transactions_nonce', 'nonce', false)) {
+            wp_send_json_error(esc_html__('Ошибка безопасности: неверный nonce.', 'cashback-history'));
+        }
 
         $user_id = get_current_user_id();
         if (!$user_id) {
@@ -191,29 +253,58 @@ class CashbackHistory
         ));
     }
 
-    public function enqueue_scripts()
+    /**
+     * Enqueue scripts for cashback history page.
+     *
+     * @return void
+     */
+    public function enqueue_scripts(): void
     {
-        if (is_account_page() && $this->is_cashback_history_page()) {
+        $is_account_page = function_exists('is_account_page') && is_account_page();
+        $is_cashback_page = $this->is_cashback_history_page();
+
+        // Load script on account page
+        if ($is_account_page) {
             wp_enqueue_script(
                 'cashback-history-ajax',
                 plugin_dir_url(__FILE__) . 'assets/js/cashback-history.js',
                 array('jquery'),
-                '1.0.0',
+                '1.0.2',
                 true
             );
-            wp_localize_script('cashback-history-ajax', 'cashback_ajax', array(
+
+            // Use unique object name to avoid conflicts with other plugin scripts
+            wp_localize_script('cashback-history-ajax', 'cashback_history_ajax', array(
                 'ajax_url' => admin_url('admin-ajax.php'),
-                'nonce' => wp_create_nonce('load_page_transactions_nonce')
+                'nonce' => wp_create_nonce('load_page_transactions_nonce'),
+                'is_cashback_page' => $is_cashback_page ? 'true' : 'false'
             ));
         }
     }
 
-    private function is_cashback_history_page()
+    /**
+     * Check if current page is cashback history page.
+     *
+     * @return bool True if on cashback history page, false otherwise.
+     */
+    private function is_cashback_history_page(): bool
     {
         global $wp;
-        return isset($wp->query_vars['cashback-history']);
+
+        // Check if query var is set (even if empty, it means we're on the endpoint)
+        if (isset($wp->query_vars['cashback-history'])) {
+            return true;
+        }
+
+        return false;
     }
 
+    /**
+     * Get human-readable status label.
+     *
+     * @param string|null $status Order status.
+     * @return string Translated status label.
+     */
     private function get_status_label($status)
     {
         switch ($status) {
@@ -231,7 +322,10 @@ class CashbackHistory
     }
 
     /**
-     * Безопасное форматирование даты с защитой от некорректных значений
+     * Safely format date with protection against invalid values.
+     *
+     * @param string|null $date_string Date string to format.
+     * @return string Formatted date or fallback text.
      */
     private function format_date($date_string)
     {
