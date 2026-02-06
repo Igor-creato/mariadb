@@ -301,6 +301,39 @@ jQuery(document).ready(function ($) {
 
   console.log('Payout settings handler loaded', cashback_ajax);
 
+  /**
+   * Обработчик кнопки "Изменить данные"
+   */
+  $(document).on('click', '#edit_payout_settings_btn', function (e) {
+    e.preventDefault();
+    console.log('Edit payout settings button clicked');
+
+    // Скрываем блок с отображением данных
+    $('#payout_settings_display').hide();
+    // Показываем форму редактирования
+    $('#payout_settings_form').removeClass('payout-settings-form-hidden').show();
+    // Очищаем сообщения
+    $('#payout_settings_message').text('').removeClass('success error');
+  });
+
+  /**
+   * Обработчик кнопки "Отменить" при редактировании
+   */
+  $(document).on('click', '#cancel_edit_payout_settings_btn', function (e) {
+    e.preventDefault();
+    console.log('Cancel edit payout settings button clicked');
+
+    // Показываем блок с отображением данных
+    $('#payout_settings_display').show();
+    // Скрываем форму редактирования
+    $('#payout_settings_form').addClass('payout-settings-form-hidden').hide();
+    // Очищаем сообщения
+    $('#payout_settings_message').text('').removeClass('success error');
+  });
+
+  /**
+   * Обработчик кнопки "Сохранить настройки"
+   */
   $(document).on('click', '#save_payout_settings_btn', function (e) {
     e.preventDefault();
     console.log('Save payout settings button clicked');
@@ -364,6 +397,11 @@ jQuery(document).ready(function ($) {
             .removeClass('error')
             .addClass('success')
             .text(response.data.message);
+
+          // Перезагружаем страницу через 1.5 секунды для отображения обновленных данных
+          setTimeout(function () {
+            location.reload();
+          }, 1500);
         } else {
           $('#payout_settings_message')
             .removeClass('success')

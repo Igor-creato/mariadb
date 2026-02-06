@@ -164,6 +164,32 @@ class CashbackWithdrawal
     }
 
     /**
+     * Check if user has saved payout settings
+     *
+     * @param int $user_id
+     * @return bool
+     */
+    private function has_payout_settings(int $user_id): bool
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'cashback_user_profile';
+        $result = $wpdb->get_row($wpdb->prepare(
+            "SELECT payout_method_id, payout_account, bank_id FROM {$table_name} WHERE user_id = %d",
+            $user_id
+        ), ARRAY_A);
+
+        if (!$result) {
+            return false;
+        }
+
+        // Проверяем, что все три поля заполнены
+        return !empty($result['payout_method_id']) &&
+            !empty($result['payout_account']) &&
+            !empty($result['bank_id']);
+    }
+
+    /**
      * Get user's payout method ID
      *
      * @param int $user_id
@@ -182,6 +208,48 @@ class CashbackWithdrawal
         );
 
         return $payout_method_id ? intval($payout_method_id) : 0;
+    }
+
+    /**
+     * Get payout method name by ID
+     *
+     * @param int $method_id
+     * @return string
+     */
+    private function get_payout_method_name(int $method_id): string
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'cashback_payout_methods';
+        $method_name = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT name FROM {$table_name} WHERE id = %d",
+                $method_id
+            )
+        );
+
+        return $method_name ?: '';
+    }
+
+    /**
+     * Get bank name by ID
+     *
+     * @param int $bank_id
+     * @return string
+     */
+    private function get_bank_name(int $bank_id): string
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'cashback_banks';
+        $bank_name = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT name FROM {$table_name} WHERE id = %d",
+                $bank_id
+            )
+        );
+
+        return $bank_name ?: '';
     }
 
     /**
@@ -367,6 +435,9 @@ class CashbackWithdrawal
         $payout_account = $this->get_payout_account($user_id);
         $bank_id = $this->get_user_bank_id($user_id);
 
+        // Проверяем, есть ли у пользователя сохраненные настройки
+        $has_settings = $this->has_payout_settings($user_id);
+
         // Получаем доступные способы вывода и банки
         $payout_methods = $this->get_payout_methods();
         $banks = $this->get_banks();
@@ -378,10 +449,38 @@ class CashbackWithdrawal
         echo '</div>';
         echo '<p>' . __('Минимальная сумма выплаты:', 'woocommerce') . ' <span class="min-payout-amount">' . wc_price($min_payout_amount) . '</span></p>';
 
-        // Форма настройки способа вывода
-        echo '<div class="payout-settings-form woocommerce-EditAccountForm edit-account">';
-        echo '<h3>' . __('Настройки вывода', 'woocommerce') . '</h3>';
+        // Отображаем настройки вывода
+        echo '<div class="payout-settings-section woocommerce-EditAccountForm edit-account">';
+        echo '<h3>' . __('Настройки вывода кэшбэка', 'woocommerce') . '</h3>';
         echo '<div id="payout_settings_message"></div>';
+
+        if ($has_settings) {
+            // Если настройки есть - показываем их в виде текста
+            $method_name = $this->get_payout_method_name($payout_method_id);
+            $bank_name = $this->get_bank_name($bank_id);
+
+            echo '<div id="payout_settings_display" class="payout-settings-display">';
+            echo '<p class="woocommerce-form-row">';
+            echo '<strong>' . __('Способ вывода:', 'woocommerce') . '</strong> ';
+            echo esc_html($method_name);
+            echo '</p>';
+            echo '<p class="woocommerce-form-row">';
+            echo '<strong>' . __('Номер счета/телефона:', 'woocommerce') . '</strong> ';
+            echo esc_html($payout_account);
+            echo '</p>';
+            echo '<p class="woocommerce-form-row">';
+            echo '<strong>' . __('Банк:', 'woocommerce') . '</strong> ';
+            echo esc_html($bank_name);
+            echo '</p>';
+            echo '<p class="woocommerce-form-row">';
+            echo '<button type="button" class="woocommerce-Button button" id="edit_payout_settings_btn">' . __('Изменить данные', 'woocommerce') . '</button>';
+            echo '</p>';
+            echo '</div>';
+        }
+
+        // Форма редактирования (скрыта, если настройки уже есть)
+        $form_class = $has_settings ? 'payout-settings-form-hidden' : '';
+        echo '<div id="payout_settings_form" class="payout-settings-form ' . $form_class . '">';
         echo '<form id="payout-settings-form">';
 
         echo '<p class="woocommerce-form-row woocommerce-form-row--first form-row form-row-first">';
@@ -415,9 +514,13 @@ class CashbackWithdrawal
 
         echo '<p class="woocommerce-form-row form-row">';
         echo '<button type="button" class="woocommerce-Button button" id="save_payout_settings_btn">' . __('Сохранить настройки', 'woocommerce') . '</button>';
+        if ($has_settings) {
+            echo ' <button type="button" class="woocommerce-Button button button-secondary" id="cancel_edit_payout_settings_btn">' . __('Отменить', 'woocommerce') . '</button>';
+        }
         echo '</p>';
 
         echo '</form>';
+        echo '</div>';
         echo '</div>';
 
         // Добавляем форму вывода кэшбэка

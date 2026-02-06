@@ -409,10 +409,126 @@ button#save_payout_details_btn:hover {
 .payout-settings-form .form-row-wide {
     width: 100%;
 }
-
 .payout-settings-form .clear {
     clear: both;
 }
+
+/* Стили для секции настроек вывода */
+.payout-settings-section {
+    margin: 20px 0;
+    padding: 20px;
+    background-color: #fff;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+}
+
+.payout-settings-section h3 {
+    margin-top: 0;
+    margin-bottom: 20px;
+    font-size: 18px;
+    font-weight: 600;
+    color: #333;
+}
+
+/* Стили для отображения сохраненных данных */
+.payout-settings-display {
+    padding: 15px;
+    background-color: #f9f9f9;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    margin-bottom: 15px;
+    transition: all 0.3s ease;
+}
+
+.payout-settings-display p {
+    margin: 10px 0;
+    font-size: 15px;
+    line-height: 1.6;
+}
+
+.payout-settings-display strong {
+    display: inline-block;
+    min-width: 200px;
+    color: #333;
+    font-weight: 600;
+}
+
+/* Скрытие формы редактирования */
+.payout-settings-form-hidden {
+    display: none !important;
+}
+
+/* Кнопки действий */
+#edit_payout_settings_btn,
+#cancel_edit_payout_settings_btn {
+    border-radius: var(--btn-accented-brd-radius, 4px) !important;
+    text-transform: var(--btn-accented-transform, var(--btn-transform, uppercase)) !important;
+    font-weight: var(--btn-accented-font-weight, var(--btn-font-weight, 600)) !important;
+    font-family: var(--btn-accented-font-family, var(--btn-font-family, inherit)) !important;
+    font-style: var(--btn-accented-font-style, var(--btn-font-style, unset)) !important;
+    padding: 10px 20px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+#edit_payout_settings_btn {
+    color: var(--btn-accented-color, #fff) !important;
+    box-shadow: var(--btn-accented-box-shadow) !important;
+    background-color: var(--btn-accented-bgcolor, #0073aa) !important;
+}
+
+#edit_payout_settings_btn:hover {
+    color: var(--btn-accented-color-hover, #fff) !important;
+    box-shadow: var(--btn-accented-box-shadow-hover) !important;
+    background-color: var(--btn-accented-bgcolor-hover, #005a87) !important;
+}
+
+#cancel_edit_payout_settings_btn {
+    color: var(--btn-accented-color, #fff) !important;
+    box-shadow: var(--btn-accented-box-shadow) !important;
+    background-color: var(--btn-accented-bgcolor, #0073aa) !important;
+    margin-left: 10px;
+}
+
+#cancel_edit_payout_settings_btn:hover {
+    color: var(--btn-accented-color-hover, #fff) !important;
+    box-shadow: var(--btn-accented-box-shadow-hover) !important;
+    background-color: var(--btn-accented-bgcolor-hover, #005a87) !important;
+}
+
+/* Анимация переключения между режимами */
+.payout-settings-display,
+#payout_settings_form {
+    animation: fadeIn 0.3s ease-in-out;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Responsive дизайн */
+@media (max-width: 768px) {
+    .payout-settings-display strong {
+        display: block;
+        min-width: auto;
+        margin-bottom: 5px;
+    }
+
+    #cancel_edit_payout_settings_btn {
+        margin-left: 0;
+        margin-top: 10px;
+        display: block;
+        width: 100%;
+    }
+}
+
 
 
 
