@@ -56,20 +56,36 @@ class Cashback_Bank_Management_Admin
 
         global $wpdb;
 
-        // Получаем все банки
+        // Пагинация: настройки
+        $per_page = 10;
+        $current_page = isset($_GET['paged']) ? max(1, intval($_GET['paged'])) : 1;
+        $offset = ($current_page - 1) * $per_page;
+
+        // Общее количество банков
+        $total_banks = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$this->table_name}");
+
+        // Получаем банки с учётом пагинации
         $banks = $wpdb->get_results(
-            "SELECT * FROM {$this->table_name} ORDER BY sort_order ASC, name ASC",
+            $wpdb->prepare(
+                "SELECT * FROM {$this->table_name} ORDER BY sort_order ASC, name ASC LIMIT %d OFFSET %d",
+                $per_page,
+                $offset
+            ),
             ARRAY_A
         );
+
+        // Вычисляем общее количество страниц
+        $total_pages = (int) ceil($total_banks / $per_page);
 
         // Выводим сообщения об ошибках или успехе
         $message = '';
         if (isset($_GET['message'])) {
-            if ($_GET['message'] === 'added') {
+            $msg_type = sanitize_text_field($_GET['message']);
+            if ($msg_type === 'added') {
                 $message = '<div class="notice notice-success is-dismissible"><p>Банк успешно добавлен.</p></div>';
-            } elseif ($_GET['message'] === 'updated') {
+            } elseif ($msg_type === 'updated') {
                 $message = '<div class="notice notice-success is-dismissible"><p>Банк успешно обновлен.</p></div>';
-            } elseif ($_GET['message'] === 'deleted') {
+            } elseif ($msg_type === 'deleted') {
                 $message = '<div class="notice notice-success is-dismissible"><p>Банк успешно удален.</p></div>';
             }
         }
@@ -161,6 +177,38 @@ class Cashback_Bank_Management_Admin
                     </tbody>
                 </table>
             </div>
+
+            <?php if ($total_banks > $per_page): ?>
+                <!-- Пагинация -->
+                <div class="tablenav bottom">
+                    <div class="tablenav-pages">
+                        <span class="displaying-num">
+                            <?php
+                            printf(
+                                '%s из %s',
+                                esc_html(number_format_i18n(count($banks))),
+                                esc_html(number_format_i18n($total_banks))
+                            );
+                            ?>
+                        </span>
+                        <?php
+                        $pagination_links = paginate_links([
+                            'base'      => add_query_arg('paged', '%#%'),
+                            'format'    => '',
+                            'prev_text' => '&laquo;',
+                            'next_text' => '&raquo;',
+                            'total'     => $total_pages,
+                            'current'   => $current_page,
+                            'type'      => 'plain',
+                        ]);
+
+                        if ($pagination_links) {
+                            echo wp_kses_post($pagination_links);
+                        }
+                        ?>
+                    </div>
+                </div>
+            <?php endif; ?>
 
             <!-- Скрипты для работы с формой -->
             <script type="text/javascript">
@@ -277,9 +325,18 @@ class Cashback_Bank_Management_Admin
                         $.post(ajaxurl, formData, function(response) {
                             if (response.success) {
                                 // Перезагружаем страницу для отображения новой записи
-                                window.location.href = window.location.href + '&message=added';
+                                var baseUrl = window.location.href.split('&message=')[0].split('&error=')[0];
+                                window.location.href = baseUrl + '&message=added';
                             } else {
-                                alert('Ошибка при добавлении банка: ' + response.data.message);
+                                // Удаляем предыдущие уведомления об ошибках
+                                $('.notice-error.bank-add-error').remove();
+                                // Показываем ошибку как WordPress notice
+                                var errorHtml = '<div class="notice notice-error is-dismissible bank-add-error"><p>' + response.data.message + '</p></div>';
+                                $('#add-bank-form').before(errorHtml);
+                                // Прокручиваем к сообщению об ошибке
+                                $('html, body').animate({
+                                    scrollTop: $('.bank-add-error').offset().top - 50
+                                }, 300);
                             }
                         });
                     });
@@ -379,13 +436,28 @@ class Cashback_Bank_Management_Admin
             return;
         }
 
-        // Проверяем, существует ли уже банк с таким bank_code
-        $existing = $wpdb->get_var(
-            $wpdb->prepare("SELECT COUNT(*) FROM {$this->table_name} WHERE bank_code = %s", $bank_code)
-        );
+        // Проверяем, существует ли уже банк с таким bank_code, name или short_name
+        if (!empty($short_name)) {
+            $existing = (int) $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT COUNT(*) FROM {$this->table_name} WHERE bank_code = %s OR name = %s OR short_name = %s",
+                    $bank_code,
+                    $name,
+                    $short_name
+                )
+            );
+        } else {
+            $existing = (int) $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT COUNT(*) FROM {$this->table_name} WHERE bank_code = %s OR name = %s",
+                    $bank_code,
+                    $name
+                )
+            );
+        }
 
         if ($existing > 0) {
-            wp_send_json_error(['message' => 'Банк с таким кодом уже существует.']);
+            wp_send_json_error(['message' => 'Такой банк уже добавлен, добавьте другой банк.']);
             return;
         }
 
