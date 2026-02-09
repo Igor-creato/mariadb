@@ -79,9 +79,14 @@ class Cashback_Users_Management_Admin
             );
         } else {
             $total_users = $wpdb->get_var(
-                "SELECT COUNT(*)
-                FROM {$this->table_name} u
-                LEFT JOIN {$this->profile_table_name} cup ON u.ID = cup.user_id"
+                $wpdb->prepare(
+                    "SELECT COUNT(*)
+                    FROM {$this->table_name} u
+                    LEFT JOIN {$this->profile_table_name} cup ON u.ID = cup.user_id
+                    WHERE %d = %d",
+                    1,
+                    1
+                )
             );
         }
 
@@ -227,7 +232,7 @@ class Cashback_Users_Management_Admin
                 'per_page'    => $per_page,
                 'current_page' => $current_page,
                 'total_pages' => ceil($total_users / $per_page),
-                'format'      => '?paged=%#%',
+                'page_slug'   => 'cashback-users',
                 'add_args'    => !empty($filter_status) ? array('status' => $filter_status) : array(),
             );
 
@@ -412,8 +417,23 @@ class Cashback_Users_Management_Admin
                             } else {
                                 alert('Ошибка при обновлении профиля пользователя: ' + response.data.message);
                             }
-                        }).fail(function() {
-                            alert('Ошибка соединения при обновлении профиля пользователя');
+                        }).fail(function(jqXHR, textStatus, errorThrown) {
+                            var status = jqXHR.status || 0;
+                            var errorMsg = 'Ошибка соединения при обновлении профиля пользователя';
+
+                            if (status === 403) {
+                                errorMsg = 'Ошибка 403: Доступ запрещён. Возможно, сессия истекла. Обновите страницу.';
+                            } else if (status === 500) {
+                                errorMsg = 'Ошибка 500: Внутренняя ошибка сервера. Обратитесь к администратору.';
+                            } else if (status === 0) {
+                                errorMsg = 'Нет соединения с сервером. Проверьте подключение к интернету.';
+                            } else if (textStatus === 'timeout') {
+                                errorMsg = 'Превышено время ожидания ответа от сервера.';
+                            } else {
+                                errorMsg = 'Ошибка HTTP ' + status + ': ' + (errorThrown || textStatus);
+                            }
+
+                            alert(errorMsg);
                         });
                     });
 
@@ -445,8 +465,25 @@ class Cashback_Users_Management_Admin
                                     }
                                 });
                             }
-                        }).fail(function() {
-                            // Если ошибка соединения, восстанавливаем старые значения
+                        }).fail(function(jqXHR, textStatus, errorThrown) {
+                            var status = jqXHR.status || 0;
+                            var errorMsg = 'Ошибка при загрузке данных пользователя';
+
+                            if (status === 403) {
+                                errorMsg = 'Ошибка 403: Доступ запрещён. Обновите страницу.';
+                            } else if (status === 500) {
+                                errorMsg = 'Ошибка 500: Внутренняя ошибка сервера.';
+                            } else if (status === 0) {
+                                errorMsg = 'Нет соединения с сервером.';
+                            } else if (textStatus === 'timeout') {
+                                errorMsg = 'Превышено время ожидания ответа.';
+                            } else {
+                                errorMsg = 'Ошибка HTTP ' + status + ': ' + (errorThrown || textStatus);
+                            }
+
+                            console.error(errorMsg);
+
+                            // Восстанавливаем старые значения
                             row.find('.edit-field').each(function() {
                                 var cell = $(this);
                                 var input = cell.find('.edit-input');
@@ -649,76 +686,43 @@ class Cashback_Users_Management_Admin
 
     /**
      * Вывод пагинации
+     *
+     * @param array{total_items: int, per_page: int, current_page: int, total_pages: int, page_slug: string, add_args: array<string, string>} $args Параметры пагинации
+     * @return void
      */
     private function render_pagination(array $args): void
     {
-        $total_items = $args['total_items'];
-        $per_page = $args['per_page'];
-        $current_page = $args['current_page'];
-        $total_pages = $args['total_pages'];
-        $format = $args['format'];
+        $total_items = (int) $args['total_items'];
+        $per_page = (int) $args['per_page'];
+        $current_page = (int) $args['current_page'];
+        $total_pages = (int) $args['total_pages'];
+        $page_slug = $args['page_slug'];
         $add_args = $args['add_args'];
 
         if ($total_pages <= 1) {
             return;
         }
 
-        // Проверяем, доступна ли функция paginate_links
-        if (function_exists('paginate_links')) {
-            $pagination_links = paginate_links([
-                'total' => $total_pages,
-                'current' => $current_page,
-                'format' => $format,
-                'add_args' => $add_args,
-                'type' => 'plain',  // Используем plain для более гибкого контроля над HTML
-                'prev_text' => '&lsaquo; ' . __('Предыдущая'),
-                'next_text' => __('Следующая') . ' &rsaquo;',
-            ]);
+        // Явно формируем базовый URL для предотвращения trailing slash проблемы
+        $base_url = remove_query_arg('paged', add_query_arg('page', $page_slug, admin_url('admin.php')));
 
-            if ($pagination_links) {
-                echo '<div class="tablenav bottom">';
-                echo '<div class="tablenav-pages">';
-                echo '<span class="displaying-num">' . sprintf(_n('%s запись', '%s записей', $total_items, 'cashback-plugin'), number_format_i18n($total_items)) . '</span>';
-                echo '<span class="pagination-links">';
-                echo wp_kses_post($pagination_links);
-                echo '</span>';
-                echo '<br class="clear"></div>';
-                echo '</div>';
-            }
-        } else {
-            // Альтернативная реализация пагинации, если paginate_links недоступна
+        $pagination_links = paginate_links([
+            'base'      => add_query_arg('paged', '%#%', $base_url),
+            'format'    => '',
+            'total'     => $total_pages,
+            'current'   => $current_page,
+            'add_args'  => $add_args,
+            'type'      => 'plain',
+            'prev_text' => '&lsaquo; ' . __('Предыдущая', 'cashback-plugin'),
+            'next_text' => __('Следующая', 'cashback-plugin') . ' &rsaquo;',
+        ]);
+
+        if ($pagination_links) {
             echo '<div class="tablenav bottom">';
             echo '<div class="tablenav-pages">';
             echo '<span class="displaying-num">' . sprintf(_n('%s запись', '%s записей', $total_items, 'cashback-plugin'), number_format_i18n($total_items)) . '</span>';
             echo '<span class="pagination-links">';
-
-            // Создаем простую пагинацию вручную
-            $base_url = admin_url('admin.php?page=cashback-users');
-            if (!empty($add_args)) {
-                foreach ($add_args as $key => $value) {
-                    $base_url = add_query_arg($key, $value, $base_url);
-                }
-            }
-
-            // Предыдущая страница
-            if ($current_page > 1) {
-                $prev_page = $current_page - 1;
-                $prev_url = add_query_arg('paged', $prev_page, $base_url);
-                echo '<a class="prev-page button" href="' . esc_url($prev_url) . '">&lsaquo; ' . esc_html__('Предыдущая') . '</a>';
-            }
-
-            // Текущая страница
-            echo '<span class="paging-input">';
-            echo '<span class="tablenav-paging-text">' . esc_html($current_page) . ' из ' . esc_html($total_pages) . '</span>';
-            echo '</span>';
-
-            // Следующая страница
-            if ($current_page < $total_pages) {
-                $next_page = $current_page + 1;
-                $next_url = add_query_arg('paged', $next_page, $base_url);
-                echo '<a class="next-page button" href="' . esc_url($next_url) . '">' . esc_html__('Следующая') . ' &rsaquo;</a>';
-            }
-
+            echo wp_kses_post($pagination_links);
             echo '</span>';
             echo '</div>';
             echo '<br class="clear"></div>';

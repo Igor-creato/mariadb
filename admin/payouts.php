@@ -183,8 +183,11 @@ class Cashback_Payouts_Admin
             );
         } else {
             $total_payouts = $wpdb->get_var(
-                "SELECT COUNT(*) 
-        FROM {$this->table_name}"
+                $wpdb->prepare(
+                    "SELECT COUNT(*) FROM {$this->table_name} WHERE %d = %d",
+                    1,
+                    1
+                )
             );
         }
 
@@ -355,7 +358,7 @@ class Cashback_Payouts_Admin
                 'per_page'    => $per_page,
                 'current_page' => $current_page,
                 'total_pages' => ceil($total_payouts / $per_page),
-                'format'      => '?paged=%#%',
+                'page_slug'   => 'cashback-payouts',
                 'add_args'    => array_filter([
                     'status' => $filter_status,
                     'date_from' => $filter_date_from,
@@ -697,33 +700,37 @@ class Cashback_Payouts_Admin
     {
         global $wpdb;
 
-        // Получаем информацию о запросе на выплату
-        $payout_request = $wpdb->get_row(
-            $wpdb->prepare(
-                "SELECT user_id, total_amount, status, refunded_at FROM {$this->table_name} WHERE id = %d",
-                $payout_id
-            ),
-            ARRAY_A
-        );
-
-        if (!$payout_request) {
-            $this->log_error("Не найден запрос на выплату с ID {$payout_id}");
-            return false;
-        }
-
-        // Проверка на повторный возврат средств (защита от дублирования)
-        if (!empty($payout_request['refunded_at'])) {
-            $this->log_error("Средства для заявки {$payout_id} уже были возвращены ранее: " . $payout_request['refunded_at']);
-            return false;
-        }
-
-        $user_id = $payout_request['user_id'];
-        $amount = floatval($payout_request['total_amount']);
-
-        // Начинаем транзакцию для обеспечения целостности данных
+        // Начинаем транзакцию СРАЗУ для предотвращения race condition
         $wpdb->query('START TRANSACTION');
 
         try {
+            // Получаем информацию о запросе на выплату с блокировкой строки (FOR UPDATE)
+            // Это предотвращает дублирование возврата при параллельных запросах
+            $payout_request = $wpdb->get_row(
+                $wpdb->prepare(
+                    "SELECT user_id, total_amount, status, refunded_at
+                     FROM {$this->table_name}
+                     WHERE id = %d
+                     FOR UPDATE",
+                    $payout_id
+                ),
+                ARRAY_A
+            );
+
+            if (!$payout_request) {
+                throw new \Exception("Не найден запрос на выплату с ID {$payout_id}");
+            }
+
+            // Проверка на повторный возврат средств ВНУТРИ транзакции (защита от race condition)
+            if (!empty($payout_request['refunded_at'])) {
+                $this->log_error("Средства для заявки {$payout_id} уже были возвращены ранее: " . $payout_request['refunded_at']);
+                $wpdb->query('ROLLBACK');
+                return false;
+            }
+
+            $user_id = (int) $payout_request['user_id'];
+            $amount = floatval($payout_request['total_amount']);
+
             // Получаем текущий баланс пользователя с блокировкой строки
             $balance_table = $wpdb->prefix . 'cashback_user_balance';
             $current_balance = $wpdb->get_row(
@@ -898,76 +905,42 @@ class Cashback_Payouts_Admin
     /**
      * Вывод пагинации
      *
-     * @param array $args Параметры пагинации
+     * @param array{total_items: int, per_page: int, current_page: int, total_pages: int, page_slug: string, add_args: array<string, string>} $args Параметры пагинации
      * @return void
      */
     private function render_pagination(array $args): void
     {
-        $total_items = $args['total_items'];
-        $per_page = $args['per_page'];
-        $current_page = $args['current_page'];
-        $total_pages = $args['total_pages'];
-        $format = $args['format'];
+        $total_items = (int) $args['total_items'];
+        $per_page = (int) $args['per_page'];
+        $current_page = (int) $args['current_page'];
+        $total_pages = (int) $args['total_pages'];
+        $page_slug = $args['page_slug'];
         $add_args = $args['add_args'];
 
         if ($total_pages <= 1) {
             return;
         }
 
-        // Проверяем, доступна ли функция paginate_links
-        if (function_exists('paginate_links')) {
-            $pagination_links = paginate_links([
-                'total' => $total_pages,
-                'current' => $current_page,
-                'format' => $format,
-                'add_args' => $add_args,
-                'type' => 'plain',
-                'prev_text' => '&lsaquo; ' . __('Предыдущая', 'cashback-plugin'),
-                'next_text' => __('Следующая', 'cashback-plugin') . ' &rsaquo;',
-            ]);
+        // Явно формируем базовый URL для предотвращения trailing slash проблемы
+        $base_url = remove_query_arg('paged', add_query_arg('page', $page_slug, admin_url('admin.php')));
 
-            if ($pagination_links) {
-                echo '<div class="tablenav bottom">';
-                echo '<div class="tablenav-pages">';
-                echo '<span class="displaying-num">' . sprintf(_n('%s запись', '%s записей', $total_items, 'cashback-plugin'), number_format_i18n($total_items)) . '</span>';
-                echo '<span class="pagination-links">';
-                echo wp_kses_post($pagination_links);
-                echo '</span>';
-                echo '<br class="clear"></div>';
-            }
-        } else {
-            // Альтернативная реализация пагинации
+        $pagination_links = paginate_links([
+            'base'      => add_query_arg('paged', '%#%', $base_url),
+            'format'    => '',
+            'total'     => $total_pages,
+            'current'   => $current_page,
+            'add_args'  => $add_args,
+            'type'      => 'plain',
+            'prev_text' => '&lsaquo; ' . __('Предыдущая', 'cashback-plugin'),
+            'next_text' => __('Следующая', 'cashback-plugin') . ' &rsaquo;',
+        ]);
+
+        if ($pagination_links) {
             echo '<div class="tablenav bottom">';
             echo '<div class="tablenav-pages">';
             echo '<span class="displaying-num">' . sprintf(_n('%s запись', '%s записей', $total_items, 'cashback-plugin'), number_format_i18n($total_items)) . '</span>';
             echo '<span class="pagination-links">';
-
-            $base_url = admin_url('admin.php?page=cashback-payouts');
-            if (!empty($add_args)) {
-                foreach ($add_args as $key => $value) {
-                    $base_url = add_query_arg($key, $value, $base_url);
-                }
-            }
-
-            // Предыдущая страница
-            if ($current_page > 1) {
-                $prev_page = $current_page - 1;
-                $prev_url = add_query_arg('paged', $prev_page, $base_url);
-                echo '<a class="prev-page button" href="' . esc_url($prev_url) . '">&lsaquo; ' . esc_html__('Предыдущая', 'cashback-plugin') . '</a>';
-            }
-
-            // Текущая страница
-            echo '<span class="paging-input">';
-            echo '<span class="tablenav-paging-text">' . esc_html($current_page) . ' ' . esc_html__('из', 'cashback-plugin') . ' ' . esc_html($total_pages) . '</span>';
-            echo '</span>';
-
-            // Следующая страница
-            if ($current_page < $total_pages) {
-                $next_page = $current_page + 1;
-                $next_url = add_query_arg('paged', $next_page, $base_url);
-                echo '<a class="next-page button" href="' . esc_url($next_url) . '">' . esc_html__('Следующая', 'cashback-plugin') . ' &rsaquo;</a>';
-            }
-
+            echo wp_kses_post($pagination_links);
             echo '</span>';
             echo '</div>';
             echo '<br class="clear"></div>';

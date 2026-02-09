@@ -311,8 +311,23 @@
               (response.data.message || 'Неизвестная ошибка'),
           );
         }
-      }).fail(function () {
-        alert('Ошибка соединения при обновлении запроса на выплату');
+      }).fail(function (jqXHR, textStatus, errorThrown) {
+        const status = jqXHR.status || 0;
+        let errorMsg = 'Ошибка соединения при обновлении запроса на выплату';
+
+        if (status === 403) {
+          errorMsg = 'Ошибка 403: Доступ запрещён. Возможно, сессия истекла. Обновите страницу.';
+        } else if (status === 500) {
+          errorMsg = 'Ошибка 500: Внутренняя ошибка сервера. Обратитесь к администратору.';
+        } else if (status === 0) {
+          errorMsg = 'Нет соединения с сервером. Проверьте подключение к интернету.';
+        } else if (textStatus === 'timeout') {
+          errorMsg = 'Превышено время ожидания ответа от сервера.';
+        } else {
+          errorMsg = 'Ошибка HTTP ' + status + ': ' + (errorThrown || textStatus);
+        }
+
+        alert(errorMsg);
       });
     });
   }
@@ -399,8 +414,23 @@
       } else {
         callback(response.data.message || 'Ошибка при загрузке данных выплаты', null);
       }
-    }).fail(function () {
-      callback('Ошибка соединения при загрузке данных выплаты', null);
+    }).fail(function (jqXHR, textStatus, errorThrown) {
+      const status = jqXHR.status || 0;
+      let errorMsg = 'Ошибка соединения при загрузке данных выплаты';
+
+      if (status === 403) {
+        errorMsg = 'Ошибка 403: Доступ запрещён. Обновите страницу.';
+      } else if (status === 500) {
+        errorMsg = 'Ошибка 500: Внутренняя ошибка сервера.';
+      } else if (status === 0) {
+        errorMsg = 'Нет соединения с сервером.';
+      } else if (textStatus === 'timeout') {
+        errorMsg = 'Превышено время ожидания ответа.';
+      } else {
+        errorMsg = 'Ошибка HTTP ' + status + ': ' + (errorThrown || textStatus);
+      }
+
+      callback(errorMsg, null);
     });
   }
 
