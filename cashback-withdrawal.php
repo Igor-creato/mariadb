@@ -41,15 +41,14 @@ class CashbackWithdrawal
         add_filter('woocommerce_account_menu_items', array($this, 'add_menu_item'));
         add_action('woocommerce_account_cashback-withdrawal_endpoint', array($this, 'endpoint_content'));
         add_action('wp_enqueue_scripts', array($this, 'enqueue_styles'));
-        // AJAX обработчики для вывода кэшбэка
+        // AJAX обработчики для вывода кэшбэка (только для авторизованных пользователей)
         add_action('wp_ajax_process_cashback_withdrawal', array($this, 'process_cashback_withdrawal'));
-        add_action('wp_ajax_nopriv_process_cashback_withdrawal', array($this, 'process_cashback_withdrawal'));
-        // AJAX обработчик для обновления баланса
+        // AJAX обработчик для обновления баланса (только для авторизованных пользователей)
         add_action('wp_ajax_get_user_balance', array($this, 'get_user_balance_ajax'));
-        add_action('wp_ajax_nopriv_get_user_balance', array($this, 'get_user_balance_ajax'));
-        // AJAX обработчик для сохранения настроек вывода
+        // AJAX обработчик для сохранения настроек вывода (только для авторизованных пользователей)
         add_action('wp_ajax_save_payout_settings', array($this, 'save_payout_settings'));
-        add_action('wp_ajax_nopriv_save_payout_settings', array($this, 'save_payout_settings'));
+        // AJAX обработчик для поиска банков (только для авторизованных пользователей)
+        add_action('wp_ajax_search_banks', array($this, 'search_banks_ajax'));
     }
 
     /**
@@ -143,7 +142,7 @@ class CashbackWithdrawal
     }
 
     /**
-     * Get all active banks
+     * Get first 10 active banks for initial dropdown display
      *
      * @return array
      */
@@ -154,7 +153,7 @@ class CashbackWithdrawal
         $table_name = $wpdb->prefix . 'cashback_banks';
         $banks = $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT id, name FROM {$table_name} WHERE is_active = %d ORDER BY sort_order ASC, name ASC",
+                "SELECT id, name FROM {$table_name} WHERE is_active = %d ORDER BY sort_order ASC, name ASC LIMIT 10",
                 1
             ),
             ARRAY_A
@@ -499,15 +498,25 @@ class CashbackWithdrawal
         echo '<input type="text" class="woocommerce-Input woocommerce-Input--text input-text" name="payout_account" id="payout_account" value="' . esc_attr($payout_account) . '" />';
         echo '</p>';
 
+        // Кастомный компонент поиска банков с autocomplete
         echo '<p class="woocommerce-form-row woocommerce-form-row--wide form-row form-row-wide">';
-        echo '<label for="bank_id">' . __('Банк', 'woocommerce') . ' <span class="required">*</span></label>';
-        echo '<select name="bank_id" id="bank_id" class="woocommerce-Input woocommerce-Input--text input-text">';
-        echo '<option value="">' . __('Выберите банк', 'woocommerce') . '</option>';
-        foreach ($banks as $bank) {
-            $selected = ($bank_id === intval($bank['id'])) ? 'selected' : '';
-            echo '<option value="' . esc_attr($bank['id']) . '" ' . $selected . '>' . esc_html($bank['name']) . '</option>';
+        echo '<label for="bank_search_input" id="bank_search_label">' . __('Банк', 'woocommerce') . ' <span class="required">*</span></label>';
+        echo '<input type="hidden" name="bank_id" id="bank_id" value="' . esc_attr($bank_id) . '" />';
+        echo '<div class="bank-search-wrapper" role="combobox" aria-expanded="false" aria-owns="bank_search_results" aria-haspopup="listbox">';
+        // Определяем текущее название банка для поля ввода
+        $current_bank_name = '';
+        if ($bank_id > 0) {
+            $current_bank_name = $this->get_bank_name($bank_id);
         }
-        echo '</select>';
+        echo '<input type="text" class="woocommerce-Input woocommerce-Input--text input-text" id="bank_search_input" autocomplete="off" placeholder="' . esc_attr__('Начните вводить название банка...', 'woocommerce') . '" value="' . esc_attr($current_bank_name) . '" role="searchbox" aria-autocomplete="list" aria-controls="bank_search_results" aria-labelledby="bank_search_label" />';
+        echo '<ul id="bank_search_results" class="bank-search-results" role="listbox" aria-label="' . esc_attr__('Список банков', 'woocommerce') . '">';
+        // Первый элемент — показ начальных 10 банков при фокусе
+        foreach ($banks as $idx => $bank) {
+            echo '<li class="bank-search-item" role="option" aria-selected="' . ($bank_id === intval($bank['id']) ? 'true' : 'false') . '" data-bank-id="' . esc_attr($bank['id']) . '" data-bank-name="' . esc_attr($bank['name']) . '" tabindex="-1">' . esc_html($bank['name']) . '</li>';
+        }
+        echo '</ul>';
+        echo '</div>';
+        echo '<div id="bank_search_error" class="bank-search-error" role="alert" aria-live="polite"></div>';
         echo '</p>';
 
         echo '<div class="clear"></div>';
@@ -795,7 +804,7 @@ class CashbackWithdrawal
                 'cashback-withdrawal-styles',
                 plugins_url('assets/css/frontend.css', __FILE__),
                 array(),
-                '1.0.2'
+                '1.1.0'
             );
 
             // Подключаем скрипты для обработки формы вывода
@@ -803,7 +812,7 @@ class CashbackWithdrawal
                 'cashback-withdrawal-js',
                 plugins_url('assets/js/frontend.js', __FILE__),
                 array('jquery'),
-                '1.0.2',
+                '1.1.0',
                 true
             );
 
@@ -1080,6 +1089,62 @@ class CashbackWithdrawal
         );
 
         return $bank_code ?: null;
+    }
+
+    /**
+     * AJAX обработчик для поиска банков
+     * Защита: nonce, авторизация, подготовленные запросы (SQL-инъекции), XSS (esc_html)
+     */
+    public function search_banks_ajax()
+    {
+        // Проверяем nonce
+        if (!check_ajax_referer('cashback_withdrawal_nonce', 'security', false)) {
+            wp_send_json_error(array('message' => __('Ошибка безопасности.', 'woocommerce')));
+            return;
+        }
+
+        // Запрещаем анонимный доступ
+        if (!is_user_logged_in()) {
+            wp_send_json_error(array('message' => __('Пользователь не авторизован.', 'woocommerce')));
+            return;
+        }
+
+        global $wpdb;
+
+        // Санитизация поискового запроса — защита от XSS
+        $search_term = sanitize_text_field(wp_unslash($_POST['search'] ?? ''));
+
+        if (mb_strlen($search_term) < 1) {
+            // Если менее 1 символа, возвращаем первые 10 активных банков
+            $table_name = $wpdb->prefix . 'cashback_banks';
+            $banks = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT id, name FROM {$table_name} WHERE is_active = %d ORDER BY sort_order ASC, name ASC LIMIT 10",
+                    1
+                ),
+                ARRAY_A
+            );
+
+            wp_send_json_success(array('banks' => $banks ?: array()));
+            return;
+        }
+
+        $table_name = $wpdb->prefix . 'cashback_banks';
+
+        // Подготовленный запрос — защита от SQL-инъекций
+        // Используем LIKE с подстановкой через $wpdb->prepare
+        $like_term = '%' . $wpdb->esc_like($search_term) . '%';
+
+        $banks = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT id, name FROM {$table_name} WHERE is_active = %d AND name LIKE %s ORDER BY sort_order ASC, name ASC LIMIT 20",
+                1,
+                $like_term
+            ),
+            ARRAY_A
+        );
+
+        wp_send_json_success(array('banks' => $banks ?: array()));
     }
 
     /**

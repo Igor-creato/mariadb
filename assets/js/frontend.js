@@ -301,6 +301,250 @@ jQuery(document).ready(function ($) {
 
   console.log('Payout settings handler loaded', cashback_ajax);
 
+  // ============================================================
+  // Компонент поиска банков с AJAX, клавиатурной навигацией и a11y
+  // ============================================================
+  var bankSearchTimer = null;
+  // Если bank_id уже установлен (сохранённые настройки), считаем что банк выбран
+  var bankSelectedFromList =
+    $('#bank_id').val() && parseInt($('#bank_id').val(), 10) > 0 ? true : false;
+  var bankActiveIndex = -1; // Текущий индекс для клавиатурной навигации
+
+  /**
+   * Экранирование HTML-символов для защиты от XSS при вставке в DOM
+   * @param {string} str
+   * @returns {string}
+   */
+  function escapeHtml(str) {
+    var div = document.createElement('div');
+    div.appendChild(document.createTextNode(str));
+    return div.innerHTML;
+  }
+
+  /**
+   * Показать выпадающий список банков
+   */
+  function showBankDropdown() {
+    var $results = $('#bank_search_results');
+    var $wrapper = $('.bank-search-wrapper');
+    $results.addClass('bank-search-results--visible');
+    $wrapper.attr('aria-expanded', 'true');
+  }
+
+  /**
+   * Скрыть выпадающий список банков
+   */
+  function hideBankDropdown() {
+    var $results = $('#bank_search_results');
+    var $wrapper = $('.bank-search-wrapper');
+    $results.removeClass('bank-search-results--visible');
+    $wrapper.attr('aria-expanded', 'false');
+    bankActiveIndex = -1;
+    // Снимаем активный выделение
+    $results.find('.bank-search-item').removeClass('bank-search-item--active');
+  }
+
+  /**
+   * Обновить список банков в DOM
+   * @param {Array} banks - Массив банков [{id, name}]
+   */
+  function updateBankList(banks) {
+    var $results = $('#bank_search_results');
+    $results.empty();
+    bankActiveIndex = -1;
+
+    if (banks.length === 0) {
+      $results.append(
+        '<li class="bank-search-no-results" role="option" aria-disabled="true">Банк не найден</li>',
+      );
+    } else {
+      var selectedBankId = $('#bank_id').val();
+      $.each(banks, function (idx, bank) {
+        var isSelected = String(bank.id) === String(selectedBankId);
+        $results.append(
+          '<li class="bank-search-item" role="option" aria-selected="' +
+            (isSelected ? 'true' : 'false') +
+            '" data-bank-id="' +
+            escapeHtml(String(bank.id)) +
+            '" data-bank-name="' +
+            escapeHtml(bank.name) +
+            '" tabindex="-1">' +
+            escapeHtml(bank.name) +
+            '</li>',
+        );
+      });
+    }
+    showBankDropdown();
+  }
+
+  /**
+   * AJAX поиск банков
+   * @param {string} searchTerm
+   */
+  function searchBanks(searchTerm) {
+    $.ajax({
+      url: cashback_ajax.ajax_url,
+      type: 'POST',
+      data: {
+        action: 'search_banks',
+        search: searchTerm,
+        security: cashback_ajax.nonce,
+      },
+      success: function (response) {
+        if (response.success && response.data && response.data.banks) {
+          updateBankList(response.data.banks);
+        } else {
+          updateBankList([]);
+        }
+      },
+      error: function () {
+        updateBankList([]);
+      },
+    });
+  }
+
+  /**
+   * Выбрать банк из списка
+   * @param {jQuery} $item
+   */
+  function selectBank($item) {
+    var bankId = $item.data('bank-id');
+    var bankName = $item.data('bank-name');
+
+    $('#bank_id').val(bankId);
+    $('#bank_search_input').val(bankName);
+    bankSelectedFromList = true;
+
+    // Убрать ошибку, если была
+    $('#bank_search_error').text('').hide();
+    $('#bank_search_input').removeClass('bank-search-input--error');
+
+    // Обновить aria-selected
+    $('#bank_search_results .bank-search-item').attr('aria-selected', 'false');
+    $item.attr('aria-selected', 'true');
+
+    hideBankDropdown();
+  }
+
+  /**
+   * Клавиатурная навигация по списку банков
+   * @param {string} direction - 'up' или 'down'
+   */
+  function navigateBankList(direction) {
+    var $items = $('#bank_search_results .bank-search-item');
+    if ($items.length === 0) return;
+
+    $items.removeClass('bank-search-item--active');
+
+    if (direction === 'down') {
+      bankActiveIndex = bankActiveIndex < $items.length - 1 ? bankActiveIndex + 1 : 0;
+    } else if (direction === 'up') {
+      bankActiveIndex = bankActiveIndex > 0 ? bankActiveIndex - 1 : $items.length - 1;
+    }
+
+    var $active = $items.eq(bankActiveIndex);
+    $active.addClass('bank-search-item--active');
+    // Прокрутка к активному элементу
+    $active[0].scrollIntoView({ block: 'nearest' });
+    // Обновляем aria-activedescendant
+    var itemId = 'bank-item-' + bankActiveIndex;
+    $active.attr('id', itemId);
+    $('#bank_search_input').attr('aria-activedescendant', itemId);
+  }
+
+  // --- Обработчики событий для поиска банков ---
+
+  // При фокусе на поле ввода — показать начальный список
+  $(document).on('focus', '#bank_search_input', function () {
+    var $results = $('#bank_search_results');
+    if ($results.find('.bank-search-item').length > 0) {
+      showBankDropdown();
+    } else {
+      // Если список пуст, загружаем первые 10
+      searchBanks('');
+    }
+  });
+
+  // При вводе текста — поиск с debounce
+  $(document).on('input', '#bank_search_input', function () {
+    var searchTerm = $(this).val().trim();
+
+    // Сбрасываем выбор, так как пользователь редактирует
+    bankSelectedFromList = false;
+    $('#bank_id').val('');
+
+    clearTimeout(bankSearchTimer);
+    bankSearchTimer = setTimeout(function () {
+      searchBanks(searchTerm);
+    }, 300); // Debounce 300ms
+  });
+
+  // Клавиатурная навигация
+  $(document).on('keydown', '#bank_search_input', function (e) {
+    var $results = $('#bank_search_results');
+    var isVisible = $results.hasClass('bank-search-results--visible');
+
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault();
+        if (!isVisible) {
+          showBankDropdown();
+        }
+        navigateBankList('down');
+        break;
+      case 'ArrowUp':
+        e.preventDefault();
+        if (isVisible) {
+          navigateBankList('up');
+        }
+        break;
+      case 'Enter':
+        e.preventDefault();
+        if (isVisible && bankActiveIndex >= 0) {
+          var $active = $results.find('.bank-search-item').eq(bankActiveIndex);
+          if ($active.length) {
+            selectBank($active);
+          }
+        }
+        break;
+      case 'Escape':
+        e.preventDefault();
+        hideBankDropdown();
+        break;
+      case 'Tab':
+        hideBankDropdown();
+        break;
+    }
+  });
+
+  // Клик по элементу списка
+  $(document).on('click', '#bank_search_results .bank-search-item', function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    selectBank($(this));
+  });
+
+  // Закрытие списка при клике вне компонента
+  $(document).on('click', function (e) {
+    if (
+      !$(e.target).closest('.bank-search-wrapper').length &&
+      !$(e.target).is('#bank_search_input')
+    ) {
+      hideBankDropdown();
+    }
+  });
+
+  // Hover-эффект для элементов списка
+  $(document).on('mouseenter', '#bank_search_results .bank-search-item', function () {
+    $('#bank_search_results .bank-search-item').removeClass('bank-search-item--active');
+    $(this).addClass('bank-search-item--active');
+    bankActiveIndex = $(this).index();
+  });
+
+  // ============================================================
+  // Конец компонента поиска банков
+  // ============================================================
+
   /**
    * Обработчик кнопки "Изменить данные"
    */
@@ -341,9 +585,10 @@ jQuery(document).ready(function ($) {
     const payoutMethodId = $('#payout_method_id').val();
     const payoutAccount = $('#payout_account').val();
     const bankId = $('#bank_id').val();
+    const bankInputVal = $('#bank_search_input').val().trim();
     const nonce = cashback_ajax.nonce;
 
-    console.log('Form values:', { payoutMethodId, payoutAccount, bankId });
+    console.log('Form values:', { payoutMethodId, payoutAccount, bankId, bankInputVal });
 
     // Валидация
     if (!payoutMethodId || payoutMethodId === '' || payoutMethodId === '0') {
@@ -362,16 +607,41 @@ jQuery(document).ready(function ($) {
       return;
     }
 
+    // Валидация банка: проверяем что пользователь выбрал из списка
     if (!bankId || bankId === '' || bankId === '0' || parseInt(bankId, 10) <= 0) {
+      // Если введено название но не выбрано из списка
+      if (bankInputVal.length > 0 && !bankSelectedFromList) {
+        $('#bank_search_error').text('Вы не выбрали банк из списка').show();
+        $('#bank_search_input').addClass('bank-search-input--error');
+        $('#payout_settings_message')
+          .removeClass('success')
+          .addClass('error')
+          .text('Вы не выбрали банк из списка');
+      } else {
+        $('#payout_settings_message')
+          .removeClass('success')
+          .addClass('error')
+          .text('Пожалуйста, выберите банк');
+      }
+      return;
+    }
+
+    // Дополнительная проверка: если bank_id есть, но bankSelectedFromList = false
+    // и текст в поле отличается от выбранного — значит пользователь изменил текст после выбора
+    if (bankInputVal.length > 0 && !bankSelectedFromList) {
+      $('#bank_search_error').text('Вы не выбрали банк из списка').show();
+      $('#bank_search_input').addClass('bank-search-input--error');
       $('#payout_settings_message')
         .removeClass('success')
         .addClass('error')
-        .text('Пожалуйста, выберите банк');
+        .text('Вы не выбрали банк из списка');
       return;
     }
 
     // Очищаем предыдущие сообщения
     $('#payout_settings_message').text('').removeClass('success error');
+    $('#bank_search_error').text('').hide();
+    $('#bank_search_input').removeClass('bank-search-input--error');
 
     console.log('Sending AJAX request to:', cashback_ajax.ajax_url);
 

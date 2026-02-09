@@ -56,23 +56,54 @@ class Cashback_Bank_Management_Admin
 
         global $wpdb;
 
+        // Поисковый запрос
+        $search_query = isset($_GET['bank_search']) ? sanitize_text_field(wp_unslash($_GET['bank_search'])) : '';
+        $is_search = !empty($search_query);
+
         // Пагинация: настройки
         $per_page = 10;
         $current_page = isset($_GET['paged']) ? max(1, intval($_GET['paged'])) : 1;
         $offset = ($current_page - 1) * $per_page;
 
-        // Общее количество банков
-        $total_banks = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$this->table_name}");
+        if ($is_search) {
+            $like_pattern = '%' . $wpdb->esc_like($search_query) . '%';
 
-        // Получаем банки с учётом пагинации
-        $banks = $wpdb->get_results(
-            $wpdb->prepare(
-                "SELECT * FROM {$this->table_name} ORDER BY sort_order ASC, name ASC LIMIT %d OFFSET %d",
-                $per_page,
-                $offset
-            ),
-            ARRAY_A
-        );
+            // Общее количество банков по поиску
+            $total_banks = (int) $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT COUNT(*) FROM {$this->table_name} WHERE name LIKE %s OR short_name LIKE %s OR bank_code LIKE %s",
+                    $like_pattern,
+                    $like_pattern,
+                    $like_pattern
+                )
+            );
+
+            // Получаем банки с учётом поиска и пагинации
+            $banks = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT * FROM {$this->table_name} WHERE name LIKE %s OR short_name LIKE %s OR bank_code LIKE %s ORDER BY sort_order ASC, name ASC LIMIT %d OFFSET %d",
+                    $like_pattern,
+                    $like_pattern,
+                    $like_pattern,
+                    $per_page,
+                    $offset
+                ),
+                ARRAY_A
+            );
+        } else {
+            // Общее количество банков
+            $total_banks = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$this->table_name}");
+
+            // Получаем банки с учётом пагинации
+            $banks = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT * FROM {$this->table_name} ORDER BY sort_order ASC, name ASC LIMIT %d OFFSET %d",
+                    $per_page,
+                    $offset
+                ),
+                ARRAY_A
+            );
+        }
 
         // Вычисляем общее количество страниц
         $total_pages = (int) ceil($total_banks / $per_page);
@@ -136,6 +167,26 @@ class Cashback_Bank_Management_Admin
             <!-- Таблица существующих банков -->
             <h2 class="title">Существующие банки</h2>
 
+            <!-- Форма поиска по банкам -->
+            <div class="search-box" style="margin-bottom: 15px;">
+                <form method="get" action="<?php echo esc_url(admin_url('admin.php')); ?>">
+                    <input type="hidden" name="page" value="cashback-banks" />
+                    <label class="screen-reader-text" for="bank-search-input">Поиск банков:</label>
+                    <input type="search" id="bank-search-input" name="bank_search"
+                        value="<?php echo esc_attr($search_query); ?>"
+                        placeholder="Введите название банка или его часть" style="min-width: 300px;" />
+                    <input type="submit" id="search-submit" class="button" value="Поиск" />
+                    <?php if ($is_search): ?>
+                        <a href="<?php echo esc_url(admin_url('admin.php?page=cashback-banks')); ?>" class="button">Сбросить</a>
+                    <?php endif; ?>
+                </form>
+            </div>
+
+            <?php if ($is_search): ?>
+                <p>Результаты поиска по запросу: <strong>&laquo;<?php echo esc_html($search_query); ?>&raquo;</strong>
+                    — найдено: <?php echo esc_html((string) $total_banks); ?></p>
+            <?php endif; ?>
+
             <div class="wp-list-table-wrapper">
                 <table class="wp-list-table widefat fixed striped">
                     <thead>
@@ -171,7 +222,13 @@ class Cashback_Bank_Management_Admin
                             <?php endforeach; ?>
                         <?php else: ?>
                             <tr>
-                                <td colspan="6">Нет доступных банков.</td>
+                                <td colspan="6">
+                                    <?php if ($is_search): ?>
+                                        По запросу &laquo;<?php echo esc_html($search_query); ?>&raquo; банки не найдены.
+                                    <?php else: ?>
+                                        Нет доступных банков.
+                                    <?php endif; ?>
+                                </td>
                             </tr>
                         <?php endif; ?>
                     </tbody>
@@ -192,8 +249,12 @@ class Cashback_Bank_Management_Admin
                             ?>
                         </span>
                         <?php
+                        $pagination_base_args = ['page' => 'cashback-banks', 'paged' => '%#%'];
+                        if ($is_search) {
+                            $pagination_base_args['bank_search'] = $search_query;
+                        }
                         $pagination_links = paginate_links([
-                            'base'      => add_query_arg('paged', '%#%'),
+                            'base'      => add_query_arg($pagination_base_args, admin_url('admin.php')),
                             'format'    => '',
                             'prev_text' => '&laquo;',
                             'next_text' => '&raquo;',

@@ -241,7 +241,9 @@ class Mariadb_Plugin
             `created_at` datetime DEFAULT current_timestamp(),
             `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp(),
             PRIMARY KEY (`id`),
-            UNIQUE KEY `uniq_bank_code` (`bank_code`)
+            UNIQUE KEY `uniq_bank_code` (`bank_code`),
+            KEY `idx_active_sort_name` (`is_active`,`sort_order`,`name`) COMMENT 'Оптимизация выборки активных банков с сортировкой',
+            KEY `idx_name_active` (`name`,`is_active`) COMMENT 'Оптимизация поиска банков по названию'
         ) ENGINE=InnoDB {$charset_collate} COMMENT='Список банков для выплат';";
 
         require_once(ABSPATH . 'wp-admin/includes/upgrade.php');

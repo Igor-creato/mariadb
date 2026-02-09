@@ -513,6 +513,115 @@ button#save_payout_details_btn:hover {
     }
 }
 
+/* ============================================================
+   Компонент поиска банков — autocomplete / combobox
+   ============================================================ */
+
+/* Обёртка combobox */
+.bank-search-wrapper {
+    position: relative;
+    width: 100%;
+}
+
+/* Поле ввода поиска */
+#bank_search_input {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 14px;
+    box-sizing: border-box;
+    background-color: #fff;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+#bank_search_input:focus {
+    border-color: #0073aa;
+    box-shadow: 0 0 0 1px #0073aa;
+    outline: none;
+}
+
+/* Ошибка ввода */
+#bank_search_input.bank-search-input--error,
+#bank_search_input.bank-search-input--error:focus {
+    border-color: #dc3232;
+    box-shadow: 0 0 0 1px #dc3232;
+}
+
+/* Выпадающий список банков */
+.bank-search-results {
+    display: none;
+    position: absolute;
+    z-index: 1000;
+    top: 100%;
+    left: 0;
+    right: 0;
+    max-height: 240px;
+    overflow-y: auto;
+    margin: 2px 0 0;
+    padding: 0;
+    list-style: none;
+    background-color: #fff;
+    border: 1px solid #ccc;
+    border-radius: 0 0 4px 4px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* Видимое состояние */
+.bank-search-results.bank-search-results--visible {
+    display: block;
+}
+
+/* Элемент списка */
+.bank-search-item {
+    padding: 10px 12px;
+    cursor: pointer;
+    font-size: 14px;
+    color: #333;
+    border-bottom: 1px solid #f0f0f0;
+    transition: background-color 0.15s ease;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.bank-search-item:last-child {
+    border-bottom: none;
+}
+
+/* Hover / активный (клавиатура) */
+.bank-search-item:hover,
+.bank-search-item.bank-search-item--active {
+    background-color: #f0f7fc;
+    color: #0073aa;
+}
+
+/* Выбранный элемент */
+.bank-search-item[aria-selected="true"] {
+    font-weight: 600;
+    background-color: #e8f4fd;
+}
+
+/* Нет результатов */
+.bank-search-no-results {
+    padding: 10px 12px;
+    font-size: 14px;
+    color: #999;
+    font-style: italic;
+    cursor: default;
+}
+
+/* Сообщение об ошибке валидации */
+.bank-search-error {
+    display: none;
+    margin-top: 4px;
+    padding: 4px 8px;
+    font-size: 13px;
+    color: #dc3232;
+    background-color: #ffeae9;
+    border-radius: 3px;
+}
+
 /* Responsive дизайн */
 @media (max-width: 768px) {
     .payout-settings-display strong {
@@ -527,6 +636,48 @@ button#save_payout_details_btn:hover {
         display: block;
         width: 100%;
     }
+
+    /* Мобильная адаптация банковского поиска */
+    .bank-search-results {
+        max-height: 200px;
+    }
+
+    .bank-search-item {
+        padding: 12px 14px;
+        font-size: 16px; /* Увеличиваем для удобства тача */
+        min-height: 44px; /* Минимальный размер для touch targets по WCAG */
+        display: flex;
+        align-items: center;
+    }
+
+    #bank_search_input {
+        font-size: 16px; /* Предотвращаем zoom на iOS */
+        min-height: 44px;
+    }
+}
+
+/* Маленькие экраны */
+@media (max-width: 480px) {
+    .bank-search-results {
+        max-height: 180px;
+    }
+
+    .bank-search-item {
+        padding: 14px 12px;
+    }
+}
+
+/* Screen readers: скрытый текст для a11y */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
 }
 
 
