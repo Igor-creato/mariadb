@@ -437,6 +437,20 @@ class CashbackWithdrawal
         // Проверяем, есть ли у пользователя сохраненные настройки
         $has_settings = $this->has_payout_settings($user_id);
 
+        // Проверяем активность сохраненных платежных данных
+        $settings_inactive = false;
+        $payout_method_is_active = true;
+        $bank_is_active = true;
+
+        if ($has_settings) {
+            $payout_method_is_active = $this->is_payout_method_active($payout_method_id);
+            $bank_is_active = $this->is_bank_active($bank_id);
+
+            if (!$payout_method_is_active || !$bank_is_active) {
+                $settings_inactive = true;
+            }
+        }
+
         // Получаем доступные способы вывода и банки
         $payout_methods = $this->get_payout_methods();
         $banks = $this->get_banks();
@@ -453,8 +467,15 @@ class CashbackWithdrawal
         echo '<h3>' . __('Настройки вывода кэшбэка', 'woocommerce') . '</h3>';
         echo '<div id="payout_settings_message"></div>';
 
-        if ($has_settings) {
-            // Если настройки есть - показываем их в виде текста
+        // Предупреждение о неактивных платежных данных
+        if ($settings_inactive) {
+            echo '<div class="woocommerce-message woocommerce-error cashback-inactive-warning" role="alert">';
+            echo esc_html__('Измените Ваши платежные данные, выплата по Вашим старым данным сейчас не производится', 'woocommerce');
+            echo '</div>';
+        }
+
+        if ($has_settings && !$settings_inactive) {
+            // Если настройки есть и активны - показываем их в виде текста
             $method_name = $this->get_payout_method_name($payout_method_id);
             $bank_name = $this->get_bank_name($bank_id);
 
@@ -477,8 +498,8 @@ class CashbackWithdrawal
             echo '</div>';
         }
 
-        // Форма редактирования (скрыта, если настройки уже есть)
-        $form_class = $has_settings ? 'payout-settings-form-hidden' : '';
+        // Форма редактирования (скрыта, если настройки активны; показана, если неактивны или нет настроек)
+        $form_class = ($has_settings && !$settings_inactive) ? 'payout-settings-form-hidden' : '';
         echo '<div id="payout_settings_form" class="payout-settings-form ' . $form_class . '">';
         echo '<form id="payout-settings-form">';
 
@@ -523,7 +544,7 @@ class CashbackWithdrawal
 
         echo '<p class="woocommerce-form-row form-row">';
         echo '<button type="button" class="woocommerce-Button button" id="save_payout_settings_btn">' . __('Сохранить настройки', 'woocommerce') . '</button>';
-        if ($has_settings) {
+        if ($has_settings && !$settings_inactive) {
             echo ' <button type="button" class="woocommerce-Button button button-secondary" id="cancel_edit_payout_settings_btn">' . __('Отменить', 'woocommerce') . '</button>';
         }
         echo '</p>';
@@ -598,6 +619,30 @@ class CashbackWithdrawal
         if (empty($payout_method) || empty($payout_account)) {
             delete_transient($transient_key); // Снимаем блокировку
             wp_send_json_error(__('Для вывода средств пожалуйста, заполните способ вывода и номер счета в вашем профиле.', 'woocommerce'));
+            return;
+        }
+
+        // === 3.1. Check if payout method and bank are active ===
+        $user_payout_method_id = $this->get_user_payout_method_id($user_id);
+        $user_bank_id = $this->get_user_bank_id($user_id);
+
+        if ($user_payout_method_id > 0 && !$this->is_payout_method_active($user_payout_method_id)) {
+            $method_name = $this->get_payout_method_name($user_payout_method_id);
+            delete_transient($transient_key); // Снимаем блокировку
+            wp_send_json_error(array(
+                'message' => sprintf(__('Через %s сейчас выплаты не производятся, выберите другую', 'woocommerce'), $method_name),
+                'show_form' => true
+            ));
+            return;
+        }
+
+        if ($user_bank_id > 0 && !$this->is_bank_active($user_bank_id)) {
+            $bank_name = $this->get_bank_name($user_bank_id);
+            delete_transient($transient_key); // Снимаем блокировку
+            wp_send_json_error(array(
+                'message' => sprintf(__('Через %s сейчас выплаты не производятся, выберите другой', 'woocommerce'), $bank_name),
+                'show_form' => true
+            ));
             return;
         }
 
@@ -804,7 +849,7 @@ class CashbackWithdrawal
                 'cashback-withdrawal-styles',
                 plugins_url('assets/css/frontend.css', __FILE__),
                 array(),
-                '1.1.0'
+                '1.2.0'
             );
 
             // Подключаем скрипты для обработки формы вывода
@@ -812,7 +857,7 @@ class CashbackWithdrawal
                 'cashback-withdrawal-js',
                 plugins_url('assets/js/frontend.js', __FILE__),
                 array('jquery'),
-                '1.1.0',
+                '1.2.0',
                 true
             );
 
@@ -938,6 +983,48 @@ class CashbackWithdrawal
         );
 
         return !empty($bank);
+    }
+
+    /**
+     * Check if a payout method is active by ID
+     *
+     * @param int $method_id
+     * @return bool
+     */
+    private function is_payout_method_active(int $method_id): bool
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'cashback_payout_methods';
+        $is_active = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT is_active FROM {$table_name} WHERE id = %d",
+                $method_id
+            )
+        );
+
+        return (int) $is_active === 1;
+    }
+
+    /**
+     * Check if a bank is active by ID
+     *
+     * @param int $bank_id
+     * @return bool
+     */
+    private function is_bank_active(int $bank_id): bool
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'cashback_banks';
+        $is_active = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT is_active FROM {$table_name} WHERE id = %d",
+                $bank_id
+            )
+        );
+
+        return (int) $is_active === 1;
     }
 
     /**

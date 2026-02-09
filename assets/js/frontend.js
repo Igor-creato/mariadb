@@ -237,8 +237,22 @@ jQuery(document).ready(function ($) {
           // Обновляем баланс пользователя через AJAX
           updateBalanceDisplay();
         } else {
-          // Ошибка
-          $('#withdrawal-messages').html('<div class="error-message">' + response.data + '</div>');
+          // Ошибка — поддержка как строки, так и объекта с message и show_form
+          var errorMsg =
+            typeof response.data === 'object' && response.data !== null
+              ? response.data.message
+              : response.data;
+          $('#withdrawal-messages').html('<div class="error-message">' + errorMsg + '</div>');
+
+          // Если сервер указал показать форму настроек (платёжная система или банк неактивны)
+          if (
+            typeof response.data === 'object' &&
+            response.data !== null &&
+            response.data.show_form
+          ) {
+            $('#payout_settings_display').hide();
+            $('#payout_settings_form').removeClass('payout-settings-form-hidden').show();
+          }
         }
       },
       error: function (xhr, status, error) {
