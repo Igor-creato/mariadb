@@ -78,6 +78,13 @@ class Cashback_Payouts_Admin
             return;
         }
 
+        wp_enqueue_style(
+            'cashback-admin-payouts-css',
+            plugins_url('../assets/css/admin.css', __FILE__),
+            [],
+            '1.0.1'
+        );
+
         wp_enqueue_script(
             'cashback-admin-payouts',
             plugins_url('../assets/js/admin-payouts.js', __FILE__),
@@ -313,33 +320,49 @@ class Cashback_Payouts_Admin
                     <tbody id="payouts-tbody">
                         <?php if (!empty($payouts)): ?>
                             <?php foreach ($payouts as $payout): ?>
+                                <?php
+                                // Проверяем активность платежной системы и банка
+                                $payout_method_info = $this->get_payout_method_info_by_slug($payout['payout_method']);
+                                $bank_info = $this->get_bank_info_by_code($payout['provider'] ?? '');
+                                $is_actionable_status = in_array($payout['status'], ['waiting', 'processing', 'needs_retry'], true);
+                                $method_inactive = !$payout_method_info['is_active'];
+                                $bank_inactive = !$bank_info['is_active'];
+                                ?>
                                 <tr data-payout-id="<?php echo esc_attr($payout['id']); ?>">
                                     <td><?php echo esc_html($payout['user_id']); ?></td>
                                     <td><?php echo esc_html(number_format(floatval($payout['total_amount']), 2, '.', ' ')); ?></td>
-                                    <td><?php echo esc_html($this->get_payout_method_name_by_slug($payout['payout_method'])); ?></td>
-                                    <td><?php echo esc_html($payout['payout_account']); ?></td>
-                                    <td>
-                                        <?php echo esc_html($this->get_bank_name_by_code($payout['provider'] ?? '')); ?>
-                                    </td>
-                                    <td class="edit-field" data-field="provider_payout_id">
-                                        <?php echo esc_html($payout['provider_payout_id'] ?? ''); ?>
-                                    </td>
-                                    <td class="edit-field" data-field="attempts">
-                                        <?php echo esc_html($payout['attempts']); ?>
-                                    </td>
-                                    <td class="edit-field" data-field="fail_reason">
-                                        <?php echo esc_html($payout['fail_reason'] ?? ''); ?>
-                                    </td>
-                                    <td class="edit-field" data-field="status" title="<?php echo esc_attr($this->get_admin_status_description($payout['status'])); ?>">
-                                        <?php echo esc_html($this->get_admin_status_label($payout['status'])); ?>
-                                    </td>
-                                    <td><?php echo esc_html(date('Y-m-d H:i', strtotime($payout['created_at']))); ?></td>
-                                    <td><?php echo esc_html(!empty($payout['updated_at']) ? date('Y-m-d H:i', strtotime($payout['updated_at'])) : ''); ?></td>
-                                    <td>
-                                        <button class="button button-secondary edit-btn"><?php echo esc_html__('Редактировать', 'cashback-plugin'); ?></button>
-                                        <button class="button button-primary save-btn" style="display:none;"><?php echo esc_html__('Сохранить', 'cashback-plugin'); ?></button>
-                                        <button class="button button-default cancel-btn" style="display:none;"><?php echo esc_html__('Отмена', 'cashback-plugin'); ?></button>
-                                    </td>
+                                    <td<?php if ($method_inactive && $is_actionable_status): ?> class="cashback-inactive-warning" title="<?php echo esc_attr__('Платежная система деактивирована', 'cashback-plugin'); ?>" <?php endif; ?>>
+                                        <?php echo esc_html($payout_method_info['name']); ?>
+                                        <?php if ($method_inactive && $is_actionable_status): ?>
+                                            <span class="cashback-inactive-badge"><?php echo esc_html__('(неактивна)', 'cashback-plugin'); ?></span>
+                                        <?php endif; ?>
+                                        </td>
+                                        <td><?php echo esc_html($payout['payout_account']); ?></td>
+                                        <td<?php if ($bank_inactive && $is_actionable_status && !empty($bank_info['name'])): ?> class="cashback-inactive-warning" title="<?php echo esc_attr__('Банк деактивирован', 'cashback-plugin'); ?>" <?php endif; ?>>
+                                            <?php echo esc_html($bank_info['name']); ?>
+                                            <?php if ($bank_inactive && $is_actionable_status && !empty($bank_info['name'])): ?>
+                                                <span class="cashback-inactive-badge"><?php echo esc_html__('(неактивен)', 'cashback-plugin'); ?></span>
+                                            <?php endif; ?>
+                                            </td>
+                                            <td class="edit-field" data-field="provider_payout_id">
+                                                <?php echo esc_html($payout['provider_payout_id'] ?? ''); ?>
+                                            </td>
+                                            <td class="edit-field" data-field="attempts">
+                                                <?php echo esc_html($payout['attempts']); ?>
+                                            </td>
+                                            <td class="edit-field" data-field="fail_reason">
+                                                <?php echo esc_html($payout['fail_reason'] ?? ''); ?>
+                                            </td>
+                                            <td class="edit-field" data-field="status" title="<?php echo esc_attr($this->get_admin_status_description($payout['status'])); ?>">
+                                                <?php echo esc_html($this->get_admin_status_label($payout['status'])); ?>
+                                            </td>
+                                            <td><?php echo esc_html(date('Y-m-d H:i', strtotime($payout['created_at']))); ?></td>
+                                            <td><?php echo esc_html(!empty($payout['updated_at']) ? date('Y-m-d H:i', strtotime($payout['updated_at'])) : ''); ?></td>
+                                            <td>
+                                                <button class="button button-secondary edit-btn"><?php echo esc_html__('Редактировать', 'cashback-plugin'); ?></button>
+                                                <button class="button button-primary save-btn" style="display:none;"><?php echo esc_html__('Сохранить', 'cashback-plugin'); ?></button>
+                                                <button class="button button-default cancel-btn" style="display:none;"><?php echo esc_html__('Отмена', 'cashback-plugin'); ?></button>
+                                            </td>
                                 </tr>
                             <?php endforeach; ?>
                         <?php else: ?>
@@ -981,17 +1004,40 @@ class Cashback_Payouts_Admin
      */
     private function get_payout_method_name_by_slug(string $slug): string
     {
+        $info = $this->get_payout_method_info_by_slug($slug);
+        return $info['name'];
+    }
+
+    /**
+     * Получить информацию о платежной системе по slug (название и статус активности)
+     *
+     * @param string $slug Slug платежной системы
+     * @return array{name: string, is_active: bool} Название и статус активности
+     */
+    private function get_payout_method_info_by_slug(string $slug): array
+    {
         global $wpdb;
 
         $table_name = $wpdb->prefix . 'cashback_payout_methods';
-        $method_name = $wpdb->get_var(
+        $row = $wpdb->get_row(
             $wpdb->prepare(
-                "SELECT name FROM {$table_name} WHERE slug = %s",
+                "SELECT name, is_active FROM {$table_name} WHERE slug = %s",
                 $slug
-            )
+            ),
+            ARRAY_A
         );
 
-        return $method_name ?: $slug;
+        if ($row) {
+            return [
+                'name' => $row['name'],
+                'is_active' => (int) $row['is_active'] === 1,
+            ];
+        }
+
+        return [
+            'name' => $slug,
+            'is_active' => false,
+        ];
     }
 
     /**
@@ -1002,21 +1048,47 @@ class Cashback_Payouts_Admin
      */
     private function get_bank_name_by_code(string $bank_code): string
     {
+        $info = $this->get_bank_info_by_code($bank_code);
+        return $info['name'];
+    }
+
+    /**
+     * Получить информацию о банке по коду (название и статус активности)
+     *
+     * @param string $bank_code Код банка
+     * @return array{name: string, is_active: bool} Название и статус активности
+     */
+    private function get_bank_info_by_code(string $bank_code): array
+    {
         global $wpdb;
 
         if (empty($bank_code)) {
-            return '';
+            return [
+                'name' => '',
+                'is_active' => true,
+            ];
         }
 
         $table_name = $wpdb->prefix . 'cashback_banks';
-        $bank_name = $wpdb->get_var(
+        $row = $wpdb->get_row(
             $wpdb->prepare(
-                "SELECT name FROM {$table_name} WHERE bank_code = %s",
+                "SELECT name, is_active FROM {$table_name} WHERE bank_code = %s",
                 $bank_code
-            )
+            ),
+            ARRAY_A
         );
 
-        return $bank_name ?: $bank_code;
+        if ($row) {
+            return [
+                'name' => $row['name'],
+                'is_active' => (int) $row['is_active'] === 1,
+            ];
+        }
+
+        return [
+            'name' => $bank_code,
+            'is_active' => false,
+        ];
     }
 
     /**
