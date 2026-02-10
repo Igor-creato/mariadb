@@ -60,41 +60,58 @@ class Cashback_Bank_Management_Admin
         $search_query = isset($_GET['bank_search']) ? sanitize_text_field(wp_unslash($_GET['bank_search'])) : '';
         $is_search = !empty($search_query);
 
+        // Фильтр по статусу is_active
+        $filter_status = isset($_GET['filter_status']) ? sanitize_text_field(wp_unslash($_GET['filter_status'])) : '';
+        $is_filtered = ($filter_status !== '' && $filter_status !== 'all');
+
         // Пагинация: настройки
         $per_page = 10;
         $current_page = isset($_GET['paged']) ? max(1, intval($_GET['paged'])) : 1;
         $offset = ($current_page - 1) * $per_page;
 
+        // Формируем WHERE-условия
+        $where_conditions = [];
+        $where_values = [];
+
         if ($is_search) {
             $like_pattern = '%' . $wpdb->esc_like($search_query) . '%';
+            $where_conditions[] = "(name LIKE %s OR short_name LIKE %s OR bank_code LIKE %s)";
+            $where_values[] = $like_pattern;
+            $where_values[] = $like_pattern;
+            $where_values[] = $like_pattern;
+        }
 
-            // Общее количество банков по поиску
+        if ($is_filtered) {
+            $where_conditions[] = "is_active = %d";
+            $where_values[] = intval($filter_status);
+        }
+
+        $where_clause = '';
+        if (!empty($where_conditions)) {
+            $where_clause = ' WHERE ' . implode(' AND ', $where_conditions);
+        }
+
+        // Общее количество банков
+        if (!empty($where_values)) {
             $total_banks = (int) $wpdb->get_var(
                 $wpdb->prepare(
-                    "SELECT COUNT(*) FROM {$this->table_name} WHERE name LIKE %s OR short_name LIKE %s OR bank_code LIKE %s",
-                    $like_pattern,
-                    $like_pattern,
-                    $like_pattern
+                    "SELECT COUNT(*) FROM {$this->table_name}{$where_clause}",
+                    ...$where_values
                 )
             );
 
-            // Получаем банки с учётом поиска и пагинации
+            // Получаем банки с учётом фильтров и пагинации
+            $query_values = array_merge($where_values, [$per_page, $offset]);
             $banks = $wpdb->get_results(
                 $wpdb->prepare(
-                    "SELECT * FROM {$this->table_name} WHERE name LIKE %s OR short_name LIKE %s OR bank_code LIKE %s ORDER BY sort_order ASC, name ASC LIMIT %d OFFSET %d",
-                    $like_pattern,
-                    $like_pattern,
-                    $like_pattern,
-                    $per_page,
-                    $offset
+                    "SELECT * FROM {$this->table_name}{$where_clause} ORDER BY sort_order ASC, name ASC LIMIT %d OFFSET %d",
+                    ...$query_values
                 ),
                 ARRAY_A
             );
         } else {
-            // Общее количество банков
             $total_banks = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$this->table_name}");
 
-            // Получаем банки с учётом пагинации
             $banks = $wpdb->get_results(
                 $wpdb->prepare(
                     "SELECT * FROM {$this->table_name} ORDER BY sort_order ASC, name ASC LIMIT %d OFFSET %d",
@@ -116,8 +133,6 @@ class Cashback_Bank_Management_Admin
                 $message = '<div class="notice notice-success is-dismissible"><p>Банк успешно добавлен.</p></div>';
             } elseif ($msg_type === 'updated') {
                 $message = '<div class="notice notice-success is-dismissible"><p>Банк успешно обновлен.</p></div>';
-            } elseif ($msg_type === 'deleted') {
-                $message = '<div class="notice notice-success is-dismissible"><p>Банк успешно удален.</p></div>';
             }
         }
 ?>
@@ -167,16 +182,22 @@ class Cashback_Bank_Management_Admin
             <!-- Таблица существующих банков -->
             <h2 class="title">Существующие банки</h2>
 
-            <!-- Форма поиска по банкам -->
+            <!-- Фильтр по статусу и поиск по банкам -->
             <div class="search-box" style="margin-bottom: 15px;">
                 <form method="get" action="<?php echo esc_url(admin_url('admin.php')); ?>">
                     <input type="hidden" name="page" value="cashback-banks" />
+                    <label for="filter-status" class="screen-reader-text">Фильтр по статусу:</label>
+                    <select id="filter-status" name="filter_status">
+                        <option value="all" <?php selected($filter_status, ''); ?><?php selected($filter_status, 'all'); ?>>Все статусы</option>
+                        <option value="1" <?php selected($filter_status, '1'); ?>>Активные</option>
+                        <option value="0" <?php selected($filter_status, '0'); ?>>Не активные</option>
+                    </select>
                     <label class="screen-reader-text" for="bank-search-input">Поиск банков:</label>
                     <input type="search" id="bank-search-input" name="bank_search"
                         value="<?php echo esc_attr($search_query); ?>"
                         placeholder="Введите название банка или его часть" style="min-width: 300px;" />
-                    <input type="submit" id="search-submit" class="button" value="Поиск" />
-                    <?php if ($is_search): ?>
+                    <input type="submit" id="search-submit" class="button" value="Фильтровать" />
+                    <?php if ($is_filtered || $is_search): ?>
                         <a href="<?php echo esc_url(admin_url('admin.php?page=cashback-banks')); ?>" class="button">Сбросить</a>
                     <?php endif; ?>
                 </form>
@@ -214,9 +235,6 @@ class Cashback_Bank_Management_Admin
                                         <button class="button button-secondary edit-btn">Редактировать</button>
                                         <button class="button button-primary save-btn" style="display:none;">Сохранить</button>
                                         <button class="button button-default cancel-btn" style="display:none;">Отмена</button>
-                                        <a href="<?php echo wp_nonce_url(admin_url('admin-post.php?action=delete_bank&id=' . $bank['id']), 'delete_bank_' . $bank['id']); ?>"
-                                            class="button button-danger delete-btn"
-                                            onclick="return confirm('Вы уверены, что хотите удалить этот банк?')">Удалить</a>
                                     </td>
                                 </tr>
                             <?php endforeach; ?>
@@ -252,6 +270,9 @@ class Cashback_Bank_Management_Admin
                         $pagination_base_args = ['page' => 'cashback-banks', 'paged' => '%#%'];
                         if ($is_search) {
                             $pagination_base_args['bank_search'] = $search_query;
+                        }
+                        if ($is_filtered) {
+                            $pagination_base_args['filter_status'] = $filter_status;
                         }
                         $pagination_links = paginate_links([
                             'base'      => add_query_arg($pagination_base_args, admin_url('admin.php')),
@@ -546,31 +567,3 @@ class Cashback_Bank_Management_Admin
 
 // Инициализируем класс
 $bank_management_admin = new Cashback_Bank_Management_Admin();
-
-// Обработка удаления банка (через admin-post.php)
-if (isset($_GET['action']) && $_GET['action'] === 'delete_bank' && isset($_GET['id'])) {
-    if (!wp_verify_nonce($_GET['_wpnonce'], 'delete_bank_' . intval($_GET['id']))) {
-        wp_die('Неверный nonce.');
-    }
-
-    if (!current_user_can('manage_options')) {
-        wp_die('Недостаточно прав для выполнения этого действия.');
-    }
-
-    global $wpdb;
-    $id = intval($_GET['id']);
-
-    $result = $wpdb->delete(
-        $wpdb->prefix . 'cashback_banks',
-        ['id' => $id],
-        ['%d']
-    );
-
-    if ($result !== false) {
-        wp_redirect(add_query_arg(['page' => 'cashback-banks', 'message' => 'deleted'], admin_url('admin.php')));
-        exit;
-    } else {
-        wp_redirect(add_query_arg(['page' => 'cashback-banks', 'error' => 'delete_failed'], admin_url('admin.php')));
-        exit;
-    }
-}

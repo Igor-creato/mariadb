@@ -89,9 +89,20 @@ class Cashback_Payout_Methods_Admin
 
         global $wpdb;
 
-        // Получаем все способы выплаты
+        // Фильтр по статусу is_active
+        $filter_status = isset($_GET['filter_status']) ? sanitize_text_field(wp_unslash($_GET['filter_status'])) : '';
+        $is_filtered = ($filter_status !== '' && $filter_status !== 'all');
+
+        // Формируем WHERE-условие для фильтра
+        $where_clause = '';
+        if ($is_filtered) {
+            $filter_value = intval($filter_status);
+            $where_clause = $wpdb->prepare(" WHERE is_active = %d", $filter_value);
+        }
+
+        // Получаем все способы выплаты с учётом фильтра
         $payout_methods = $wpdb->get_results(
-            "SELECT * FROM {$this->table_name} ORDER BY sort_order ASC",
+            "SELECT * FROM {$this->table_name}{$where_clause} ORDER BY sort_order ASC",
             ARRAY_A
         );
 
@@ -102,8 +113,6 @@ class Cashback_Payout_Methods_Admin
                 $message = '<div class="notice notice-success is-dismissible"><p>Способ выплаты успешно добавлен.</p></div>';
             } elseif ($_GET['message'] === 'updated') {
                 $message = '<div class="notice notice-success is-dismissible"><p>Способ выплаты успешно обновлен.</p></div>';
-            } elseif ($_GET['message'] === 'deleted') {
-                $message = '<div class="notice notice-success is-dismissible"><p>Способ выплаты успешно удален.</p></div>';
             }
         }
 
@@ -150,6 +159,23 @@ class Cashback_Payout_Methods_Admin
                 <!-- Таблица существующих способов выплаты -->
                 <h2 class="title">Существующие способы выплаты</h2>
 
+                <!-- Фильтр по статусу активности -->
+                <div class="search-box" style="margin-bottom: 15px;">
+                    <form method="get" action="<?php echo esc_url(admin_url('admin.php')); ?>">
+                        <input type="hidden" name="page" value="cashback-payout-methods" />
+                        <label for="filter-status" class="screen-reader-text">Фильтр по статусу:</label>
+                        <select id="filter-status" name="filter_status">
+                            <option value="all" <?php selected($filter_status, ''); ?><?php selected($filter_status, 'all'); ?>>Все статусы</option>
+                            <option value="1" <?php selected($filter_status, '1'); ?>>Активные</option>
+                            <option value="0" <?php selected($filter_status, '0'); ?>>Не активные</option>
+                        </select>
+                        <input type="submit" class="button" value="Фильтровать" />
+                        <?php if ($is_filtered): ?>
+                            <a href="<?php echo esc_url(admin_url('admin.php?page=cashback-payout-methods')); ?>" class="button">Сбросить</a>
+                        <?php endif; ?>
+                    </form>
+                </div>
+
                 <div class="wp-list-table-wrapper">
                     <table class="wp-list-table widefat fixed striped">
                         <thead>
@@ -175,9 +201,6 @@ class Cashback_Payout_Methods_Admin
                                             <button class="button button-secondary edit-btn">Редактировать</button>
                                             <button class="button button-primary save-btn" style="display:none;">Сохранить</button>
                                             <button class="button button-default cancel-btn" style="display:none;">Отмена</button>
-                                            <a href="<?php echo wp_nonce_url(admin_url('admin-post.php?action=delete_payout_method&id=' . $method['id']), 'delete_payout_method_' . $method['id']); ?>"
-                                                class="button button-danger delete-btn"
-                                                onclick="return confirm('Вы уверены, что хотите удалить этот способ выплаты?')">Удалить</a>
                                         </td>
                                     </tr>
                                 <?php endforeach; ?>
@@ -434,31 +457,3 @@ class Cashback_Payout_Methods_Admin
 
 // Инициализируем класс
 $payout_methods_admin = new Cashback_Payout_Methods_Admin();
-
-// Обработка удаления способа выплаты (через admin-post.php)
-if (isset($_GET['action']) && $_GET['action'] === 'delete_payout_method' && isset($_GET['id'])) {
-    if (!wp_verify_nonce($_GET['_wpnonce'], 'delete_payout_method_' . intval($_GET['id']))) {
-        wp_die('Неверный nonce.');
-    }
-
-    if (!current_user_can('manage_options')) {
-        wp_die('Недостаточно прав для выполнения этого действия.');
-    }
-
-    global $wpdb;
-    $id = intval($_GET['id']);
-
-    $result = $wpdb->delete(
-        $wpdb->prefix . 'cashback_payout_methods',
-        ['id' => $id],
-        ['%d']
-    );
-
-    if ($result !== false) {
-        wp_redirect(add_query_arg(['page' => 'cashback-payout-methods', 'message' => 'deleted'], admin_url('admin.php')));
-        exit;
-    } else {
-        wp_redirect(add_query_arg(['page' => 'cashback-payout-methods', 'error' => 'delete_failed'], admin_url('admin.php')));
-        exit;
-    }
-}
