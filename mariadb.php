@@ -111,7 +111,7 @@ class Mariadb_Plugin
            `order_status` enum('waiting','completed','declined','balance') NOT NULL DEFAULT 'waiting',
            `partner` varchar(255) DEFAULT NULL,
            `sum_order` decimal(10,2) DEFAULT NULL,
-           `commission` decimal(10,2) DEFAULT NULL,
+           `comission` decimal(10,2) DEFAULT NULL,
            `uniq_id` varchar(255) DEFAULT NULL,
            `cashback` decimal(10,2) DEFAULT NULL,
            `applied_cashback_rate` decimal(5,2) NOT NULL DEFAULT 60.00 COMMENT 'Процент кэшбэка на момент создания транзакции',
@@ -147,7 +147,7 @@ class Mariadb_Plugin
             `order_status`  enum('waiting','completed','declined','balance') NOT NULL DEFAULT 'waiting',
             `partner` varchar(255) DEFAULT NULL,
             `sum_order` decimal(10,2) DEFAULT NULL,
-            `commission` decimal(10,2) DEFAULT NULL,
+            `comission` decimal(10,2) DEFAULT NULL,
             `uniq_id` varchar(255) DEFAULT NULL,
             `cashback` decimal(10,2) DEFAULT NULL,
             `user_agent` text DEFAULT NULL,
@@ -303,8 +303,8 @@ class Mariadb_Plugin
                 
                 SET NEW.applied_cashback_rate = IFNULL(v_rate, 60.00);
                 
-                IF NEW.commission IS NOT NULL THEN
-                    SET NEW.cashback = ROUND(NEW.commission * IFNULL(v_rate, 60.00) / 100, 2);
+                IF NEW.comission IS NOT NULL THEN
+                    SET NEW.cashback = ROUND(NEW.comission * IFNULL(v_rate, 60.00) / 100, 2);
                 ELSE
                     SET NEW.cashback = 0.00;
                 END IF;
@@ -315,26 +315,26 @@ class Mariadb_Plugin
             FOR EACH ROW
             --  'Рассчитывает кэшбэк для незарегистрированных пользователей по фиксированной ставке 60%'
             BEGIN
-                SET NEW.cashback = ROUND(NEW.commission * 0.6, 2);
+                SET NEW.cashback = ROUND(NEW.comission * 0.6, 2);
             END;",
 
             "CREATE TRIGGER `{$wpdb->prefix}calculate_cashback_before_update`
             BEFORE UPDATE ON `{$wpdb->prefix}cashback_transactions`
             FOR EACH ROW
-            --  'Пересчитывает кэшбэк только при изменении commission, используя сохранённую applied_cashback_rate'
+            --  'Пересчитывает кэшбэк только при изменении comission, используя сохранённую applied_cashback_rate'
             BEGIN
-                IF OLD.commission != NEW.commission THEN
-                    SET NEW.cashback = ROUND(NEW.commission * NEW.applied_cashback_rate / 100, 2);
+                IF OLD.comission != NEW.comission THEN
+                    SET NEW.cashback = ROUND(NEW.comission * NEW.applied_cashback_rate / 100, 2);
                 END IF;
             END;",
 
             "CREATE TRIGGER `{$wpdb->prefix}calculate_cashback_before_update_unregistered`
             BEFORE UPDATE ON `{$wpdb->prefix}cashback_unregistered_transactions`
             FOR EACH ROW
-            --  'Пересчитывает кэшбэк для незарегистрированных пользователей при изменении commission'
+            --  'Пересчитывает кэшбэк для незарегистрированных пользователей при изменении comission'
             BEGIN
-                IF OLD.commission != NEW.commission THEN
-                    SET NEW.cashback = ROUND(NEW.commission * 0.6, 2);
+                IF OLD.comission != NEW.comission THEN
+                    SET NEW.cashback = ROUND(NEW.comission * 0.6, 2);
                 END IF;
             END;",
 
