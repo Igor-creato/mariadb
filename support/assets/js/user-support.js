@@ -76,7 +76,11 @@
 
         // ========= Загрузка тикета (клик по строке) =========
         $(document).on('click', '.support-ticket-row', function() {
-            var ticketId = $(this).data('ticket-id');
+            var $row = $(this);
+            var ticketId = $row.data('ticket-id');
+            // Снимаем выделение непрочитанного и убираем бейдж
+            $row.removeClass('has-unread');
+            $row.find('.support-unread-badge').remove();
             loadTicket(ticketId);
         });
 
@@ -229,6 +233,7 @@
             }, function(response) {
                 if (response.success) {
                     $('#support-ticket-detail-content').html(response.data.html);
+                    updateMenuBadge(response.data.unread_total);
                     if (typeof callback === 'function') {
                         callback();
                     }
@@ -250,6 +255,25 @@
                 setTimeout(function() {
                     $container.fadeOut();
                 }, 5000);
+            }
+        }
+
+        function updateMenuBadge(count) {
+            var $style = $('#cashback-support-menu-badge-style');
+            if (count > 0) {
+                var css = '.woocommerce-MyAccount-navigation-link--cashback-support a::after {' +
+                    "content: '" + parseInt(count) + "';" +
+                    'display: inline-block; min-width: 18px; height: 18px; line-height: 18px;' +
+                    'padding: 0 5px; border-radius: 50%; background: #f44336;' +
+                    'color: #fff !important; font-size: 11px; font-weight: bold;' +
+                    'text-align: center; margin-left: 6px; vertical-align: middle;}';
+                if ($style.length) {
+                    $style.html(css);
+                } else {
+                    $('head').append('<style id="cashback-support-menu-badge-style">' + css + '</style>');
+                }
+            } else {
+                $style.remove();
             }
         }
 

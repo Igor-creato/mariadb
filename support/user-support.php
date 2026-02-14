@@ -42,6 +42,7 @@ class Cashback_User_Support
         add_filter('woocommerce_account_menu_items', [$this, 'add_menu_item']);
         add_action('woocommerce_account_cashback-support_endpoint', [$this, 'endpoint_content']);
         add_action('wp_enqueue_scripts', [$this, 'enqueue_scripts']);
+        add_action('wp_footer', [$this, 'render_menu_badge']);
 
         // AJAX обработчики
         add_action('wp_ajax_support_create_ticket', [$this, 'handle_create_ticket']);
@@ -112,6 +113,46 @@ class Cashback_User_Support
             'close_nonce' => wp_create_nonce('support_close_ticket_nonce'),
             'load_nonce' => wp_create_nonce('support_load_ticket_nonce'),
         ]);
+    }
+
+    /**
+     * Вывод бейджа непрочитанных ответов в меню My Account через CSS ::after
+     */
+    public function render_menu_badge(): void
+    {
+        if (!is_user_logged_in() || is_admin()) {
+            return;
+        }
+
+        if (!function_exists('is_account_page') || !is_account_page()) {
+            return;
+        }
+
+        $count = Cashback_Support_DB::get_unread_admin_replies_count(get_current_user_id());
+        if ($count <= 0) {
+            return;
+        }
+
+        ?>
+        <style id="cashback-support-menu-badge-style">
+            .woocommerce-MyAccount-navigation-link--cashback-support a::after {
+                content: '<?php echo (int) $count; ?>';
+                display: inline-block;
+                min-width: 18px;
+                height: 18px;
+                line-height: 18px;
+                padding: 0 5px;
+                border-radius: 50%;
+                background: #f44336;
+                color: #fff !important;
+                font-size: 11px;
+                font-weight: bold;
+                text-align: center;
+                margin-left: 6px;
+                vertical-align: middle;
+            }
+        </style>
+        <?php
     }
 
     /**
@@ -338,6 +379,27 @@ class Cashback_User_Support
                 font-size: 14px;
                 color: #666;
             }
+            .support-ticket-row.has-unread {
+                border-left: 4px solid #4CAF50;
+                background-color: #f0f9f0;
+            }
+            .support-ticket-row.has-unread:hover {
+                background-color: #e5f5e5;
+            }
+            .support-unread-badge {
+                display: inline-block;
+                min-width: 18px;
+                height: 18px;
+                line-height: 18px;
+                padding: 0 5px;
+                border-radius: 50%;
+                background: #f44336;
+                color: #fff;
+                font-size: 11px;
+                font-weight: bold;
+                text-align: center;
+                margin-left: 8px;
+            }
         </style>
         <?php
     }
@@ -352,9 +414,11 @@ class Cashback_User_Support
         $user_id = get_current_user_id();
 
         $tickets = $wpdb->get_results($wpdb->prepare(
-            "SELECT * FROM `{$this->tickets_table}`
-             WHERE user_id = %d
-             ORDER BY created_at DESC",
+            "SELECT t.*,
+                (SELECT COUNT(*) FROM `{$this->messages_table}` m WHERE m.ticket_id = t.id AND m.is_admin = 1 AND m.is_read = 0) as unread_count
+             FROM `{$this->tickets_table}` t
+             WHERE t.user_id = %d
+             ORDER BY t.created_at DESC",
             $user_id
         ));
 
@@ -372,10 +436,16 @@ class Cashback_User_Support
             $status_label = $this->get_status_label($ticket->status);
             $date = date_i18n('d.m.Y H:i', strtotime($ticket->created_at));
 
+            $has_unread = (int) $ticket->unread_count > 0;
             ?>
-            <div class="support-ticket-row" data-ticket-id="<?php echo (int) $ticket->id; ?>">
+            <div class="support-ticket-row<?php echo $has_unread ? ' has-unread' : ''; ?>" data-ticket-id="<?php echo (int) $ticket->id; ?>">
                 <div class="support-ticket-info">
-                    <strong><?php echo esc_html($ticket_number . ' — ' . $ticket->subject); ?></strong>
+                    <strong>
+                        <?php echo esc_html($ticket_number . ' — ' . $ticket->subject); ?>
+                        <?php if ($has_unread): ?>
+                            <span class="support-unread-badge"><?php echo (int) $ticket->unread_count; ?></span>
+                        <?php endif; ?>
+                    </strong>
                     <div class="support-ticket-meta">
                         <span class="support-badge support-badge-<?php echo esc_attr($ticket->status); ?>"><?php echo esc_html($status_label); ?></span>
                         <span class="support-badge support-badge-<?php echo esc_attr($ticket->priority); ?>"><?php echo esc_html($priority_label); ?></span>
@@ -689,6 +759,15 @@ class Cashback_User_Support
             return;
         }
 
+        // Помечаем сообщения админа как прочитанные
+        $wpdb->update(
+            $this->messages_table,
+            ['is_read' => 1],
+            ['ticket_id' => $ticket_id, 'is_admin' => 1, 'is_read' => 0],
+            ['%d'],
+            ['%d', '%d', '%d']
+        );
+
         // Получаем сообщения
         $messages = $wpdb->get_results($wpdb->prepare(
             "SELECT m.*, u.user_login
@@ -744,7 +823,10 @@ class Cashback_User_Support
             $html .= '<p style="color: #666; margin-top: 15px;">Тикет закрыт. Для нового обращения создайте новый тикет.</p>';
         }
 
-        wp_send_json_success(['html' => $html]);
+        // Возвращаем актуальный счётчик непрочитанных для обновления бейджа в меню
+        $unread_total = Cashback_Support_DB::get_unread_admin_replies_count($user_id);
+
+        wp_send_json_success(['html' => $html, 'unread_total' => $unread_total]);
     }
 
     /**

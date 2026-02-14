@@ -122,6 +122,30 @@ class Cashback_Support_DB
     }
 
     /**
+     * Получить количество тикетов с непрочитанными ответами от админа для конкретного пользователя
+     */
+    public static function get_unread_admin_replies_count(int $user_id): int
+    {
+        global $wpdb;
+
+        $tickets_table = $wpdb->prefix . 'cashback_support_tickets';
+        $messages_table = $wpdb->prefix . 'cashback_support_messages';
+
+        $count = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(DISTINCT t.id)
+             FROM `{$tickets_table}` t
+             INNER JOIN `{$messages_table}` m ON t.id = m.ticket_id
+             WHERE t.user_id = %d
+             AND m.is_admin = 1
+             AND m.is_read = 0
+             AND t.status != 'closed'",
+            $user_id
+        ));
+
+        return (int) $count;
+    }
+
+    /**
      * Форматировать номер тикета для отображения
      */
     public static function format_ticket_number(int $ticket_id): string
