@@ -39,6 +39,23 @@ class Mariadb_Plugin
     }
 
     /**
+     * Валидация и санитизация префикса таблицы
+     * Защита от потенциальных SQL-инъекций через префикс
+     *
+     * @param string $prefix Префикс таблицы
+     * @return string Безопасный префикс
+     * @throws Exception Если префикс содержит недопустимые символы
+     */
+    private function validate_table_prefix(string $prefix): string
+    {
+        // Префикс может содержать только буквы, цифры и подчеркивания
+        if (!preg_match('/^[a-zA-Z0-9_]+$/', $prefix)) {
+            throw new Exception('Invalid table prefix detected: ' . esc_html($prefix));
+        }
+        return $prefix;
+    }
+
+    /**
      * Активация плагина
      *
      * @return void
@@ -266,19 +283,22 @@ class Mariadb_Plugin
     {
         global $wpdb;
 
+        // Валидация префикса таблицы для безопасности
+        $safe_prefix = $this->validate_table_prefix($wpdb->prefix);
+
         // Удаляем существующие триггеры перед созданием новых
         $drop_triggers = [
-            "DROP TRIGGER IF EXISTS `{$wpdb->prefix}calculate_cashback_before_insert`;",
-            "DROP TRIGGER IF EXISTS `{$wpdb->prefix}calculate_cashback_before_insert_unregistered`;",
-            "DROP TRIGGER IF EXISTS `{$wpdb->prefix}calculate_cashback_before_update`;",
-            "DROP TRIGGER IF EXISTS `{$wpdb->prefix}calculate_cashback_before_update_unregistered`;",
-            "DROP TRIGGER IF EXISTS `{$wpdb->prefix}cashback_tr_prevent_delete_final_status`;",
-            "DROP TRIGGER IF EXISTS `{$wpdb->prefix}cashback_tr_prevent_update_final_status`;",
-            "DROP TRIGGER IF EXISTS `{$wpdb->prefix}tr_prevent_delete_paid_payout`;",
-            "DROP TRIGGER IF EXISTS `{$wpdb->prefix}tr_prevent_update_paid_payout`;",
-            "DROP TRIGGER IF EXISTS `{$wpdb->prefix}tr_prevent_delete_failed_payout`;",
-            "DROP TRIGGER IF EXISTS `{$wpdb->prefix}tr_prevent_update_failed_payout`;",
-            "DROP TRIGGER IF EXISTS `{$wpdb->prefix}tr_banned_user_update_banned_at`;",
+            "DROP TRIGGER IF EXISTS `{$safe_prefix}calculate_cashback_before_insert`;",
+            "DROP TRIGGER IF EXISTS `{$safe_prefix}calculate_cashback_before_insert_unregistered`;",
+            "DROP TRIGGER IF EXISTS `{$safe_prefix}calculate_cashback_before_update`;",
+            "DROP TRIGGER IF EXISTS `{$safe_prefix}calculate_cashback_before_update_unregistered`;",
+            "DROP TRIGGER IF EXISTS `{$safe_prefix}cashback_tr_prevent_delete_final_status`;",
+            "DROP TRIGGER IF EXISTS `{$safe_prefix}cashback_tr_prevent_update_final_status`;",
+            "DROP TRIGGER IF EXISTS `{$safe_prefix}tr_prevent_delete_paid_payout`;",
+            "DROP TRIGGER IF EXISTS `{$safe_prefix}tr_prevent_update_paid_payout`;",
+            "DROP TRIGGER IF EXISTS `{$safe_prefix}tr_prevent_delete_failed_payout`;",
+            "DROP TRIGGER IF EXISTS `{$safe_prefix}tr_prevent_update_failed_payout`;",
+            "DROP TRIGGER IF EXISTS `{$safe_prefix}tr_banned_user_update_banned_at`;",
         ];
 
         foreach ($drop_triggers as $drop_trigger) {
@@ -289,20 +309,20 @@ class Mariadb_Plugin
         }
 
         $triggers = [
-            "CREATE TRIGGER `{$wpdb->prefix}calculate_cashback_before_insert`
-            BEFORE INSERT ON `{$wpdb->prefix}cashback_transactions`
+            "CREATE TRIGGER `{$safe_prefix}calculate_cashback_before_insert`
+            BEFORE INSERT ON `{$safe_prefix}cashback_transactions`
             FOR EACH ROW
             -- 'Автоматически рассчитывает кэшбэк при вставке на основе индивидуального cashback_rate пользователя'
             BEGIN
                 DECLARE v_rate DECIMAL(5,2) DEFAULT 60.00;
-                
+
                 SELECT cashback_rate INTO v_rate
-                FROM `{$wpdb->prefix}cashback_user_profile`
+                FROM `{$safe_prefix}cashback_user_profile`
                 WHERE user_id = NEW.user_id
                 LIMIT 1;
-                
+
                 SET NEW.applied_cashback_rate = IFNULL(v_rate, 60.00);
-                
+
                 IF NEW.comission IS NOT NULL THEN
                     SET NEW.cashback = ROUND(NEW.comission * IFNULL(v_rate, 60.00) / 100, 2);
                 ELSE
@@ -310,16 +330,16 @@ class Mariadb_Plugin
                 END IF;
             END;",
 
-            "CREATE TRIGGER `{$wpdb->prefix}calculate_cashback_before_insert_unregistered`
-            BEFORE INSERT ON `{$wpdb->prefix}cashback_unregistered_transactions`
+            "CREATE TRIGGER `{$safe_prefix}calculate_cashback_before_insert_unregistered`
+            BEFORE INSERT ON `{$safe_prefix}cashback_unregistered_transactions`
             FOR EACH ROW
             --  'Рассчитывает кэшбэк для незарегистрированных пользователей по фиксированной ставке 60%'
             BEGIN
                 SET NEW.cashback = ROUND(NEW.comission * 0.6, 2);
             END;",
 
-            "CREATE TRIGGER `{$wpdb->prefix}calculate_cashback_before_update`
-            BEFORE UPDATE ON `{$wpdb->prefix}cashback_transactions`
+            "CREATE TRIGGER `{$safe_prefix}calculate_cashback_before_update`
+            BEFORE UPDATE ON `{$safe_prefix}cashback_transactions`
             FOR EACH ROW
             --  'Пересчитывает кэшбэк только при изменении comission, используя сохранённую applied_cashback_rate'
             BEGIN
@@ -328,8 +348,8 @@ class Mariadb_Plugin
                 END IF;
             END;",
 
-            "CREATE TRIGGER `{$wpdb->prefix}calculate_cashback_before_update_unregistered`
-            BEFORE UPDATE ON `{$wpdb->prefix}cashback_unregistered_transactions`
+            "CREATE TRIGGER `{$safe_prefix}calculate_cashback_before_update_unregistered`
+            BEFORE UPDATE ON `{$safe_prefix}cashback_unregistered_transactions`
             FOR EACH ROW
             --  'Пересчитывает кэшбэк для незарегистрированных пользователей при изменении comission'
             BEGIN
@@ -338,8 +358,8 @@ class Mariadb_Plugin
                 END IF;
             END;",
 
-            "CREATE TRIGGER `{$wpdb->prefix}cashback_tr_prevent_delete_final_status`
-            BEFORE DELETE ON `{$wpdb->prefix}cashback_transactions`
+            "CREATE TRIGGER `{$safe_prefix}cashback_tr_prevent_delete_final_status`
+            BEFORE DELETE ON `{$safe_prefix}cashback_transactions`
             FOR EACH ROW
             --  'Запрещает удаление транзакций со статусом ''balance'' (финальный статус)'
             BEGIN
@@ -349,8 +369,8 @@ class Mariadb_Plugin
                 END IF;
             END;",
 
-            "CREATE TRIGGER `{$wpdb->prefix}cashback_tr_prevent_update_final_status`
-            BEFORE UPDATE ON `{$wpdb->prefix}cashback_transactions`
+            "CREATE TRIGGER `{$safe_prefix}cashback_tr_prevent_update_final_status`
+            BEFORE UPDATE ON `{$safe_prefix}cashback_transactions`
             FOR EACH ROW
             --  'Запрещает изменение транзакций со статусом ''balance'' (финальный статус)'
             BEGIN
@@ -360,8 +380,8 @@ class Mariadb_Plugin
                 END IF;
             END;",
 
-            "CREATE TRIGGER `{$wpdb->prefix}tr_prevent_delete_paid_payout`
-            BEFORE DELETE ON `{$wpdb->prefix}cashback_payout_requests`
+            "CREATE TRIGGER `{$safe_prefix}tr_prevent_delete_paid_payout`
+            BEFORE DELETE ON `{$safe_prefix}cashback_payout_requests`
             FOR EACH ROW
             --  'Запрещает удаление заявок на выплату со статусом ''paid'' выплачена'
             BEGIN
@@ -371,8 +391,8 @@ class Mariadb_Plugin
                 END IF;
             END;",
 
-            "CREATE TRIGGER `{$wpdb->prefix}tr_prevent_update_paid_payout`
-            BEFORE UPDATE ON `{$wpdb->prefix}cashback_payout_requests`
+            "CREATE TRIGGER `{$safe_prefix}tr_prevent_update_paid_payout`
+            BEFORE UPDATE ON `{$safe_prefix}cashback_payout_requests`
             FOR EACH ROW
             --  'Запрещает изменение заявок на выплату со статусом ''paid'' выплачена'
             BEGIN
@@ -382,8 +402,8 @@ class Mariadb_Plugin
                 END IF;
             END;",
 
-            "CREATE TRIGGER `{$wpdb->prefix}tr_prevent_delete_failed_payout`
-            BEFORE DELETE ON `{$wpdb->prefix}cashback_payout_requests`
+            "CREATE TRIGGER `{$safe_prefix}tr_prevent_delete_failed_payout`
+            BEFORE DELETE ON `{$safe_prefix}cashback_payout_requests`
             FOR EACH ROW
             --  'Запрещает удаление заявок на выплату со статусом ''failed'' (возвращено в баланс)'
             BEGIN
@@ -393,8 +413,8 @@ class Mariadb_Plugin
                 END IF;
             END;",
 
-            "CREATE TRIGGER `{$wpdb->prefix}tr_prevent_update_failed_payout`
-            BEFORE UPDATE ON `{$wpdb->prefix}cashback_payout_requests`
+            "CREATE TRIGGER `{$safe_prefix}tr_prevent_update_failed_payout`
+            BEFORE UPDATE ON `{$safe_prefix}cashback_payout_requests`
             FOR EACH ROW
             --  'Запрещает изменение заявок на выплату со статусом ''failed'' (возвращено в баланс)'
             BEGIN
@@ -404,8 +424,8 @@ class Mariadb_Plugin
                 END IF;
             END;",
 
-            "CREATE TRIGGER `{$wpdb->prefix}tr_banned_user_update_banned_at`
-            BEFORE UPDATE ON `{$wpdb->prefix}cashback_user_profile`
+            "CREATE TRIGGER `{$safe_prefix}tr_banned_user_update_banned_at`
+            BEFORE UPDATE ON `{$safe_prefix}cashback_user_profile`
             FOR EACH ROW
             --  'Обновляет поле banned_at текущей датой и временем при изменении статуса на ''banned'''
             BEGIN
@@ -438,10 +458,13 @@ class Mariadb_Plugin
     {
         global $wpdb;
 
+        // Валидация префикса таблицы для безопасности
+        $safe_prefix = $this->validate_table_prefix($wpdb->prefix);
+
         $events = [
             // Событие ежедневно проверяет одобренный кэшбэк если старше 14 дней переводит в доступный баланс
             // ПОЛНАЯ ЗАЩИТА ОТ ДУБЛИРОВАНИЯ: идемпотентность через processed_at и атомарные операции
-            "CREATE EVENT IF NOT EXISTS `{$wpdb->prefix}cashback_ev_confirmed_cashback`
+            "CREATE EVENT IF NOT EXISTS `{$safe_prefix}cashback_ev_confirmed_cashback`
 ON SCHEDULE EVERY 1 DAY
 STARTS CURRENT_TIMESTAMP
 ON COMPLETION PRESERVE
@@ -461,7 +484,7 @@ BEGIN
 
     -- Блокировка события на уровне СУБД
     SET v_event_lock = GET_LOCK('cashback_event_lock', 0);
-    
+
     IF v_event_lock = 1 THEN
         -- Генерируем UUID батча
         SET v_batch_id = UUID();
@@ -481,7 +504,7 @@ BEGIN
         -- Захватываем транзакции с блокировкой
         INSERT INTO tmp_cashback_batch (transaction_id, user_id, cashback)
         SELECT id, user_id, cashback
-        FROM `{$wpdb->prefix}cashback_transactions`
+        FROM `{$safe_prefix}cashback_transactions`
         WHERE
             order_status = 'completed'
             AND processed_at IS NULL
@@ -496,7 +519,7 @@ BEGIN
             -- ШАГ 1: КРИТИЧНО - Сначала маркируем транзакции через processed_at
             -- Это источник истины для идемпотентности
             -- Если после этого шага упадет БД, при повторном запуске эти транзакции НЕ попадут в tmp_cashback_batch
-            UPDATE `{$wpdb->prefix}cashback_transactions` ct
+            UPDATE `{$safe_prefix}cashback_transactions` ct
             INNER JOIN tmp_cashback_batch tcb ON ct.id = tcb.transaction_id
             SET
                 ct.processed_at = NOW(),
@@ -505,13 +528,13 @@ BEGIN
 
             -- ШАГ 2: Начисляем баланс ТОЛЬКО для транзакций с processed_batch_id = v_batch_id
             -- Используем processed_batch_id как источник данных (уже гарантированно уникальные)
-            INSERT INTO `{$wpdb->prefix}cashback_user_balance`
+            INSERT INTO `{$safe_prefix}cashback_user_balance`
                 (user_id, available_balance, version)
             SELECT
                 user_id,
                 SUM(cashback),
                 0
-            FROM `{$wpdb->prefix}cashback_transactions`
+            FROM `{$safe_prefix}cashback_transactions`
             WHERE processed_batch_id = v_batch_id
             GROUP BY user_id
             ON DUPLICATE KEY UPDATE
@@ -520,7 +543,7 @@ BEGIN
 
             -- ШАГ 3: Финализируем статус (делаем транзакции неизменяемыми через триггер)
             -- Только если processed_batch_id соответствует текущему батчу
-            UPDATE `{$wpdb->prefix}cashback_transactions`
+            UPDATE `{$safe_prefix}cashback_transactions`
             SET order_status = 'balance'
             WHERE
                 processed_batch_id = v_batch_id
@@ -537,23 +560,23 @@ BEGIN
 END;",
 
             // Событие ежедневно проверяет и удаляет старые вебхуки если старше 6 месяцев
-            "CREATE EVENT IF NOT EXISTS `{$wpdb->prefix}cashback_ev_cleanup_cashback_webhooks_old`
+            "CREATE EVENT IF NOT EXISTS `{$safe_prefix}cashback_ev_cleanup_cashback_webhooks_old`
             ON SCHEDULE EVERY 1 DAY
             STARTS CURRENT_TIMESTAMP
             ON COMPLETION NOT PRESERVE
             ENABLE
-            DO DELETE FROM `{$wpdb->prefix}cashback_webhooks`
+            DO DELETE FROM `{$safe_prefix}cashback_webhooks`
             WHERE received_at < NOW() - INTERVAL 6 MONTH",
 
             // Событие ежедневно проверяет и помечает неактивные профили если неактивны больше 6 месяцев
-            "CREATE EVENT IF NOT EXISTS `{$wpdb->prefix}cashback_ev_mark_inactive_profiles`
+            "CREATE EVENT IF NOT EXISTS `{$safe_prefix}cashback_ev_mark_inactive_profiles`
             ON SCHEDULE EVERY 1 DAY
             STARTS CURRENT_TIMESTAMP
             ON COMPLETION PRESERVE
             ENABLE
             DO
             BEGIN
-                UPDATE `{$wpdb->prefix}cashback_user_profile`
+                UPDATE `{$safe_prefix}cashback_user_profile`
                 SET status = 'noactive'
                 WHERE
                     status = 'active'
@@ -760,7 +783,7 @@ END;",
 }
 
 // Инициализация плагина
-function mariadb_plugin_init()
+function mariadb_plugin_init(): Mariadb_Plugin
 {
     $instance = Mariadb_Plugin::get_instance();
     return $instance;

@@ -136,7 +136,7 @@ class Cashback_User_Support
         ?>
         <style id="cashback-support-menu-badge-style">
             .woocommerce-MyAccount-navigation-link--cashback-support a::after {
-                content: '<?php echo (int) $count; ?>';
+                content: '<?php echo esc_js((string) absint($count)); ?>';
                 display: inline-block;
                 min-width: 18px;
                 height: 18px;

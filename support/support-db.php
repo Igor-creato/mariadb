@@ -169,4 +169,6 @@ class Cashback_Support_DB
 }
 
 // Регистрация WP Cron хука для автоудаления
-add_action('cashback_support_auto_delete_cron', ['Cashback_Support_DB', 'delete_old_closed_tickets']);
+add_action('cashback_support_auto_delete_cron', function (): void {
+    Cashback_Support_DB::delete_old_closed_tickets();
+});

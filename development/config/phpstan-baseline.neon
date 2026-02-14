@@ -1,0 +1,326 @@
+parameters:
+	ignoreErrors:
+		-
+			message: "#^Method WP_Cashback_Plugin\\\\Admin\\\\Cashback_Payouts_Admin\\:\\:get_bank_code_by_id\\(\\) is unused\\.$#"
+			count: 1
+			path: admin/payouts.php
+
+		-
+			message: "#^Method WP_Cashback_Plugin\\\\Admin\\\\Cashback_Payouts_Admin\\:\\:get_bank_name_by_code\\(\\) is unused\\.$#"
+			count: 1
+			path: admin/payouts.php
+
+		-
+			message: "#^Method WP_Cashback_Plugin\\\\Admin\\\\Cashback_Payouts_Admin\\:\\:get_payout_method_name_by_slug\\(\\) is unused\\.$#"
+			count: 1
+			path: admin/payouts.php
+
+		-
+			message: "#^Undefined variable\\: \\$user_id$#"
+			count: 1
+			path: admin/payouts.php
+
+		-
+			message: "#^Parameter \\#1 \\$text of function esc_attr expects string, int\\<1, max\\> given\\.$#"
+			count: 1
+			path: cashback-history.php
+
+		-
+			message: "#^Parameter \\#1 \\$text of function esc_html expects string, int\\<1, max\\> given\\.$#"
+			count: 1
+			path: cashback-history.php
+
+		-
+			message: "#^Property CashbackHistory\\:\\:\\$instance has no type specified\\.$#"
+			count: 1
+			path: cashback-history.php
+
+		-
+			message: "#^Method CashbackPlugin\\:\\:activate\\(\\) has no return type specified\\.$#"
+			count: 1
+			path: cashback-plugin.php
+
+		-
+			message: "#^Method CashbackPlugin\\:\\:deactivate\\(\\) has no return type specified\\.$#"
+			count: 1
+			path: cashback-plugin.php
+
+		-
+			message: "#^Method CashbackPlugin\\:\\:init\\(\\) has no return type specified\\.$#"
+			count: 1
+			path: cashback-plugin.php
+
+		-
+			message: "#^Method CashbackPlugin\\:\\:initialize_components\\(\\) has no return type specified\\.$#"
+			count: 1
+			path: cashback-plugin.php
+
+		-
+			message: "#^Method CashbackPlugin\\:\\:load_dependencies\\(\\) has no return type specified\\.$#"
+			count: 1
+			path: cashback-plugin.php
+
+		-
+			message: "#^Method CashbackPlugin\\:\\:require_file\\(\\) has no return type specified\\.$#"
+			count: 1
+			path: cashback-plugin.php
+
+		-
+			message: "#^Method CashbackPlugin\\:\\:woocommerce_required_notice\\(\\) has no return type specified\\.$#"
+			count: 1
+			path: cashback-plugin.php
+
+		-
+			message: "#^Right side of && is always true\\.$#"
+			count: 1
+			path: cashback-plugin.php
+
+		-
+			message: "#^Comparison operation \"\\<\\=\" between int\\<1, max\\> and 0 is always false\\.$#"
+			count: 1
+			path: cashback-withdrawal.php
+
+		-
+			message: "#^Method CashbackWithdrawal\\:\\:add_query_vars\\(\\) has no return type specified\\.$#"
+			count: 1
+			path: cashback-withdrawal.php
+
+		-
+			message: "#^Method CashbackWithdrawal\\:\\:add_query_vars\\(\\) has parameter \\$vars with no type specified\\.$#"
+			count: 1
+			path: cashback-withdrawal.php
+
+		-
+			message: "#^Method CashbackWithdrawal\\:\\:endpoint_content\\(\\) has no return type specified\\.$#"
+			count: 1
+			path: cashback-withdrawal.php
+
+		-
+			message: "#^Method CashbackWithdrawal\\:\\:enqueue_styles\\(\\) has no return type specified\\.$#"
+			count: 1
+			path: cashback-withdrawal.php
+
+		-
+			message: "#^Method CashbackWithdrawal\\:\\:get_payout_method_label\\(\\) is unused\\.$#"
+			count: 1
+			path: cashback-withdrawal.php
+
+		-
+			message: "#^Method CashbackWithdrawal\\:\\:get_user_balance_ajax\\(\\) has no return type specified\\.$#"
+			count: 1
+			path: cashback-withdrawal.php
+
+		-
+			message: "#^Method CashbackWithdrawal\\:\\:process_cashback_withdrawal\\(\\) has no return type specified\\.$#"
+			count: 1
+			path: cashback-withdrawal.php
+
+		-
+			message: "#^Method CashbackWithdrawal\\:\\:register_endpoint\\(\\) has no return type specified\\.$#"
+			count: 1
+			path: cashback-withdrawal.php
+
+		-
+			message: "#^Method CashbackWithdrawal\\:\\:save_payout_settings\\(\\) has no return type specified\\.$#"
+			count: 1
+			path: cashback-withdrawal.php
+
+		-
+			message: "#^Method CashbackWithdrawal\\:\\:search_banks_ajax\\(\\) has no return type specified\\.$#"
+			count: 1
+			path: cashback-withdrawal.php
+
+		-
+			message: "#^Parameter \\#1 \\$text of function esc_attr expects string, int given\\.$#"
+			count: 1
+			path: cashback-withdrawal.php
+
+		-
+			message: "#^Property CashbackWithdrawal\\:\\:\\$instance has no type specified\\.$#"
+			count: 1
+			path: cashback-withdrawal.php
+
+		-
+			message: "#^Method HistoryPayout\\:\\:add_menu_item\\(\\) has no return type specified\\.$#"
+			count: 1
+			path: history-payout.php
+
+		-
+			message: "#^Method HistoryPayout\\:\\:add_menu_item\\(\\) has parameter \\$items with no type specified\\.$#"
+			count: 1
+			path: history-payout.php
+
+		-
+			message: "#^Method HistoryPayout\\:\\:add_query_vars\\(\\) has no return type specified\\.$#"
+			count: 1
+			path: history-payout.php
+
+		-
+			message: "#^Method HistoryPayout\\:\\:add_query_vars\\(\\) has parameter \\$vars with no type specified\\.$#"
+			count: 1
+			path: history-payout.php
+
+		-
+			message: "#^Method HistoryPayout\\:\\:ajax_load_page\\(\\) has no return type specified\\.$#"
+			count: 1
+			path: history-payout.php
+
+		-
+			message: "#^Method HistoryPayout\\:\\:content\\(\\) has no return type specified\\.$#"
+			count: 1
+			path: history-payout.php
+
+		-
+			message: "#^Method HistoryPayout\\:\\:enqueue_scripts\\(\\) has no return type specified\\.$#"
+			count: 1
+			path: history-payout.php
+
+		-
+			message: "#^Method HistoryPayout\\:\\:format_date\\(\\) has no return type specified\\.$#"
+			count: 1
+			path: history-payout.php
+
+		-
+			message: "#^Method HistoryPayout\\:\\:format_date\\(\\) has parameter \\$date_string with no type specified\\.$#"
+			count: 1
+			path: history-payout.php
+
+		-
+			message: "#^Method HistoryPayout\\:\\:get_instance\\(\\) has no return type specified\\.$#"
+			count: 1
+			path: history-payout.php
+
+		-
+			message: "#^Method HistoryPayout\\:\\:get_payouts\\(\\) has no return type specified\\.$#"
+			count: 1
+			path: history-payout.php
+
+		-
+			message: "#^Method HistoryPayout\\:\\:get_payouts\\(\\) has parameter \\$limit with no type specified\\.$#"
+			count: 1
+			path: history-payout.php
+
+		-
+			message: "#^Method HistoryPayout\\:\\:get_payouts\\(\\) has parameter \\$offset with no type specified\\.$#"
+			count: 1
+			path: history-payout.php
+
+		-
+			message: "#^Method HistoryPayout\\:\\:get_payouts\\(\\) has parameter \\$user_id with no type specified\\.$#"
+			count: 1
+			path: history-payout.php
+
+		-
+			message: "#^Method HistoryPayout\\:\\:get_status_label\\(\\) has no return type specified\\.$#"
+			count: 1
+			path: history-payout.php
+
+		-
+			message: "#^Method HistoryPayout\\:\\:get_status_label\\(\\) has parameter \\$status with no type specified\\.$#"
+			count: 1
+			path: history-payout.php
+
+		-
+			message: "#^Method HistoryPayout\\:\\:get_total_payouts\\(\\) has no return type specified\\.$#"
+			count: 1
+			path: history-payout.php
+
+		-
+			message: "#^Method HistoryPayout\\:\\:get_total_payouts\\(\\) has parameter \\$user_id with no type specified\\.$#"
+			count: 1
+			path: history-payout.php
+
+		-
+			message: "#^Method HistoryPayout\\:\\:is_history_payout_page\\(\\) has no return type specified\\.$#"
+			count: 1
+			path: history-payout.php
+
+		-
+			message: "#^Method HistoryPayout\\:\\:load_payout_method_labels\\(\\) has no return type specified\\.$#"
+			count: 1
+			path: history-payout.php
+
+		-
+			message: "#^Method HistoryPayout\\:\\:register_endpoint\\(\\) has no return type specified\\.$#"
+			count: 1
+			path: history-payout.php
+
+		-
+			message: "#^Method HistoryPayout\\:\\:render_pagination\\(\\) has no return type specified\\.$#"
+			count: 1
+			path: history-payout.php
+
+		-
+			message: "#^Method HistoryPayout\\:\\:render_pagination\\(\\) has parameter \\$current_page with no type specified\\.$#"
+			count: 1
+			path: history-payout.php
+
+		-
+			message: "#^Method HistoryPayout\\:\\:render_pagination\\(\\) has parameter \\$total_pages with no type specified\\.$#"
+			count: 1
+			path: history-payout.php
+
+		-
+			message: "#^Parameter \\#1 \\$text of function esc_attr expects string, int\\<1, max\\> given\\.$#"
+			count: 1
+			path: history-payout.php
+
+		-
+			message: "#^Parameter \\#1 \\$text of function esc_html expects string, int\\<1, max\\> given\\.$#"
+			count: 1
+			path: history-payout.php
+
+		-
+			message: "#^Property HistoryPayout\\:\\:\\$instance has no type specified\\.$#"
+			count: 1
+			path: history-payout.php
+
+		-
+			message: "#^Property HistoryPayout\\:\\:\\$payout_method_labels has no type specified\\.$#"
+			count: 1
+			path: history-payout.php
+
+		-
+			message: "#^Action callback returns Mariadb_Plugin but should not return anything\\.$#"
+			count: 1
+			path: mariadb.php
+
+		-
+			message: "#^Action callback returns bool but should not return anything\\.$#"
+			count: 1
+			path: mariadb.php
+
+		-
+			message: "#^Method Mariadb_Plugin\\:\\:create_events\\(\\) has no return type specified\\.$#"
+			count: 1
+			path: mariadb.php
+
+		-
+			message: "#^Method Mariadb_Plugin\\:\\:create_tables\\(\\) has no return type specified\\.$#"
+			count: 1
+			path: mariadb.php
+
+		-
+			message: "#^Method Mariadb_Plugin\\:\\:create_triggers\\(\\) has no return type specified\\.$#"
+			count: 1
+			path: mariadb.php
+
+		-
+			message: "#^Method Mariadb_Plugin\\:\\:initialize_existing_users\\(\\) has no return type specified\\.$#"
+			count: 1
+			path: mariadb.php
+
+		-
+			message: "#^Negated boolean expression is always true\\.$#"
+			count: 1
+			path: mariadb.php
+
+		-
+			message: "#^Property Mariadb_Plugin\\:\\:\\$instance has no type specified\\.$#"
+			count: 1
+			path: mariadb.php
+
+		-
+			message: "#^If condition is always false\\.$#"
+			count: 1
+			path: phpstan-bootstrap.php

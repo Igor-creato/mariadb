@@ -1,0 +1,146 @@
+# Список файлов для чистой установки Cashback Plugin
+# Версия: 1.0.0
+# Дата: 2026-02-14
+
+# =====================================================
+# ОБЯЗАТЕЛЬНЫЕ ФАЙЛЫ (необходимы для работы плагина)
+# =====================================================
+
+# Корневые PHP файлы
+cashback-plugin.php
+mariadb.php
+cashback-history.php
+cashback-withdrawal.php
+history-payout.php
+wc-affiliate-url-params.php
+uninstall.php
+
+# Админ-панель
+admin/bank-management.php
+admin/payout-methods.php
+admin/payouts.php
+admin/users-management.php
+
+# Модуль поддержки
+support/admin-support.php
+support/support-db.php
+support/user-support.php
+support/assets/js/user-support.js
+
+# Assets (стили и скрипты)
+assets/css/admin.css
+assets/css/frontend.css
+assets/js/admin-payouts.js
+assets/js/cashback-history.js
+assets/js/frontend.js
+assets/js/history-payout.js
+
+# Переводы (если есть)
+languages/cashback-plugin-ru_RU.po
+languages/cashback-plugin-ru_RU.mo
+# (добавьте другие языки при необходимости)
+
+# =====================================================
+# РЕКОМЕНДУЕМЫЕ ФАЙЛЫ (документация)
+# =====================================================
+
+README.md
+CHANGELOG.md
+SECURITY.md
+
+# =====================================================
+# НЕ ВКЛЮЧАТЬ В РЕЛИЗ (файлы разработки)
+# =====================================================
+
+# Git
+# .git/
+# .gitignore
+
+# Composer
+# composer.json
+# composer.lock
+# vendor/
+
+# PHPStan
+# phpstan.neon
+# phpstan-baseline.neon
+# phpstan-bootstrap.php
+# .phpstan.cache/
+
+# NPM
+# package.json
+# package-lock.json
+# node_modules/
+
+# IDE и конфигурация
+# .editorconfig
+# .vscode/
+# .idea/
+
+# Claude
+# .claude/
+
+# Документация для разработчиков
+# CONTRIBUTING.md
+
+# =====================================================
+# ИНСТРУКЦИЯ ПО СОЗДАНИЮ РЕЛИЗА
+# =====================================================
+
+# 1. Создайте чистую директорию для релиза:
+#    mkdir cashback-plugin-release
+#
+# 2. Скопируйте только необходимые файлы:
+#    rsync -av --files-from=INSTALL_FILES.txt . cashback-plugin-release/
+#
+# 3. Создайте ZIP архив:
+#    cd cashback-plugin-release/..
+#    zip -r cashback-plugin-1.0.0.zip cashback-plugin-release/
+#
+# 4. Загрузите ZIP в WordPress Admin → Плагины → Добавить новый
+
+# =====================================================
+# СТРУКТУРА ДИРЕКТОРИЙ
+# =====================================================
+
+# mariadb/
+# ├── cashback-plugin.php       (главный файл)
+# ├── mariadb.php               (БД плагина)
+# ├── cashback-history.php
+# ├── cashback-withdrawal.php
+# ├── history-payout.php
+# ├── wc-affiliate-url-params.php
+# ├── uninstall.php
+# ├── README.md
+# ├── CHANGELOG.md
+# ├── SECURITY.md
+# ├── admin/
+# │   ├── bank-management.php
+# │   ├── payout-methods.php
+# │   ├── payouts.php
+# │   └── users-management.php
+# ├── support/
+# │   ├── admin-support.php
+# │   ├── support-db.php
+# │   ├── user-support.php
+# │   └── assets/
+# │       └── js/
+# │           └── user-support.js
+# ├── assets/
+# │   ├── css/
+# │   │   ├── admin.css
+# │   │   └── frontend.css
+# │   └── js/
+# │       ├── admin-payouts.js
+# │       ├── cashback-history.js
+# │       ├── frontend.js
+# │       └── history-payout.js
+# └── languages/
+#     └── (файлы переводов .po/.mo)
+
+# =====================================================
+# РАЗМЕР УСТАНОВКИ
+# =====================================================
+
+# Примерный размер чистой установки: ~200-300 KB
+# (без vendor/, node_modules/, .git/)

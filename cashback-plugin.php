@@ -7,11 +7,86 @@ declare(strict_types=1);
  * Description: Объединенный плагин для системы кэшбэка и аффилиат-партнерства
  * Version: 1.0.0
  * Author: Cashback
+ * Author URI: https://example.com
  * Text Domain: cashback-plugin
+ * Domain Path: /languages
+ * Requires at least: 6.2
+ * Requires PHP: 7.4
+ * WC requires at least: 5.0
+ * WC tested up to: 9.5
+ * License: GPL v2 or later
+ * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  */
 
 // Запрет прямого доступа
 defined('ABSPATH') or die('No script kiddies please!');
+
+// Минимальные требования к версиям
+define('CASHBACK_MIN_PHP_VERSION', '7.4');
+define('CASHBACK_MIN_WP_VERSION', '6.2');
+define('CASHBACK_MIN_WC_VERSION', '5.0');
+
+/**
+ * Проверка совместимости с текущими версиями PHP и WordPress
+ *
+ * @return void
+ */
+function cashback_check_requirements()
+{
+    $errors = [];
+
+    // Проверка версии PHP
+    if (version_compare(PHP_VERSION, CASHBACK_MIN_PHP_VERSION, '<')) {
+        $errors[] = sprintf(
+            /* translators: 1: Current PHP version, 2: Required PHP version */
+            __('Cashback Plugin requires PHP %2$s or higher. You are running PHP %1$s.', 'cashback-plugin'),
+            PHP_VERSION,
+            CASHBACK_MIN_PHP_VERSION
+        );
+    }
+
+    // Проверка версии WordPress
+    if (version_compare(get_bloginfo('version'), CASHBACK_MIN_WP_VERSION, '<')) {
+        $errors[] = sprintf(
+            /* translators: 1: Current WordPress version, 2: Required WordPress version */
+            __('Cashback Plugin requires WordPress %2$s or higher. You are running WordPress %1$s.', 'cashback-plugin'),
+            get_bloginfo('version'),
+            CASHBACK_MIN_WP_VERSION
+        );
+    }
+
+    // Проверка версии WooCommerce (если установлен)
+    if (defined('WC_VERSION') && version_compare(WC_VERSION, CASHBACK_MIN_WC_VERSION, '<')) {
+        $errors[] = sprintf(
+            /* translators: 1: Current WooCommerce version, 2: Required WooCommerce version */
+            __('Cashback Plugin requires WooCommerce %2$s or higher. You are running WooCommerce %1$s.', 'cashback-plugin'),
+            WC_VERSION,
+            CASHBACK_MIN_WC_VERSION
+        );
+    }
+
+    // Если есть ошибки, деактивируем плагин и показываем сообщение
+    if (!empty($errors)) {
+        deactivate_plugins(plugin_basename(__FILE__));
+
+        $error_message = '<h1>' . esc_html__('Plugin Activation Error', 'cashback-plugin') . '</h1>';
+        $error_message .= '<p><strong>' . esc_html__('Cashback Plugin', 'cashback-plugin') . '</strong></p>';
+        $error_message .= '<ul>';
+        foreach ($errors as $error) {
+            $error_message .= '<li>' . esc_html($error) . '</li>';
+        }
+        $error_message .= '</ul>';
+
+        wp_die(
+            wp_kses_post($error_message),
+            esc_html__('Plugin Activation Error', 'cashback-plugin'),
+            array('back_link' => true)
+        );
+    }
+}
+
+// Проверяем требования при активации плагина
+register_activation_hook(__FILE__, 'cashback_check_requirements');
 
 /**
  * Основной класс плагина Cashback
@@ -27,6 +102,35 @@ class CashbackPlugin
         register_activation_hook(__FILE__, array($this, 'activate'));
         register_deactivation_hook(__FILE__, array($this, 'deactivate'));
         add_action('plugins_loaded', array($this, 'init'));
+        add_action('init', array($this, 'load_textdomain'));
+        add_action('before_woocommerce_init', array($this, 'declare_woocommerce_compatibility'));
+    }
+
+    /**
+     * Загрузка текстового домена для переводов
+     *
+     * @return void
+     */
+    public function load_textdomain()
+    {
+        load_plugin_textdomain(
+            'cashback-plugin',
+            false,
+            dirname(plugin_basename(__FILE__)) . '/languages/'
+        );
+    }
+
+    /**
+     * Объявление совместимости с функциями WooCommerce
+     *
+     * @return void
+     */
+    public function declare_woocommerce_compatibility()
+    {
+        if (class_exists(\Automattic\WooCommerce\Utilities\FeaturesUtil::class)) {
+            \Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility('custom_order_tables', __FILE__, true);
+            \Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility('cart_checkout_blocks', __FILE__, true);
+        }
     }
 
     /**
@@ -170,7 +274,12 @@ class CashbackPlugin
      */
     public function woocommerce_required_notice()
     {
-        echo '<div class="notice notice-error"><p><strong>Cashback Plugin</strong> requires WooCommerce to be installed and active.</p></div>';
+        $message = sprintf(
+            '<strong>%s</strong> %s',
+            esc_html__('Cashback Plugin', 'cashback-plugin'),
+            esc_html__('requires WooCommerce to be installed and active.', 'cashback-plugin')
+        );
+        printf('<div class="notice notice-error"><p>%s</p></div>', wp_kses_post($message));
     }
 }
 

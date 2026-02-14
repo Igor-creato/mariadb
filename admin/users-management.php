@@ -231,7 +231,7 @@ class Cashback_Users_Management_Admin
                 'total_items' => $total_users,
                 'per_page'    => $per_page,
                 'current_page' => $current_page,
-                'total_pages' => ceil($total_users / $per_page),
+                'total_pages' => (int) ceil($total_users / $per_page),
                 'page_slug'   => 'cashback-users',
                 'add_args'    => !empty($filter_status) ? array('status' => $filter_status) : array(),
             );

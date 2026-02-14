@@ -1,1 +1,52 @@
+# Claude settings
 .claude/settings.local.json
+
+# Composer dependencies (в development/)
+/vendor/
+/development/vendor/
+/development/composer.lock
+
+# PHPStan
+/.phpstan.cache/
+
+# Node modules (if any)
+node_modules/
+package-lock.json
+yarn.lock
+
+# Build artifacts
+/build/
+/dist/
+*.zip
+*.zip.sha256
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+error_log
+debug.log
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# OS files
+Thumbs.db
+Desktop.ini
+
+# Temporary files
+*.tmp
+*.bak
+*.cache
+
+# WordPress
+wp-config.php
+.htaccess

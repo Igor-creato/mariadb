@@ -1,0 +1,18 @@
+# Composer Files Location
+
+Composer files have been moved to `development/` directory.
+
+## Installation
+
+```bash
+cd development
+composer install
+```
+
+This will install dependencies in `development/vendor/` and create symlinks if needed.
+
+## Why?
+
+- Keep root directory clean
+- Separate development files from production code
+- Easier release builds

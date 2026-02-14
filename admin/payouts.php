@@ -30,9 +30,9 @@ class Cashback_Payouts_Admin
     /**
      * WooCommerce logger instance
      *
-     * @var \WC_Logger|null
+     * @var \WC_Logger_Interface|null
      */
-    private ?\WC_Logger $logger = null;
+    private ?\WC_Logger_Interface $logger = null;
 
     /**
      * Конструктор класса
@@ -380,7 +380,7 @@ class Cashback_Payouts_Admin
                 'total_items' => $total_payouts,
                 'per_page'    => $per_page,
                 'current_page' => $current_page,
-                'total_pages' => ceil($total_payouts / $per_page),
+                'total_pages' => (int) ceil($total_payouts / $per_page),
                 'page_slug'   => 'cashback-payouts',
                 'add_args'    => array_filter([
                     'status' => $filter_status,

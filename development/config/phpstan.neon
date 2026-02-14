@@ -1,0 +1,44 @@
+includes:
+    - phpstan-baseline.neon
+
+parameters:
+    level: 6
+    paths:
+        - ../../
+
+    excludePaths:
+        - ../vendor/
+        - ../../node_modules/
+        - ../../.git/
+        - ../../.claude/
+        - ../
+
+    # Bootstrap file for WordPress constants and functions
+    bootstrapFiles:
+        - ../vendor/php-stubs/wordpress-stubs/wordpress-stubs.php
+        - ../vendor/php-stubs/woocommerce-stubs/woocommerce-stubs.php
+        - phpstan-bootstrap.php
+
+    # Ignore errors that are WordPress-specific
+    ignoreErrors:
+        # WordPress loads files that don't return values
+        - '#Function require_once invoked with \d+ parameters?, 0 required#'
+        - '#Function require_once invoked with \d+ parameter#'
+
+        # WordPress uses dynamic properties
+        - '#Access to an undefined property object::\$[a-zA-Z_]+#'
+
+        # WordPress global $wpdb
+        - '#Undefined variable: \$wpdb#'
+
+        # Unreachable code after WordPress exit functions
+        - '#Unreachable statement - code above always terminates\.#'
+
+        # Missing iterables and generics (legacy code)
+        -
+            identifier: missingType.iterableValue
+        -
+            identifier: missingType.generics
+
+    # Report unknown types
+    reportUnmatchedIgnoredErrors: false
