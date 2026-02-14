@@ -693,6 +693,11 @@ class Cashback_Support_Admin
             return;
         }
 
+        if (mb_strlen($message) > 5000) {
+            wp_send_json_error(['message' => 'Сообщение слишком длинное (максимум 5000 символов).']);
+            return;
+        }
+
         // Проверяем что тикет существует и не закрыт
         $ticket = $wpdb->get_row($wpdb->prepare(
             "SELECT id, user_id, subject, status FROM `{$this->tickets_table}` WHERE id = %d",
@@ -821,6 +826,11 @@ class Cashback_Support_Admin
      */
     public function handle_get_unread_count(): void
     {
+        if (!check_ajax_referer('support_admin_unread_count_nonce', 'nonce', false)) {
+            wp_send_json_error(['message' => 'Неверный токен безопасности.']);
+            return;
+        }
+
         if (!current_user_can('manage_options')) {
             wp_send_json_error();
             return;
@@ -840,8 +850,9 @@ class Cashback_Support_Admin
         ?>
         <script>
         (function($) {
+            var unreadCountNonce = '<?php echo esc_js(wp_create_nonce('support_admin_unread_count_nonce')); ?>';
             window.updateSupportBadge = function() {
-                $.post(ajaxurl, { action: 'support_admin_unread_count' }, function(response) {
+                $.post(ajaxurl, { action: 'support_admin_unread_count', nonce: unreadCountNonce }, function(response) {
                     if (!response.success) return;
                     var count = response.data.count;
                     var $menuLink = $('#adminmenu a[href*="cashback-support"]');

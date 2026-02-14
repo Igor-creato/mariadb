@@ -110,7 +110,7 @@ class Cashback_Bank_Management_Admin
                 ARRAY_A
             );
         } else {
-            $total_banks = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$this->table_name}");
+            $total_banks = (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->table_name} WHERE %d = %d", 1, 1));
 
             $banks = $wpdb->get_results(
                 $wpdb->prepare(
@@ -140,7 +140,7 @@ class Cashback_Bank_Management_Admin
             <h1 class="wp-heading-inline">Банки</h1>
             <hr class="wp-header-end">
 
-            <?php echo $message; ?>
+            <?php echo wp_kses_post($message); ?>
 
             <!-- Форма добавления нового банка -->
             <div class="card" id="add-bank-form" style="margin-bottom: 20px;">
@@ -335,7 +335,7 @@ class Cashback_Bank_Management_Admin
                         var data = {
                             'action': 'update_bank',
                             'id': id,
-                            'nonce': '<?php echo wp_create_nonce('update_bank_nonce'); ?>'
+                            'nonce': '<?php echo esc_js(wp_create_nonce('update_bank_nonce')); ?>'
                         };
 
                         row.find('.edit-input').each(function() {
@@ -396,7 +396,7 @@ class Cashback_Bank_Management_Admin
 
                         var formData = {
                             'action': 'add_bank',
-                            'nonce': '<?php echo wp_create_nonce('add_bank_nonce'); ?>',
+                            'nonce': '<?php echo esc_js(wp_create_nonce('add_bank_nonce')); ?>',
                             'bank_code': $('#bank_code').val(),
                             'name': $('#name').val(),
                             'short_name': $('#short_name').val(),
@@ -435,12 +435,14 @@ class Cashback_Bank_Management_Admin
     {
         // Проверяем nonce
         if (!wp_verify_nonce(sanitize_text_field($_POST['nonce']), 'update_bank_nonce')) {
-            wp_die('Неверный nonce.');
+            wp_send_json_error(['message' => 'Неверный токен безопасности.']);
+            return;
         }
 
         // Проверяем права пользователя
         if (!current_user_can('manage_options')) {
-            wp_die('Недостаточно прав для выполнения этого действия.');
+            wp_send_json_error(['message' => 'Недостаточно прав для выполнения этого действия.']);
+            return;
         }
 
         global $wpdb;
@@ -496,12 +498,14 @@ class Cashback_Bank_Management_Admin
     {
         // Проверяем nonce
         if (!wp_verify_nonce(sanitize_text_field($_POST['nonce']), 'add_bank_nonce')) {
-            wp_die('Неверный nonce.');
+            wp_send_json_error(['message' => 'Неверный токен безопасности.']);
+            return;
         }
 
         // Проверяем права пользователя
         if (!current_user_can('manage_options')) {
-            wp_die('Недостаточно прав для выполнения этого действия.');
+            wp_send_json_error(['message' => 'Недостаточно прав для выполнения этого действия.']);
+            return;
         }
 
         global $wpdb;

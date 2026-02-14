@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 if (!defined('ABSPATH')) {
     exit; // Exit if accessed directly
 }
@@ -28,7 +30,6 @@ class HistoryPayout
         add_filter('woocommerce_account_menu_items', array($this, 'add_menu_item'));
         add_action('woocommerce_account_history-payout_endpoint', array($this, 'content'));
         add_action('wp_ajax_load_page_payouts', array($this, 'ajax_load_page'));
-        add_action('wp_ajax_nopriv_load_page_payouts', array($this, 'ajax_load_page'));
         add_action('wp_enqueue_scripts', array($this, 'enqueue_scripts'));
     }
 
@@ -297,14 +298,14 @@ class HistoryPayout
 
         $table_name = $wpdb->prefix . 'cashback_payout_methods';
         $methods = $wpdb->get_results(
-            "SELECT slug, name FROM {$table_name} WHERE is_active = 1",
+            $wpdb->prepare("SELECT slug, name FROM {$table_name} WHERE is_active = %d", 1),
             ARRAY_A
         );
 
         $this->payout_method_labels = array();
 
         foreach ($methods as $method) {
-            $this->payout_method_labels[$method['slug']] = esc_html__($method['name'], 'history-payout');
+            $this->payout_method_labels[$method['slug']] = $method['name'];
         }
     }
 

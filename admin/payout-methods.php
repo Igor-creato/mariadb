@@ -101,10 +101,17 @@ class Cashback_Payout_Methods_Admin
         }
 
         // Получаем все способы выплаты с учётом фильтра
-        $payout_methods = $wpdb->get_results(
-            "SELECT * FROM {$this->table_name}{$where_clause} ORDER BY sort_order ASC",
-            ARRAY_A
-        );
+        if ($is_filtered) {
+            $payout_methods = $wpdb->get_results(
+                "SELECT * FROM {$this->table_name}{$where_clause} ORDER BY sort_order ASC",
+                ARRAY_A
+            );
+        } else {
+            $payout_methods = $wpdb->get_results(
+                $wpdb->prepare("SELECT * FROM {$this->table_name} WHERE %d = %d ORDER BY sort_order ASC", 1, 1),
+                ARRAY_A
+            );
+        }
 
         // Выводим сообщения об ошибках или успехе
         $message = '';
@@ -121,7 +128,7 @@ class Cashback_Payout_Methods_Admin
                 <h1 class="wp-heading-inline">Способы выплаты</h1>
                 <hr class="wp-header-end">
 
-                <?php echo $message; ?>
+                <?php echo wp_kses_post($message); ?>
 
                 <!-- Форма добавления нового способа выплаты -->
                 <div class="card" id="add-payout-method-form" style="margin-bottom: 20px;">
@@ -256,7 +263,7 @@ class Cashback_Payout_Methods_Admin
                             var data = {
                                 'action': 'update_payout_method',
                                 'id': id,
-                                'nonce': '<?php echo wp_create_nonce('update_payout_method_nonce'); ?>'
+                                'nonce': '<?php echo esc_js(wp_create_nonce('update_payout_method_nonce')); ?>'
                             };
 
                             row.find('.edit-input').each(function() {
@@ -316,7 +323,7 @@ class Cashback_Payout_Methods_Admin
 
                             var formData = {
                                 'action': 'add_payout_method',
-                                'nonce': '<?php echo wp_create_nonce('add_payout_method_nonce'); ?>',
+                                'nonce': '<?php echo esc_js(wp_create_nonce('add_payout_method_nonce')); ?>',
                                 'slug': $('#slug').val(),
                                 'name': $('#name').val(),
                                 'is_active': $('#is_active').val(),
@@ -345,12 +352,14 @@ class Cashback_Payout_Methods_Admin
     {
         // Проверяем nonce
         if (!wp_verify_nonce(sanitize_text_field($_POST['nonce']), 'update_payout_method_nonce')) {
-            wp_die('Неверный nonce.');
+            wp_send_json_error(['message' => 'Неверный токен безопасности.']);
+            return;
         }
 
         // Проверяем права пользователя
         if (!current_user_can('manage_options')) {
-            wp_die('Недостаточно прав для выполнения этого действия.');
+            wp_send_json_error(['message' => 'Недостаточно прав для выполнения этого действия.']);
+            return;
         }
 
         global $wpdb;
@@ -403,12 +412,14 @@ class Cashback_Payout_Methods_Admin
     {
         // Проверяем nonce
         if (!wp_verify_nonce(sanitize_text_field($_POST['nonce']), 'add_payout_method_nonce')) {
-            wp_die('Неверный nonce.');
+            wp_send_json_error(['message' => 'Неверный токен безопасности.']);
+            return;
         }
 
         // Проверяем права пользователя
         if (!current_user_can('manage_options')) {
-            wp_die('Недостаточно прав для выполнения этого действия.');
+            wp_send_json_error(['message' => 'Недостаточно прав для выполнения этого действия.']);
+            return;
         }
 
         global $wpdb;

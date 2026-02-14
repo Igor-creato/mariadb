@@ -72,7 +72,7 @@ class Cashback_Payouts_Admin
 
         // Также проверяем через $_GET параметр
         $is_payouts_page = in_array($hook, $allowed_hooks, true) ||
-            (isset($_GET['page']) && $_GET['page'] === 'cashback-payouts');
+            (isset($_GET['page']) && sanitize_text_field(wp_unslash($_GET['page'])) === 'cashback-payouts');
 
         if (!$is_payouts_page) {
             return;
@@ -561,11 +561,11 @@ class Cashback_Payouts_Admin
         $wpdb->query('START TRANSACTION');
 
         try {
-            // Получаем текущий баланс пользователя
+            // Получаем текущий баланс пользователя с блокировкой строки
             $balance_table = $wpdb->prefix . 'cashback_user_balance';
             $current_balance = $wpdb->get_row(
                 $wpdb->prepare(
-                    "SELECT pending_balance, paid_balance FROM {$balance_table} WHERE user_id = %d",
+                    "SELECT pending_balance, paid_balance, version FROM {$balance_table} WHERE user_id = %d FOR UPDATE",
                     $user_id
                 ),
                 ARRAY_A
@@ -588,20 +588,26 @@ class Cashback_Payouts_Admin
             // Обновляем баланс: вычитаем из pending_balance и добавляем к paid_balance
             $new_pending_balance = $pending_balance - $amount;
             $new_paid_balance = floatval($current_balance['paid_balance']) + $amount;
+            $old_version = intval($current_balance['version']);
 
+            // Используем оптимистичную блокировку через version
             $result = $wpdb->update(
                 $balance_table,
                 [
                     'pending_balance' => $new_pending_balance,
-                    'paid_balance' => $new_paid_balance
+                    'paid_balance' => $new_paid_balance,
+                    'version' => $old_version + 1
                 ],
-                ['user_id' => $user_id],
-                ['%f', '%f'],
-                ['%d']
+                [
+                    'user_id' => $user_id,
+                    'version' => $old_version
+                ],
+                ['%f', '%f', '%d'],
+                ['%d', '%d']
             );
 
-            if ($result === false) {
-                $this->log_error("Ошибка обновления баланса пользователя {$user_id}");
+            if ($result === false || $result === 0) {
+                $this->log_error("Ошибка обновления баланса пользователя {$user_id} или конфликт версий");
                 $wpdb->query('ROLLBACK');
                 return false;
             }
@@ -623,7 +629,7 @@ class Cashback_Payouts_Admin
 
     /**
      * Обновление баланса пользователя при изменении статуса выплаты на "declined"
-     * 
+     *
      * @param int $payout_id ID запроса на выплату
      * @return bool Результат операции
      */
@@ -652,11 +658,11 @@ class Cashback_Payouts_Admin
         $wpdb->query('START TRANSACTION');
 
         try {
-            // Получаем текущий баланс пользователя
+            // Получаем текущий баланс пользователя с блокировкой строки
             $balance_table = $wpdb->prefix . 'cashback_user_balance';
             $current_balance = $wpdb->get_row(
                 $wpdb->prepare(
-                    "SELECT pending_balance, frozen_balance FROM {$balance_table} WHERE user_id = %d",
+                    "SELECT pending_balance, frozen_balance, version FROM {$balance_table} WHERE user_id = %d FOR UPDATE",
                     $user_id
                 ),
                 ARRAY_A
@@ -679,20 +685,26 @@ class Cashback_Payouts_Admin
             // Обновляем баланс: вычитаем из pending_balance и добавляем к frozen_balance
             $new_pending_balance = $pending_balance - $amount;
             $new_frozen_balance = floatval($current_balance['frozen_balance']) + $amount;
+            $old_version = intval($current_balance['version']);
 
+            // Используем оптимистичную блокировку через version
             $result = $wpdb->update(
                 $balance_table,
                 [
                     'pending_balance' => $new_pending_balance,
-                    'frozen_balance' => $new_frozen_balance
+                    'frozen_balance' => $new_frozen_balance,
+                    'version' => $old_version + 1
                 ],
-                ['user_id' => $user_id],
-                ['%f', '%f'],
-                ['%d']
+                [
+                    'user_id' => $user_id,
+                    'version' => $old_version
+                ],
+                ['%f', '%f', '%d'],
+                ['%d', '%d']
             );
 
-            if ($result === false) {
-                $this->log_error("Ошибка обновления баланса пользователя {$user_id}");
+            if ($result === false || $result === 0) {
+                $this->log_error("Ошибка обновления баланса пользователя {$user_id} или конфликт версий");
                 $wpdb->query('ROLLBACK');
                 return false;
             }

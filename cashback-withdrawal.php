@@ -572,10 +572,6 @@ class CashbackWithdrawal
     }
 
     /**
-     * Process cashback withdrawal request
-     */
-    /**
-    /**
      * Process cashback withdrawal request with concurrency-safe balance handling.
      * Allows multiple withdrawal requests (as long as balance permits),
      * but prevents race conditions during balance deduction.
@@ -583,8 +579,8 @@ class CashbackWithdrawal
     public function process_cashback_withdrawal()
     {
         // === 1. Security: nonce and authentication ===
-        if (!wp_verify_nonce($_POST['nonce'] ?? '', 'cashback_withdrawal_nonce')) {
-            wp_die('Security check failed', 403);
+        if (!wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'] ?? '')), 'cashback_withdrawal_nonce')) {
+            wp_send_json_error(__('Ошибка безопасности.', 'woocommerce'));
         }
 
         if (!is_user_logged_in()) {
@@ -875,7 +871,7 @@ class CashbackWithdrawal
     public function save_payout_settings()
     {
         // Проверяем nonce
-        if (!wp_verify_nonce($_POST['security'] ?? '', 'cashback_withdrawal_nonce')) {
+        if (!wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['security'] ?? '')), 'cashback_withdrawal_nonce')) {
             wp_send_json_error(array('message' => __('Неверный nonce.', 'woocommerce')));
             return;
         }
@@ -905,6 +901,11 @@ class CashbackWithdrawal
 
         if (empty($payout_account)) {
             wp_send_json_error(array('message' => __('Пожалуйста, введите номер счета или телефона.', 'woocommerce')));
+            return;
+        }
+
+        if (mb_strlen($payout_account) > 50) {
+            wp_send_json_error(array('message' => __('Номер счета слишком длинный (максимум 50 символов).', 'woocommerce')));
             return;
         }
 
@@ -1042,44 +1043,57 @@ class CashbackWithdrawal
 
         $table_name = $wpdb->prefix . 'cashback_user_profile';
 
-        // Проверяем, существует ли запись профиля для пользователя
-        $existing_record = $wpdb->get_var(
-            $wpdb->prepare(
-                "SELECT user_id FROM {$table_name} WHERE user_id = %d",
-                $user_id
-            )
-        );
+        $wpdb->query('START TRANSACTION');
 
-        if ($existing_record) {
-            // Обновляем существующую запись
-            $result = $wpdb->update(
-                $table_name,
-                array(
-                    'payout_method_id' => $payout_method_id,
-                    'payout_account' => $payout_account,
-                    'bank_id' => $bank_id,
-                    'payout_details_updated_at' => current_time('mysql')
-                ),
-                array('user_id' => $user_id),
-                array('%d', '%s', '%d', '%s'),
-                array('%d')
+        try {
+            // Проверяем, существует ли запись профиля для пользователя (с блокировкой строки)
+            $existing_record = $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT user_id FROM {$table_name} WHERE user_id = %d FOR UPDATE",
+                    $user_id
+                )
             );
-        } else {
-            // Создаем новую запись
-            $result = $wpdb->insert(
-                $table_name,
-                array(
-                    'user_id' => $user_id,
-                    'payout_method_id' => $payout_method_id,
-                    'payout_account' => $payout_account,
-                    'bank_id' => $bank_id,
-                    'payout_details_updated_at' => current_time('mysql')
-                ),
-                array('%d', '%d', '%s', '%d', '%s')
-            );
+
+            if ($existing_record) {
+                // Обновляем существующую запись
+                $result = $wpdb->update(
+                    $table_name,
+                    array(
+                        'payout_method_id' => $payout_method_id,
+                        'payout_account' => $payout_account,
+                        'bank_id' => $bank_id,
+                        'payout_details_updated_at' => current_time('mysql')
+                    ),
+                    array('user_id' => $user_id),
+                    array('%d', '%s', '%d', '%s'),
+                    array('%d')
+                );
+            } else {
+                // Создаем новую запись
+                $result = $wpdb->insert(
+                    $table_name,
+                    array(
+                        'user_id' => $user_id,
+                        'payout_method_id' => $payout_method_id,
+                        'payout_account' => $payout_account,
+                        'bank_id' => $bank_id,
+                        'payout_details_updated_at' => current_time('mysql')
+                    ),
+                    array('%d', '%d', '%s', '%d', '%s')
+                );
+            }
+
+            if ($result === false) {
+                $wpdb->query('ROLLBACK');
+                return false;
+            }
+
+            $wpdb->query('COMMIT');
+            return true;
+        } catch (\Exception $e) {
+            $wpdb->query('ROLLBACK');
+            return false;
         }
-
-        return $result !== false;
     }
 
     /**
@@ -1143,6 +1157,12 @@ class CashbackWithdrawal
      */
     public function get_user_balance_ajax()
     {
+        // Проверяем nonce
+        if (!check_ajax_referer('cashback_withdrawal_nonce', 'nonce', false)) {
+            wp_send_json_error(__('Ошибка безопасности.', 'woocommerce'));
+            return;
+        }
+
         // Проверяем, авторизован ли пользователь
         if (!is_user_logged_in()) {
             wp_send_json_error(__('Вы должны быть авторизованы для выполнения этого действия.', 'woocommerce'));

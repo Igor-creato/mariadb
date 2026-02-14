@@ -487,7 +487,7 @@ BEGIN
             AND processed_at IS NULL
             AND cashback IS NOT NULL
             AND cashback > 0
-            AND updated_at <= DATE_SUB(NOW(), INTERVAL 14 DAY)
+            AND updated_at <= DATE_SUB(NOW(), INTERVAL 1 DAY)
         FOR UPDATE;
 
         SET v_affected_rows = ROW_COUNT();

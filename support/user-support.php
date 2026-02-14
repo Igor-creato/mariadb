@@ -518,11 +518,32 @@ class Cashback_User_Support
             return;
         }
 
+        if (mb_strlen($subject) > 255) {
+            wp_send_json_error(['message' => 'Тема слишком длинная (максимум 255 символов).']);
+            return;
+        }
+
+        if (mb_strlen($message) > 5000) {
+            wp_send_json_error(['message' => 'Сообщение слишком длинное (максимум 5000 символов).']);
+            return;
+        }
+
+        // Защита от спама: максимум 5 тикетов в час
+        $rate_key = 'support_ticket_rate_' . $user_id;
+        $ticket_count = (int) get_transient($rate_key);
+        if ($ticket_count >= 5) {
+            wp_send_json_error(['message' => 'Слишком много тикетов. Попробуйте позже.']);
+            return;
+        }
+        set_transient($rate_key, $ticket_count + 1, HOUR_IN_SECONDS);
+
         if (!in_array($priority, ['urgent', 'normal', 'not_urgent'], true)) {
             $priority = 'not_urgent';
         }
 
-        // Вставляем тикет
+        // Вставляем тикет и первое сообщение в транзакции
+        $wpdb->query('START TRANSACTION');
+
         $inserted = $wpdb->insert(
             $this->tickets_table,
             [
@@ -535,6 +556,7 @@ class Cashback_User_Support
         );
 
         if (!$inserted) {
+            $wpdb->query('ROLLBACK');
             wp_send_json_error(['message' => 'Ошибка при отправке, попробуйте еще раз']);
             return;
         }
@@ -542,7 +564,7 @@ class Cashback_User_Support
         $ticket_id = (int) $wpdb->insert_id;
 
         // Вставляем первое сообщение
-        $wpdb->insert(
+        $message_inserted = $wpdb->insert(
             $this->messages_table,
             [
                 'ticket_id' => $ticket_id,
@@ -553,6 +575,14 @@ class Cashback_User_Support
             ],
             ['%d', '%d', '%s', '%d', '%d']
         );
+
+        if (!$message_inserted) {
+            $wpdb->query('ROLLBACK');
+            wp_send_json_error(['message' => 'Ошибка при отправке, попробуйте еще раз']);
+            return;
+        }
+
+        $wpdb->query('COMMIT');
 
         // Отправляем email администратору
         $this->send_admin_notification($ticket_id, 'new_ticket', $subject);
@@ -612,6 +642,20 @@ class Cashback_User_Support
             wp_send_json_error(['message' => 'Ошибка при отправке, попробуйте еще раз']);
             return;
         }
+
+        if (mb_strlen($message) > 5000) {
+            wp_send_json_error(['message' => 'Сообщение слишком длинное (максимум 5000 символов).']);
+            return;
+        }
+
+        // Защита от спама: максимум 20 ответов в час
+        $rate_key = 'support_reply_rate_' . $user_id;
+        $reply_count = (int) get_transient($rate_key);
+        if ($reply_count >= 20) {
+            wp_send_json_error(['message' => 'Слишком много сообщений. Попробуйте позже.']);
+            return;
+        }
+        set_transient($rate_key, $reply_count + 1, HOUR_IN_SECONDS);
 
         // Проверяем что тикет принадлежит пользователю и не закрыт
         $ticket = $wpdb->get_row($wpdb->prepare(
