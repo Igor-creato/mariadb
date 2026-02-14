@@ -26,6 +26,9 @@ class Cashback_Support_Admin
         add_action('wp_ajax_support_toggle_module', [$this, 'handle_toggle_module']);
         add_action('wp_ajax_support_admin_reply', [$this, 'handle_admin_reply']);
         add_action('wp_ajax_support_change_status', [$this, 'handle_change_status']);
+        add_action('wp_ajax_support_admin_unread_count', [$this, 'handle_get_unread_count']);
+
+        add_action('admin_footer', [$this, 'render_badge_updater_script']);
     }
 
     /**
@@ -513,24 +516,14 @@ class Cashback_Support_Admin
         </div>
 
         <?php if (!$is_closed): ?>
-        <!-- Форма ответа -->
-        <div style="max-width: 800px; margin-top: 20px;">
+        <!-- Форма ответа и управление -->
+        <div id="support-reply-section" style="max-width: 800px; margin-top: 20px;">
             <h3>Ответить</h3>
             <textarea id="support-admin-message" rows="5" class="large-text" placeholder="Введите ваш ответ..."></textarea>
             <p>
                 <button type="button" class="button button-primary" id="support-send-reply">Отправить ответ</button>
+                <button type="button" class="button" id="support-close-ticket" style="margin-left: 10px; color: #a00;">Закрыть тикет</button>
             </p>
-        </div>
-
-        <!-- Смена статуса -->
-        <div style="max-width: 800px; margin-top: 20px;">
-            <h3>Изменить статус</h3>
-            <select id="support-change-status">
-                <option value="open" <?php selected($ticket->status, 'open'); ?>>Открыт</option>
-                <option value="answered" <?php selected($ticket->status, 'answered'); ?>>Отвечен</option>
-                <option value="closed" <?php selected($ticket->status, 'closed'); ?>>Закрыт</option>
-            </select>
-            <button type="button" class="button" id="support-save-status">Сохранить статус</button>
         </div>
         <?php else: ?>
         <div class="notice notice-warning" style="max-width: 800px; margin-top: 20px;">
@@ -541,8 +534,9 @@ class Cashback_Support_Admin
         <script>
         jQuery(document).ready(function($) {
             var ticketId = <?php echo (int) $ticket_id; ?>;
-            var statusLabels = {open: 'Открыт', answered: 'Отвечен', closed: 'Закрыт'};
-            var statusClasses = {open: 'status-open', answered: 'status-answered', closed: 'status-closed'};
+
+            // Обновляем бейдж при открытии тикета (сообщения помечены прочитанными)
+            if (typeof updateSupportBadge === 'function') updateSupportBadge();
 
             // Ответ администратора
             $('#support-send-reply').on('click', function() {
@@ -564,11 +558,10 @@ class Cashback_Support_Admin
                     if (response.success) {
                         $('#support-messages').append(response.data.html);
                         $('#support-admin-message').val('');
-                        // Обновляем бейдж статуса на "Отвечен"
                         var $statusBadge = $('.form-table .support-admin-badge.status-open, .form-table .support-admin-badge.status-answered, .form-table .support-admin-badge.status-closed');
                         $statusBadge.removeClass('status-open status-closed').addClass('status-answered').text('Отвечен');
-                        $('#support-change-status').val('answered');
                         showAdminNotice('success', 'Сообщение отправлено');
+                        if (typeof updateSupportBadge === 'function') updateSupportBadge();
                     } else {
                         showAdminNotice('error', response.data.message || 'Ошибка при отправке');
                     }
@@ -579,61 +572,35 @@ class Cashback_Support_Admin
                 });
             });
 
-            // Смена статуса (двухшаговое подтверждение для закрытия)
-            var statusConfirming = false;
-            $('#support-save-status').on('click', function() {
-                var newStatus = $('#support-change-status').val();
+            // Закрытие тикета
+            $('#support-close-ticket').on('click', function() {
                 var btn = $(this);
-
-                if (newStatus === 'closed' && !statusConfirming) {
-                    statusConfirming = true;
-                    btn.text('Подтвердить закрытие?').addClass('button-link-delete');
-                    setTimeout(function() {
-                        if (statusConfirming) {
-                            statusConfirming = false;
-                            btn.text('Сохранить статус').removeClass('button-link-delete');
-                        }
-                    }, 3000);
-                    return;
-                }
-
-                statusConfirming = false;
-                btn.prop('disabled', true).text('Сохранение...').removeClass('button-link-delete');
+                btn.prop('disabled', true).text('Закрытие...');
 
                 $.post(ajaxurl, {
                     action: 'support_change_status',
                     ticket_id: ticketId,
-                    status: newStatus,
+                    status: 'closed',
                     nonce: '<?php echo esc_js($status_nonce); ?>'
                 }, function(response) {
                     if (response.success) {
-                        // Обновляем бейдж статуса в таблице информации
                         var $statusBadge = $('.form-table .status-open, .form-table .status-answered, .form-table .status-closed');
                         $statusBadge.removeClass('status-open status-answered status-closed')
-                            .addClass(statusClasses[newStatus] || '')
-                            .text(statusLabels[newStatus] || newStatus);
-
-                        showAdminNotice('success', 'Статус изменён на: ' + (statusLabels[newStatus] || newStatus));
-
-                        if (newStatus === 'closed') {
-                            // Скрываем форму ответа и смены статуса
-                            $('#support-send-reply').closest('div[style]').hide();
-                            $('#support-save-status').closest('div[style]').hide();
-                            // Показываем уведомление о закрытии
-                            $('#support-messages').after(
-                                '<div class="notice notice-warning" style="max-width: 800px; margin-top: 20px;">' +
-                                '<p>Тикет закрыт. Ответить невозможно.</p></div>'
-                            );
-                        } else {
-                            btn.prop('disabled', false).text('Сохранить статус');
-                        }
+                            .addClass('status-closed').text('Закрыт');
+                        $('#support-reply-section').hide();
+                        $('#support-messages').after(
+                            '<div class="notice notice-warning" style="max-width: 800px; margin-top: 20px;">' +
+                            '<p>Тикет закрыт. Ответить невозможно.</p></div>'
+                        );
+                        showAdminNotice('success', 'Тикет закрыт');
+                        if (typeof updateSupportBadge === 'function') updateSupportBadge();
                     } else {
-                        showAdminNotice('error', response.data.message || 'Ошибка при смене статуса');
-                        btn.prop('disabled', false).text('Сохранить статус');
+                        showAdminNotice('error', response.data.message || 'Ошибка при закрытии');
+                        btn.prop('disabled', false).text('Закрыть тикет');
                     }
                 }).fail(function() {
                     showAdminNotice('error', 'Ошибка сервера');
-                    btn.prop('disabled', false).text('Сохранить статус');
+                    btn.prop('disabled', false).text('Закрыть тикет');
                 });
             });
         });
@@ -847,6 +814,53 @@ class Cashback_Support_Admin
         );
 
         wp_send_json_success(['status' => $new_status]);
+    }
+
+    /**
+     * Получение количества непрочитанных тикетов (для AJAX-обновления бейджа)
+     */
+    public function handle_get_unread_count(): void
+    {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error();
+            return;
+        }
+
+        wp_send_json_success(['count' => Cashback_Support_DB::get_unread_tickets_count()]);
+    }
+
+    /**
+     * Скрипт автообновления бейджа в меню
+     */
+    public function render_badge_updater_script(): void
+    {
+        if (!Cashback_Support_DB::is_module_enabled()) {
+            return;
+        }
+        ?>
+        <script>
+        (function($) {
+            window.updateSupportBadge = function() {
+                $.post(ajaxurl, { action: 'support_admin_unread_count' }, function(response) {
+                    if (!response.success) return;
+                    var count = response.data.count;
+                    var $menuLink = $('#adminmenu a[href*="cashback-support"]');
+                    if (!$menuLink.length) return;
+                    var $badge = $menuLink.find('.awaiting-mod');
+                    if (count > 0) {
+                        if ($badge.length) {
+                            $badge.find('.pending-count').text(count);
+                        } else {
+                            $menuLink.append(' <span class="awaiting-mod count-' + count + '"><span class="pending-count">' + count + '</span></span>');
+                        }
+                    } else {
+                        $badge.remove();
+                    }
+                });
+            };
+        })(jQuery);
+        </script>
+        <?php
     }
 
     // ========= Утилиты =========

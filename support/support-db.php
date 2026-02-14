@@ -114,8 +114,7 @@ class Cashback_Support_DB
              FROM `{$tickets_table}` t
              INNER JOIN `{$messages_table}` m ON t.id = m.ticket_id
              WHERE m.is_admin = 0
-             AND m.is_read = 0
-             AND t.status != 'closed'"
+             AND m.is_read = 0"
         );
 
         return (int) $count;
@@ -137,8 +136,7 @@ class Cashback_Support_DB
              INNER JOIN `{$messages_table}` m ON t.id = m.ticket_id
              WHERE t.user_id = %d
              AND m.is_admin = 1
-             AND m.is_read = 0
-             AND t.status != 'closed'",
+             AND m.is_read = 0",
             $user_id
         ));
 
