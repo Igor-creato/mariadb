@@ -187,7 +187,7 @@ class Cashback_Support_Admin
 
         // Пагинация
         $current_page = max(1, absint($_GET['paged'] ?? 1));
-        $per_page = 20;
+        $per_page = 10;
         $offset = ($current_page - 1) * $per_page;
 
         // Построение WHERE
@@ -235,6 +235,22 @@ class Cashback_Support_Admin
         $tickets = $wpdb->get_results($wpdb->prepare($select_sql, $query_params));
 
         ?>
+        <style>
+            .support-admin-badge {
+                display: inline-block;
+                padding: 2px 8px;
+                font-size: 0.85em;
+                border-radius: 3px;
+                color: #fff;
+            }
+            .status-open { background: #2196F3; }
+            .status-answered { background: #4CAF50; }
+            .status-closed { background: #9E9E9E; }
+            .priority-urgent { background: #f44336; }
+            .priority-normal { background: #ff9800; }
+            .priority-not_urgent { background: #607d8b; }
+        </style>
+
         <h1 class="wp-heading-inline">Поддержка</h1>
         <hr class="wp-header-end">
         <?php $this->render_admin_notice_container(); ?>
@@ -301,9 +317,13 @@ class Cashback_Support_Admin
                                     <br><small><?php echo esc_html($ticket->user_email); ?></small>
                                 <?php endif; ?>
                             </td>
-                            <td><?php echo esc_html($this->get_priority_label($ticket->priority)); ?></td>
                             <td>
-                                <span class="<?php echo esc_attr($this->get_status_css_class($ticket->status)); ?>">
+                                <span class="support-admin-badge <?php echo esc_attr($this->get_priority_css_class($ticket->priority)); ?>">
+                                    <?php echo esc_html($this->get_priority_label($ticket->priority)); ?>
+                                </span>
+                            </td>
+                            <td>
+                                <span class="support-admin-badge <?php echo esc_attr($this->get_status_css_class($ticket->status)); ?>">
                                     <?php echo esc_html($this->get_status_label($ticket->status)); ?>
                                 </span>
                             </td>
@@ -318,7 +338,7 @@ class Cashback_Support_Admin
                             <td><?php echo esc_html(date_i18n('d.m.Y H:i', strtotime($ticket->updated_at))); ?></td>
                             <td>
                                 <a href="<?php echo esc_url(add_query_arg(['page' => 'cashback-support', 'action' => 'view', 'ticket_id' => $ticket->id], admin_url('admin.php'))); ?>" class="button button-small">
-                                    Просмотр
+                                    Ответить
                                 </a>
                             </td>
                         </tr>
@@ -470,12 +490,16 @@ class Cashback_Support_Admin
             </tr>
             <tr>
                 <th>Приоритет</th>
-                <td><?php echo esc_html($this->get_priority_label($ticket->priority)); ?></td>
+                <td>
+                    <span class="support-admin-badge <?php echo esc_attr($this->get_priority_css_class($ticket->priority)); ?>">
+                        <?php echo esc_html($this->get_priority_label($ticket->priority)); ?>
+                    </span>
+                </td>
             </tr>
             <tr>
                 <th>Статус</th>
                 <td>
-                    <span class="<?php echo esc_attr($this->get_status_css_class($ticket->status)); ?>">
+                    <span class="support-admin-badge <?php echo esc_attr($this->get_status_css_class($ticket->status)); ?>">
                         <?php echo esc_html($this->get_status_label($ticket->status)); ?>
                     </span>
                 </td>
@@ -555,6 +579,10 @@ class Cashback_Support_Admin
                     if (response.success) {
                         $('#support-messages').append(response.data.html);
                         $('#support-admin-message').val('');
+                        // Обновляем бейдж статуса на "Отвечен"
+                        var $statusBadge = $('.form-table .support-admin-badge.status-open, .form-table .support-admin-badge.status-answered, .form-table .support-admin-badge.status-closed');
+                        $statusBadge.removeClass('status-open status-closed').addClass('status-answered').text('Отвечен');
+                        $('#support-change-status').val('answered');
                         showAdminNotice('success', 'Сообщение отправлено');
                     } else {
                         showAdminNotice('error', response.data.message || 'Ошибка при отправке');
@@ -896,6 +924,16 @@ class Cashback_Support_Admin
             'closed' => 'status-closed',
         ];
         return $classes[$status] ?? '';
+    }
+
+    private function get_priority_css_class(string $priority): string
+    {
+        $classes = [
+            'urgent' => 'priority-urgent',
+            'normal' => 'priority-normal',
+            'not_urgent' => 'priority-not_urgent',
+        ];
+        return $classes[$priority] ?? '';
     }
 }
 
