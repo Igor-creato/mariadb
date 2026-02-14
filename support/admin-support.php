@@ -156,7 +156,7 @@ class Cashback_Support_Admin
                     nonce: btn.data('nonce')
                 }, function(response) {
                     if (response.success) {
-                        showAdminNotice('success', 'Модуль включён. Перезагрузка...');
+                        showAdminNotice('success', 'Модуль поддержки включен');
                         setTimeout(function() { location.reload(); }, 1500);
                     } else {
                         showAdminNotice('error', response.data.message || 'Ошибка');
@@ -381,41 +381,26 @@ class Cashback_Support_Admin
 
         <script>
         jQuery(document).ready(function($) {
-            // Отключение модуля (двухшаговое подтверждение)
             $('#support-disable-module').on('click', function() {
                 var btn = $(this);
-                if (btn.data('confirming')) {
-                    btn.data('confirming', false);
-                    btn.prop('disabled', true).text('Отключение...');
-                    $.post(ajaxurl, {
-                        action: 'support_toggle_module',
-                        enabled: 0,
-                        nonce: btn.data('nonce')
-                    }, function(response) {
-                        if (response.success) {
-                            showAdminNotice('success', 'Модуль отключён. Перезагрузка...');
-                            setTimeout(function() { location.reload(); }, 1500);
-                        } else {
-                            showAdminNotice('error', response.data.message || 'Ошибка');
-                            btn.prop('disabled', false).text('Отключить модуль');
-                        }
-                    }).fail(function() {
-                        showAdminNotice('error', 'Ошибка сервера');
+                btn.prop('disabled', true).text('Отключение...');
+                $.post(ajaxurl, {
+                    action: 'support_toggle_module',
+                    enabled: 0,
+                    nonce: btn.data('nonce')
+                }, function(response) {
+                    if (response.success) {
+                        showAdminNotice('success', 'Модуль поддержки отключен');
+                        setTimeout(function() { location.reload(); }, 1500);
+                    } else {
+                        showAdminNotice('error', response.data.message || 'Ошибка');
                         btn.prop('disabled', false).text('Отключить модуль');
-                    });
-                } else {
-                    btn.data('confirming', true);
-                    btn.data('original-text', btn.text());
-                    btn.text('Подтвердить отключение?').addClass('button-link-delete');
-                    setTimeout(function() {
-                        if (btn.data('confirming')) {
-                            btn.data('confirming', false);
-                            btn.text(btn.data('original-text')).removeClass('button-link-delete');
-                        }
-                    }, 3000);
-                }
+                    }
+                }).fail(function() {
+                    showAdminNotice('error', 'Ошибка сервера');
+                    btn.prop('disabled', false).text('Отключить модуль');
+                });
             });
-
         });
         </script>
         <?php
