@@ -482,10 +482,10 @@ class Cashback_User_Support
         ?>
         <div id="support-create-alert" style="display: none;"></div>
 
-        <form id="support-create-form">
+        <form id="support-create-form" novalidate>
             <div class="support-form-group">
                 <label for="support-subject">Тема</label>
-                <input type="text" id="support-subject" name="subject" required maxlength="255" placeholder="Опишите тему обращения">
+                <input type="text" id="support-subject" name="subject" maxlength="255" placeholder="Опишите тему обращения">
             </div>
             <div class="support-form-group">
                 <label for="support-priority">Срочность</label>
@@ -498,7 +498,7 @@ class Cashback_User_Support
             </div>
             <div class="support-form-group">
                 <label for="support-message">Сообщение</label>
-                <textarea id="support-message" name="message" required placeholder="Опишите вашу проблему или вопрос подробно..."></textarea>
+                <textarea id="support-message" name="message" placeholder="Опишите вашу проблему или вопрос подробно..."></textarea>
             </div>
             <button type="submit" class="support-btn support-btn-primary" id="support-submit-btn">Отправить</button>
         </form>
