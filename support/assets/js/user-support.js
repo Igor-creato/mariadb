@@ -121,45 +121,37 @@
             });
         });
 
-        // ========= Закрытие тикета (двухшаговое подтверждение) =========
+        // ========= Закрытие тикета =========
         $(document).on('click', '#support-close-btn', function() {
             var btn = $(this);
+            var ticketId = btn.data('ticket-id');
+            btn.prop('disabled', true).text('Закрытие...');
 
-            if (btn.data('confirming')) {
-                // Второй клик — выполняем закрытие
-                btn.data('confirming', false).removeClass('support-btn-confirming');
-                var ticketId = btn.data('ticket-id');
-                btn.prop('disabled', true).text('Закрытие...');
-
-                $.post(cashback_support.ajax_url, {
-                    action: 'support_user_close_ticket',
-                    nonce: cashback_support.close_nonce,
-                    ticket_id: ticketId
-                }, function(response) {
-                    if (response.success) {
-                        loadTicket(ticketId, function() {
-                            showAlert('support-detail-alert', 'success', 'Тикет закрыт');
-                        });
-                    } else {
-                        showAlert('support-detail-alert', 'error', response.data.message || 'Ошибка при выполнении, попробуйте еще раз');
-                        btn.prop('disabled', false).text('Закрыть тикет');
-                    }
-                }).fail(function() {
-                    showAlert('support-detail-alert', 'error', 'Ошибка при выполнении, попробуйте еще раз');
+            $.post(cashback_support.ajax_url, {
+                action: 'support_user_close_ticket',
+                nonce: cashback_support.close_nonce,
+                ticket_id: ticketId
+            }, function(response) {
+                if (response.success) {
+                    showAlert('support-detail-alert', 'success', 'Тикет закрыт');
+                    // Обновляем бейдж статуса на «Закрыт»
+                    var $badge = $('#support-ticket-detail-content .support-badge-open, #support-ticket-detail-content .support-badge-answered');
+                    $badge.removeClass('support-badge-open support-badge-answered').addClass('support-badge-closed').text('Закрыт');
+                    // Убираем форму ответа и кнопки действий
+                    $('.support-ticket-actions').remove();
+                    // Обновляем строку в списке тикетов
+                    var $row = $('.support-ticket-row[data-ticket-id="' + ticketId + '"]');
+                    $row.find('.support-badge-open, .support-badge-answered')
+                        .removeClass('support-badge-open support-badge-answered')
+                        .addClass('support-badge-closed').text('Закрыт');
+                } else {
+                    showAlert('support-detail-alert', 'error', response.data.message || 'Ошибка при выполнении');
                     btn.prop('disabled', false).text('Закрыть тикет');
-                });
-            } else {
-                // Первый клик — запрос подтверждения
-                btn.data('confirming', true);
-                btn.data('original-text', btn.text());
-                btn.text('Подтвердить закрытие?').addClass('support-btn-confirming');
-                setTimeout(function() {
-                    if (btn.data('confirming')) {
-                        btn.data('confirming', false);
-                        btn.text(btn.data('original-text')).removeClass('support-btn-confirming');
-                    }
-                }, 3000);
-            }
+                }
+            }).fail(function() {
+                showAlert('support-detail-alert', 'error', 'Ошибка при выполнении');
+                btn.prop('disabled', false).text('Закрыть тикет');
+            });
         });
 
         // ========= Пагинация истории тикетов =========
@@ -186,9 +178,9 @@
         function renderPagination(totalPages) {
             var $pagination = $('#support-pagination');
             $pagination.html(
-                '<button type="button" id="support-page-prev">&lsaquo; Назад</button>' +
+                '<button type="button" class="button" id="support-page-prev">&lsaquo; Назад</button>' +
                 '<span class="support-page-info"><span id="support-page-current">1</span> / ' + totalPages + '</span>' +
-                '<button type="button" id="support-page-next">Вперёд &rsaquo;</button>'
+                '<button type="button" class="button" id="support-page-next">Вперёд &rsaquo;</button>'
             );
         }
 

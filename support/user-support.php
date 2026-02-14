@@ -297,14 +297,6 @@ class Cashback_User_Support
                 background-color: #d32f2f !important;
                 opacity: 1;
             }
-            .support-btn-confirming {
-                background-color: #ff9800 !important;
-                animation: support-pulse 1s infinite;
-            }
-            @keyframes support-pulse {
-                0%, 100% { opacity: 1; }
-                50% { opacity: 0.7; }
-            }
             .support-btn:disabled {
                 opacity: 0.5;
                 cursor: not-allowed;
@@ -337,17 +329,6 @@ class Cashback_User_Support
                 gap: 10px;
                 margin-top: 15px;
                 padding: 10px 0;
-            }
-            #support-pagination button {
-                padding: 6px 14px;
-                border: 1px solid #ddd;
-                background: #fff;
-                cursor: pointer;
-                font-size: 14px;
-                transition: background-color 0.2s;
-            }
-            #support-pagination button:hover:not(:disabled) {
-                background-color: #f0f0f0;
             }
             #support-pagination button:disabled {
                 opacity: 0.4;
