@@ -27,8 +27,22 @@
             var priority = $('#support-priority').val();
             var message = $('#support-message').val().trim();
 
-            if (!subject || !message) {
-                showAlert('support-create-alert', 'error', 'Заполните все обязательные поля');
+            // Сбрасываем подсветку ошибок
+            $('#support-create-form .support-field-error').removeClass('support-field-error');
+
+            if (!subject) {
+                showAlert('support-create-alert', 'error', 'Заполните тему пожалуйста');
+                $('#support-subject').addClass('support-field-error').focus();
+                return;
+            }
+            if (!priority) {
+                showAlert('support-create-alert', 'error', 'Выберите срочность');
+                $('#support-priority').addClass('support-field-error').focus();
+                return;
+            }
+            if (!message) {
+                showAlert('support-create-alert', 'error', 'Введите сообщение пожалуйста');
+                $('#support-message').addClass('support-field-error').focus();
                 return;
             }
 
@@ -98,7 +112,8 @@
             var message = $('#support-reply-message').val().trim();
 
             if (!message) {
-                showAlert('support-detail-alert', 'error', 'Введите текст сообщения');
+                showAlert('support-detail-alert', 'error', 'Введите сообщение пожалуйста');
+                $('#support-reply-message').addClass('support-field-error').focus();
                 return;
             }
 
@@ -282,6 +297,11 @@
             div.appendChild(document.createTextNode(text));
             return div.innerHTML;
         }
+
+        // Снимаем подсветку ошибки при вводе/выборе
+        $(document).on('input change', '.support-field-error', function() {
+            $(this).removeClass('support-field-error');
+        });
     });
 
 })(jQuery);

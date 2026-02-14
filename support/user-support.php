@@ -193,26 +193,32 @@ class Cashback_User_Support
         <style>
             .cashback-support-tabs {
                 display: flex;
-                gap: 0;
+                gap: 8px;
                 margin-bottom: 20px;
-                border-bottom: 2px solid #ddd;
             }
             .cashback-support-tab {
-                padding: 10px 20px;
-                border: none;
-                background: none;
+                padding: 10px 24px;
+                border: 1px solid #ddd;
+                background: #f5f5f5;
+                color: #666;
                 cursor: pointer;
                 font-size: 14px;
-                border-bottom: 2px solid transparent;
-                margin-bottom: -2px;
-                transition: border-color 0.2s;
-            }
-            .cashback-support-tab.active {
-                border-bottom-color: #333;
-                font-weight: bold;
+                font-weight: 500;
+                border-radius: 8px;
+                transition: all 0.2s ease;
+                box-shadow: 0 1px 3px rgba(0,0,0,0.06);
             }
             .cashback-support-tab:hover {
-                border-bottom-color: #999;
+                background: #eaeaea;
+                color: #333;
+                box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+            }
+            .cashback-support-tab.active {
+                background: #333;
+                color: #fff;
+                border-color: #333;
+                font-weight: 600;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.2);
             }
             .cashback-support-tab-content {
                 padding: 10px 0;
@@ -221,14 +227,17 @@ class Cashback_User_Support
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
-                padding: 12px 15px;
+                padding: 14px 18px;
                 border: 1px solid #e0e0e0;
-                margin-bottom: 8px;
+                margin-bottom: 10px;
                 cursor: pointer;
-                transition: background-color 0.2s;
+                border-radius: 8px;
+                box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+                transition: all 0.2s ease;
             }
             .support-ticket-row:hover {
                 background-color: #f5f5f5;
+                box-shadow: 0 3px 10px rgba(0,0,0,0.1);
             }
             .support-ticket-info {
                 flex: 1;
@@ -258,10 +267,12 @@ class Cashback_User_Support
             .support-badge-normal { background: #ff9800; }
             .support-badge-not_urgent { background: #607d8b; }
             .support-message {
-                padding: 12px 16px;
+                padding: 14px 18px;
                 margin-bottom: 10px;
                 border: 1px solid #e0e0e0;
                 border-left: 4px solid #999;
+                border-radius: 8px;
+                box-shadow: 0 1px 4px rgba(0,0,0,0.06);
             }
             .support-message-admin {
                 background: #e8f4f8;
@@ -400,6 +411,10 @@ class Cashback_User_Support
                 text-align: center;
                 margin-left: 8px;
             }
+            .support-field-error {
+                border-color: #f44336 !important;
+                box-shadow: 0 0 0 1px #f44336 !important;
+            }
         </style>
         <?php
     }
@@ -475,7 +490,8 @@ class Cashback_User_Support
             <div class="support-form-group">
                 <label for="support-priority">Срочность</label>
                 <select id="support-priority" name="priority">
-                    <option value="not_urgent" selected>Не срочный</option>
+                    <option value="" disabled selected>Выберите срочность</option>
+                    <option value="not_urgent">Не срочный</option>
                     <option value="normal">Обычный</option>
                     <option value="urgent">Срочный</option>
                 </select>
@@ -513,8 +529,8 @@ class Cashback_User_Support
         $priority = sanitize_text_field($_POST['priority'] ?? 'not_urgent');
         $message = sanitize_textarea_field($_POST['message'] ?? '');
 
-        if (empty($subject) || empty($message)) {
-            wp_send_json_error(['message' => 'Ошибка при отправке, попробуйте еще раз']);
+        if (empty($subject) || empty($priority) || empty($message)) {
+            wp_send_json_error(['message' => 'Заполните все обязательные поля.']);
             return;
         }
 
@@ -538,7 +554,8 @@ class Cashback_User_Support
         set_transient($rate_key, $ticket_count + 1, HOUR_IN_SECONDS);
 
         if (!in_array($priority, ['urgent', 'normal', 'not_urgent'], true)) {
-            $priority = 'not_urgent';
+            wp_send_json_error(['message' => 'Выберите срочность.']);
+            return;
         }
 
         // Вставляем тикет и первое сообщение в транзакции

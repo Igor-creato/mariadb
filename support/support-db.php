@@ -148,7 +148,7 @@ class Cashback_Support_DB
      */
     public static function format_ticket_number(int $ticket_id): string
     {
-        return '#' . str_pad((string) $ticket_id, 3, '0', STR_PAD_LEFT);
+        return '№' . str_pad((string) $ticket_id, 3, '0', STR_PAD_LEFT);
     }
 
     /**

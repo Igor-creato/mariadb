@@ -538,11 +538,17 @@ class Cashback_Support_Admin
             // Обновляем бейдж при открытии тикета (сообщения помечены прочитанными)
             if (typeof updateSupportBadge === 'function') updateSupportBadge();
 
+            // Снимаем подсветку ошибки при вводе
+            $('#support-admin-message').on('input', function() {
+                $(this).css({'border-color': '', 'box-shadow': ''});
+            });
+
             // Ответ администратора
             $('#support-send-reply').on('click', function() {
                 var message = $('#support-admin-message').val().trim();
                 if (!message) {
-                    showAdminNotice('error', 'Введите текст сообщения');
+                    showAdminNotice('error', 'Введите сообщение пожалуйста');
+                    $('#support-admin-message').css({'border-color': '#f44336', 'box-shadow': '0 0 0 1px #f44336'}).focus();
                     return;
                 }
 
@@ -557,7 +563,7 @@ class Cashback_Support_Admin
                 }, function(response) {
                     if (response.success) {
                         $('#support-messages').append(response.data.html);
-                        $('#support-admin-message').val('');
+                        $('#support-admin-message').val('').css({'border-color': '', 'box-shadow': ''});
                         var $statusBadge = $('.form-table .support-admin-badge.status-open, .form-table .support-admin-badge.status-answered, .form-table .support-admin-badge.status-closed');
                         $statusBadge.removeClass('status-open status-closed').addClass('status-answered').text('Отвечен');
                         showAdminNotice('success', 'Сообщение отправлено');
