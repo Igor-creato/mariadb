@@ -511,7 +511,7 @@ class Cashback_Users_Management_Admin
             );
 
             // Логируем отмену
-            if (class_exists('MariadbPlugin\Cashback_Encryption')) {
+            if (class_exists('Cashback_Encryption')) {
                 Cashback_Encryption::write_audit_log(
                     'payout_declined_on_ban',
                     get_current_user_id(),
