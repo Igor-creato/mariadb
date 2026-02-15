@@ -460,6 +460,19 @@ class CashbackWithdrawal
     public function endpoint_content()
     {
         $user_id = get_current_user_id();
+
+        // Проверка статуса "banned"
+        if ($user_id && Cashback_User_Status::is_user_banned($user_id)) {
+            $ban_info = Cashback_User_Status::get_ban_info($user_id);
+            echo '<div class="cashback-withdrawal-container">';
+            echo '<h2>' . __('Вывод кэшбэка', 'cashback-plugin') . '</h2>';
+            echo '<div class="woocommerce-message woocommerce-error" role="alert">';
+            echo esc_html(Cashback_User_Status::get_banned_message($ban_info));
+            echo '</div>';
+            echo '</div>';
+            return;
+        }
+
         if (!$user_id) {
             // Вместо вывода сообщения об ошибке, просто выходим
             // Ошибка авторизации будет обрабатываться через AJAX
@@ -654,6 +667,13 @@ class CashbackWithdrawal
         // Проверяем, что пользователь имеет корректный ID
         if (!$user_id || $user_id <= 0) {
             wp_send_json_error(__('Некорректный идентификатор пользователя.', 'cashback-plugin'));
+            return;
+        }
+
+        // Проверка статуса "banned"
+        if (Cashback_User_Status::is_user_banned($user_id)) {
+            $ban_info = Cashback_User_Status::get_ban_info($user_id);
+            wp_send_json_error(Cashback_User_Status::get_banned_message($ban_info));
             return;
         }
 
@@ -973,6 +993,15 @@ class CashbackWithdrawal
 
         if (!$user_id) {
             wp_send_json_error(array('message' => __('Пользователь не найден.', 'cashback-plugin')));
+            return;
+        }
+
+        // Проверка статуса "banned"
+        if (Cashback_User_Status::is_user_banned($user_id)) {
+            $ban_info = Cashback_User_Status::get_ban_info($user_id);
+            wp_send_json_error(array(
+                'message' => Cashback_User_Status::get_banned_message($ban_info)
+            ));
             return;
         }
 

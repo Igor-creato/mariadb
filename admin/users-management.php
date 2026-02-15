@@ -392,6 +392,12 @@ class Cashback_Users_Management_Admin
             return;
         }
 
+        // Если пользователь был забанен - обрабатываем последствия
+        if (isset($_POST['status']) && $_POST['status'] === 'banned') {
+            $ban_reason = isset($_POST['ban_reason']) ? sanitize_text_field(wp_unslash($_POST['ban_reason'])) : '';
+            $this->handle_user_ban($user_id, $ban_reason);
+        }
+
         // Получаем обновленные данные из базы
         $updated_user_data = $wpdb->get_row(
             $wpdb->prepare(
@@ -469,6 +475,77 @@ class Cashback_Users_Management_Admin
 
         // Возвращаем данные
         wp_send_json_success($user_data);
+    }
+
+    /**
+     * Обработка последствий бана пользователя
+     *
+     * @param int $user_id ID забаненного пользователя
+     * @param string $ban_reason Причина бана
+     */
+    private function handle_user_ban(int $user_id, string $ban_reason): void
+    {
+        global $wpdb;
+
+        // 1. Отменяем активные заявки на выплату
+        $requests_table = $wpdb->prefix . 'cashback_payout_requests';
+
+        $active_requests = $wpdb->get_results($wpdb->prepare(
+            "SELECT id, total_amount FROM {$requests_table}
+             WHERE user_id = %d
+             AND status IN ('waiting', 'processing')",
+            $user_id
+        ));
+
+        foreach ($active_requests as $request) {
+            $wpdb->update(
+                $requests_table,
+                [
+                    'status' => 'declined',
+                    'fail_reason' => 'Account banned',
+                    'updated_at' => current_time('mysql')
+                ],
+                ['id' => $request->id],
+                ['%s', '%s', '%s'],
+                ['%d']
+            );
+
+            // Логируем отмену
+            if (class_exists('MariadbPlugin\Cashback_Encryption')) {
+                Cashback_Encryption::write_audit_log(
+                    'payout_declined_on_ban',
+                    get_current_user_id(),
+                    'payout_request',
+                    $request->id,
+                    ['amount' => $request->total_amount, 'user_id' => $user_id]
+                );
+            }
+        }
+
+        // 2. Логируем бан пользователя
+        if (class_exists('MariadbPlugin\Cashback_Encryption')) {
+            Cashback_Encryption::write_audit_log(
+                'user_banned',
+                get_current_user_id(),
+                'user',
+                $user_id,
+                ['ban_reason' => $ban_reason]
+            );
+        }
+
+        // 3. Отправляем email уведомление
+        $user = get_userdata($user_id);
+        if ($user && $user->user_email) {
+            $subject = 'Ваш аккаунт кэшбэк заблокирован';
+            $message = sprintf(
+                "Здравствуйте, %s!\n\nВаш аккаунт кэшбэк был заблокирован.\nПричина: %s\n\nВаш баланс был заморожен.\nДля разблокировки обратитесь к администратору: %s",
+                $user->display_name,
+                $ban_reason ?: 'Не указана',
+                get_option('admin_email')
+            );
+
+            wp_mail($user->user_email, $subject, $message);
+        }
     }
 
     // render_pagination() предоставляется через AdminPaginationTrait

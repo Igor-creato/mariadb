@@ -237,6 +237,9 @@ class CashbackPlugin
         // Утилита шифрования (загружаем первой, т.к. используется в других компонентах)
         $this->require_file('includes/class-cashback-encryption.php');
 
+        // Утилита проверки статуса пользователя (для блокировки забаненных)
+        $this->require_file('includes/class-cashback-user-status.php');
+
         // Подключение зависимых файлов
         $this->require_file('mariadb.php');
         $this->require_file('cashback-history.php');

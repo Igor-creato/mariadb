@@ -172,6 +172,17 @@ class Cashback_User_Support
             return;
         }
 
+        // Проверка статуса "banned"
+        $user_id = get_current_user_id();
+        if (Cashback_User_Status::is_user_banned($user_id)) {
+            $ban_info = Cashback_User_Status::get_ban_info($user_id);
+            echo '<h2>Поддержка</h2>';
+            echo '<div class="woocommerce-message woocommerce-error" role="alert">';
+            echo esc_html(Cashback_User_Status::get_banned_message($ban_info));
+            echo '</div>';
+            return;
+        }
+
         ?>
         <h2>Поддержка</h2>
 
@@ -307,6 +318,13 @@ class Cashback_User_Support
         global $wpdb;
 
         $user_id = get_current_user_id();
+
+        // Проверка статуса "banned"
+        if (Cashback_User_Status::is_user_banned($user_id)) {
+            wp_send_json_error(['message' => 'Создание тикетов заблокировано для вашего аккаунта.']);
+            return;
+        }
+
         $subject = sanitize_text_field(wp_unslash($_POST['subject'] ?? ''));
         $priority = sanitize_text_field(wp_unslash($_POST['priority'] ?? 'not_urgent'));
         $message = sanitize_textarea_field($_POST['message'] ?? '');
@@ -434,6 +452,13 @@ class Cashback_User_Support
         global $wpdb;
 
         $user_id = get_current_user_id();
+
+        // Проверка статуса "banned"
+        if (Cashback_User_Status::is_user_banned($user_id)) {
+            wp_send_json_error(['message' => 'Ответы на тикеты заблокированы для вашего аккаунта.']);
+            return;
+        }
+
         $ticket_id = absint($_POST['ticket_id'] ?? 0);
         $message = sanitize_textarea_field($_POST['message'] ?? '');
 
@@ -526,6 +551,13 @@ class Cashback_User_Support
         global $wpdb;
 
         $user_id = get_current_user_id();
+
+        // Проверка статуса "banned"
+        if (Cashback_User_Status::is_user_banned($user_id)) {
+            wp_send_json_error(['message' => 'Управление тикетами заблокировано для вашего аккаунта.']);
+            return;
+        }
+
         $ticket_id = absint($_POST['ticket_id'] ?? 0);
 
         if (!$ticket_id) {
