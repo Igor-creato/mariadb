@@ -245,6 +245,13 @@ class CashbackPlugin
      */
     private function initialize_components()
     {
+        // Инициализация Mariadb_Plugin (регистрирует user_register хук)
+        // mariadb.php загружается в load_dependencies(), но его add_action('plugins_loaded', ...)
+        // не срабатывает, т.к. plugins_loaded уже выполнен к этому моменту
+        if (class_exists('Mariadb_Plugin')) {
+            Mariadb_Plugin::get_instance();
+        }
+
         // Инициализация компонентов
         if (class_exists('CashbackHistory')) {
             CashbackHistory::get_instance();

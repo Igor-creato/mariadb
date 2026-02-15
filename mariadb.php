@@ -150,7 +150,9 @@ class Mariadb_Plugin
             REFERENCES `{$wpdb->prefix}users` (`ID`)
             ON DELETE CASCADE,
             CONSTRAINT `chk_applied_cashback_rate_range`
-            CHECK (`applied_cashback_rate` BETWEEN 0.00 AND 100.00)
+            CHECK (`applied_cashback_rate` BETWEEN 0.00 AND 100.00),
+            CONSTRAINT `chk_cashback_positive`
+            CHECK (`cashback` >= 0)
         ) ENGINE=InnoDB {$charset_collate};";
 
 
@@ -273,7 +275,75 @@ class Mariadb_Plugin
         dbDelta($table8); // Создаем banks ПЕРЕД user_profile
         dbDelta($table6); // Создаем user_profile после payout_methods и banks
 
+        // Инициализация начальных данных в справочные таблицы
+        $this->insert_default_payout_methods();
+        $this->insert_default_banks();
+
         error_log('Mariadb Plugin: Tables created successfully');
+    }
+
+    /**
+     * Инициализация начальных способов выплат
+     *
+     * @return void
+     */
+    private function insert_default_payout_methods(): void
+    {
+        global $wpdb;
+        $table = $wpdb->prefix . 'cashback_payout_methods';
+
+        // Проверяем, есть ли уже записи
+        $count = $wpdb->get_var("SELECT COUNT(*) FROM {$table}");
+        if ($count > 0) {
+            error_log('Mariadb Plugin: Payout methods already exist, skipping initialization');
+            return;
+        }
+
+        // Начальные способы выплат
+        $defaults = [
+            ['slug' => 'sbp', 'name' => 'СБП Система быстрых платежей', 'is_active' => 1, 'sort_order' => 1],
+        ];
+
+        foreach ($defaults as $method) {
+            $wpdb->insert($table, $method, ['%s', '%s', '%d', '%d']);
+            if ($wpdb->last_error) {
+                error_log('Mariadb Plugin Error: Failed to insert payout method: ' . $wpdb->last_error);
+            }
+        }
+
+        error_log('Mariadb Plugin: Initialized ' . count($defaults) . ' default payout methods');
+    }
+
+    /**
+     * Инициализация начальных банков
+     *
+     * @return void
+     */
+    private function insert_default_banks(): void
+    {
+        global $wpdb;
+        $table = $wpdb->prefix . 'cashback_banks';
+
+        // Проверяем, есть ли уже записи
+        $count = $wpdb->get_var("SELECT COUNT(*) FROM {$table}");
+        if ($count > 0) {
+            error_log('Mariadb Plugin: Banks already exist, skipping initialization');
+            return;
+        }
+
+        // Начальные банки
+        $defaults = [
+            ['bank_code' => 'sber', 'name' => 'Сбербанк', 'short_name' => 'Сбербанк', 'is_active' => 1, 'sort_order' => 1],
+        ];
+
+        foreach ($defaults as $bank) {
+            $wpdb->insert($table, $bank, ['%s', '%s', '%s', '%d', '%d']);
+            if ($wpdb->last_error) {
+                error_log('Mariadb Plugin Error: Failed to insert bank: ' . $wpdb->last_error);
+            }
+        }
+
+        error_log('Mariadb Plugin: Initialized ' . count($defaults) . ' default banks');
     }
 
     /**
@@ -536,6 +606,7 @@ BEGIN
                 0
             FROM `{$safe_prefix}cashback_transactions`
             WHERE processed_batch_id = v_batch_id
+              AND cashback > 0
             GROUP BY user_id
             ON DUPLICATE KEY UPDATE
                 available_balance = available_balance + VALUES(available_balance),
@@ -641,53 +712,40 @@ END;",
     public function add_user_to_profile(int $user_id): bool
     {
         global $wpdb;
-
         $table_name = $wpdb->prefix . 'cashback_user_profile';
 
-        // Проверяем, существует ли уже запись
-        $exists = $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM {$table_name} WHERE user_id = %d",
-            $user_id
-        ));
+        $wpdb->query('START TRANSACTION');
 
-        if (!$exists) {
-            // Начинаем транзакцию для атомарного создания профиля и баланса
-            $wpdb->query('START TRANSACTION');
+        try {
+            // INSERT IGNORE атомарно игнорирует дубли по PRIMARY KEY (user_id)
+            // Защита от race condition
+            $result = $wpdb->query($wpdb->prepare(
+                "INSERT IGNORE INTO {$table_name} (user_id, status, created_at) VALUES (%d, 'active', NOW())",
+                $user_id
+            ));
 
-            try {
-                $result = $wpdb->insert(
-                    $table_name,
-                    array(
-                        'user_id' => $user_id,
-                        'status' => 'active'
-                    ),
-                    array('%d', '%s')
-                );
+            // $result = 0 если запись уже существовала (игнорирована)
+            // $result > 0 если запись была успешно создана
+            $created = ($result > 0);
 
-                if ($result === false) {
-                    throw new Exception('Failed to insert user profile: ' . $wpdb->last_error);
-                }
-
+            if ($created) {
                 error_log('Mariadb Plugin: Created new profile for user ID: ' . $user_id);
-
-                // Добавляем запись в таблицу баланса
-                $balance_result = $this->add_user_to_balance($user_id, true);
-
-                if (!$balance_result) {
-                    throw new Exception('Failed to create user balance');
-                }
-
-                // Если всё успешно, фиксируем транзакцию
-                $wpdb->query('COMMIT');
-                return true;
-            } catch (Exception $e) {
-                // В случае ошибки откатываем транзакцию
-                $wpdb->query('ROLLBACK');
-                error_log('Mariadb Plugin Error: Transaction failed for user ' . $user_id . '. Error: ' . $e->getMessage());
-                return false;
             }
-        } else {
-            return $this->add_user_to_balance($user_id, false);
+
+            // Создаём баланс (независимо от того, был ли создан профиль)
+            // Проверка существования баланса внутри метода add_user_to_balance
+            $balance_result = $this->add_user_to_balance($user_id, $created);
+
+            if (!$balance_result) {
+                throw new Exception('Failed to create user balance');
+            }
+
+            $wpdb->query('COMMIT');
+            return true;
+        } catch (Exception $e) {
+            $wpdb->query('ROLLBACK');
+            error_log('Mariadb Plugin Error: Transaction failed for user ' . $user_id . '. Error: ' . $e->getMessage());
+            return false;
         }
     }
 
@@ -702,35 +760,23 @@ END;",
     public function add_user_to_balance(int $user_id, bool $is_new_user = true): bool
     {
         global $wpdb;
-
         $table_name = $wpdb->prefix . 'cashback_user_balance';
 
-        // Проверяем, существует ли уже запись
-        $exists = $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM {$table_name} WHERE user_id = %d",
+        // INSERT IGNORE атомарно игнорирует дубли по PRIMARY KEY
+        $result = $wpdb->query($wpdb->prepare(
+            "INSERT IGNORE INTO {$table_name}
+            (user_id, available_balance, pending_balance, paid_balance, frozen_balance, version, updated_at)
+            VALUES (%d, 0.00, 0.00, 0.00, 0.00, 0, NOW())",
             $user_id
         ));
 
-        if (!$exists) {
-            $result = $wpdb->insert(
-                $table_name,
-                array(
-                    'user_id' => $user_id,
-                    'available_balance' => 0.0,
-                    'pending_balance' => 0.0,
-                    'paid_balance' => 0.0
-                ),
-                array('%d', '%f', '%f', '%f')
-            );
+        if ($result === false) {
+            error_log('Mariadb Plugin Error: Failed to insert balance for user ' . $user_id . ': ' . $wpdb->last_error);
+            return false;
+        }
 
-            if ($result === false) {
-                error_log('Mariadb Plugin Error: Failed to insert balance for user ' . $user_id . ': ' . $wpdb->last_error);
-                return false;
-            }
-
-            if ($is_new_user) {
-                error_log('Mariadb Plugin: Created new balance for user ID: ' . $user_id);
-            }
+        if ($result > 0 && $is_new_user) {
+            error_log('Mariadb Plugin: Created new balance for user ID: ' . $user_id);
         }
 
         return true;
@@ -782,12 +828,5 @@ END;",
     }
 }
 
-// Инициализация плагина
-function mariadb_plugin_init(): Mariadb_Plugin
-{
-    $instance = Mariadb_Plugin::get_instance();
-    return $instance;
-}
-
-// Инициализация плагина при полной загрузке WordPress
-add_action('plugins_loaded', 'mariadb_plugin_init');
+// Инициализация Mariadb_Plugin происходит через CashbackPlugin::initialize_components()
+// в файле cashback-plugin.php
