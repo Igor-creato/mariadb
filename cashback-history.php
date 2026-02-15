@@ -95,6 +95,13 @@ class CashbackHistory
             return;
         }
 
+        // Показываем информационное сообщение для забаненных пользователей
+        if (Cashback_User_Status::is_user_banned($user_id)) {
+            echo '<div class="woocommerce-message woocommerce-info" role="alert">';
+            echo esc_html__('Ваш аккаунт заблокирован. Вы можете просматривать историю покупок в режиме только для чтения.', 'cashback-plugin');
+            echo '</div>';
+        }
+
         $per_page = self::PER_PAGE;
         $total = $this->get_total_transactions($user_id);
         $total_pages = $total > 0 ? ceil($total / $per_page) : 1;

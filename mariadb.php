@@ -936,6 +936,21 @@ class Mariadb_Plugin
                     SET NEW.ban_reason = NULL;
                 END IF;
             END;",
+
+            "CREATE TRIGGER IF NOT EXISTS `{$safe_prefix}tr_unfreeze_balance_on_unban`
+            AFTER UPDATE ON `{$safe_prefix}cashback_user_profile`
+            FOR EACH ROW
+            --  'Размораживает баланс при разбане пользователя'
+            BEGIN
+                IF OLD.status = 'banned' AND NEW.status != 'banned' THEN
+                    UPDATE `{$safe_prefix}cashback_user_balance`
+                    SET
+                        available_balance = available_balance + frozen_balance,
+                        frozen_balance = 0,
+                        version = version + 1
+                    WHERE user_id = NEW.user_id;
+                END IF;
+            END;",
         ];
 
         $failed_triggers = [];
