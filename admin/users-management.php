@@ -411,11 +411,12 @@ class Cashback_Users_Management_Admin
         if (isset($_POST['status']) && $_POST['status'] === 'banned') {
             try {
                 $ban_reason = isset($_POST['ban_reason']) ? sanitize_text_field(wp_unslash($_POST['ban_reason'])) : '';
-                error_log("Calling handle_user_ban for user {$user_id} with reason: {$ban_reason}");
+
+                // Перехватываем любой вывод, который может сломать JSON-ответ
+                ob_start();
                 $this->handle_user_ban($user_id, $ban_reason);
-                error_log("handle_user_ban completed successfully");
+                ob_end_clean();
             } catch (Exception $e) {
-                error_log("Error in handle_user_ban: " . $e->getMessage());
                 wp_send_json_error(['message' => 'Ошибка при обработке бана: ' . $e->getMessage()]);
                 return;
             }
@@ -423,7 +424,10 @@ class Cashback_Users_Management_Admin
 
         // Если пользователь был разбанен - обрабатываем последствия
         if ($old_status === 'banned' && isset($_POST['status']) && $_POST['status'] !== 'banned') {
+            // Перехватываем любой вывод, который может сломать JSON-ответ
+            ob_start();
             $this->handle_user_unban($user_id);
+            ob_end_clean();
         }
 
         // Получаем обновленные данные из базы
@@ -515,8 +519,6 @@ class Cashback_Users_Management_Admin
     {
         global $wpdb;
 
-        error_log("handle_user_ban called for user_id: {$user_id}, reason: {$ban_reason}");
-
         // 1. Отменяем активные заявки на выплату (все кроме failed и paid)
         $requests_table = $wpdb->prefix . 'cashback_payout_requests';
 
@@ -527,10 +529,8 @@ class Cashback_Users_Management_Admin
             $user_id
         ));
 
-        error_log("Found " . count($active_requests) . " active requests for user {$user_id}");
-
         foreach ($active_requests as $request) {
-            $result = $wpdb->update(
+            $wpdb->update(
                 $requests_table,
                 [
                     'status' => 'declined',
@@ -541,8 +541,6 @@ class Cashback_Users_Management_Admin
                 ['%s', '%s', '%s'],
                 ['%d']
             );
-
-            error_log("Updated request {$request->id}: result = " . ($result !== false ? $result : 'false'));
 
             // Логируем отмену
             if (class_exists('Cashback_Encryption')) {
@@ -591,13 +589,11 @@ class Cashback_Users_Management_Admin
     {
         global $wpdb;
 
-        error_log("handle_user_unban called for user_id: {$user_id}");
-
         // Обновляем надпись в declined выплатах которые были отменены при бане
         $requests_table = $wpdb->prefix . 'cashback_payout_requests';
 
         // Обновляем новые записи (русский текст)
-        $result = $wpdb->query($wpdb->prepare(
+        $wpdb->query($wpdb->prepare(
             "UPDATE {$requests_table}
              SET fail_reason = '(Аккаунт был забанен)'
              WHERE user_id = %d
@@ -606,10 +602,8 @@ class Cashback_Users_Management_Admin
             $user_id
         ));
 
-        error_log("Updated {$result} requests from '(Аккаунт забанен)' to '(Аккаунт был забанен)' for user {$user_id}");
-
         // Обновляем старые записи (английский текст)
-        $result_old = $wpdb->query($wpdb->prepare(
+        $wpdb->query($wpdb->prepare(
             "UPDATE {$requests_table}
              SET fail_reason = '(Аккаунт был забанен)'
              WHERE user_id = %d
@@ -617,8 +611,6 @@ class Cashback_Users_Management_Admin
              AND fail_reason = 'Account banned'",
             $user_id
         ));
-
-        error_log("Updated {$result_old} OLD requests from 'Account banned' to '(Аккаунт был забанен)' for user {$user_id}");
 
         // Логируем разбан
         if (class_exists('Cashback_Encryption')) {
