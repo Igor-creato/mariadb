@@ -409,8 +409,16 @@ class Cashback_Users_Management_Admin
 
         // Если пользователь был забанен - обрабатываем последствия
         if (isset($_POST['status']) && $_POST['status'] === 'banned') {
-            $ban_reason = isset($_POST['ban_reason']) ? sanitize_text_field(wp_unslash($_POST['ban_reason'])) : '';
-            $this->handle_user_ban($user_id, $ban_reason);
+            try {
+                $ban_reason = isset($_POST['ban_reason']) ? sanitize_text_field(wp_unslash($_POST['ban_reason'])) : '';
+                error_log("Calling handle_user_ban for user {$user_id} with reason: {$ban_reason}");
+                $this->handle_user_ban($user_id, $ban_reason);
+                error_log("handle_user_ban completed successfully");
+            } catch (Exception $e) {
+                error_log("Error in handle_user_ban: " . $e->getMessage());
+                wp_send_json_error(['message' => 'Ошибка при обработке бана: ' . $e->getMessage()]);
+                return;
+            }
         }
 
         // Если пользователь был разбанен - обрабатываем последствия
