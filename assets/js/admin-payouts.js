@@ -357,7 +357,38 @@
 
     row.find('.edit-field[data-field="status"]').text(statusLabel).attr('title', statusDescription);
 
+    // Обновляем кнопку расшифровки в зависимости от статуса
+    updateDecryptButton(row, payoutData);
+
     row.find('.edit-field').css('min-width', '');
+  }
+
+  /**
+   * Обновление кнопки расшифровки
+   *
+   * @param {jQuery} row - Строка таблицы
+   * @param {Object} payoutData - Данные выплаты
+   */
+  function updateDecryptButton(row, payoutData) {
+    const payoutAccountCell = row.find('.payout-account-cell');
+    const existingBtn = payoutAccountCell.find('.decrypt-btn');
+
+    // Кнопка должна отображаться только если статус 'processing' и есть зашифрованные данные
+    const shouldShowButton = payoutData.status === 'processing' && payoutData.has_encrypted_data;
+
+    if (shouldShowButton && existingBtn.length === 0) {
+      // Добавляем кнопку, если её нет
+      const decryptBtn = $('<button>')
+        .attr('type', 'button')
+        .addClass('button button-small decrypt-btn')
+        .attr('title', 'Показать реквизиты')
+        .html('&#128065;');
+
+      payoutAccountCell.append(decryptBtn);
+    } else if (!shouldShowButton && existingBtn.length > 0) {
+      // Удаляем кнопку, если она не должна отображаться
+      existingBtn.remove();
+    }
   }
 
   /**

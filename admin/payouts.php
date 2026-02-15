@@ -88,7 +88,7 @@ class Cashback_Payouts_Admin
             'cashback-admin-payouts',
             plugins_url('../assets/js/admin-payouts.js', __FILE__),
             ['jquery'],
-            '1.0.2',
+            '1.0.3',
             true
         );
 
@@ -555,8 +555,8 @@ class Cashback_Payouts_Admin
         // Получаем обновленные данные из базы
         $updated_payout_data = $wpdb->get_row(
             $wpdb->prepare(
-                "SELECT provider, provider_payout_id, attempts, fail_reason, status 
-                 FROM {$this->table_name} 
+                "SELECT provider, provider_payout_id, attempts, fail_reason, status, encrypted_details, payout_account
+                 FROM {$this->table_name}
                  WHERE id = %d",
                 $payout_id
             ),
@@ -567,6 +567,9 @@ class Cashback_Payouts_Admin
             wp_send_json_error(['message' => __('Не удалось получить обновленные данные запроса выплаты.', 'cashback-plugin')]);
             return;
         }
+
+        // Добавляем информацию о наличии зашифрованных данных
+        $updated_payout_data['has_encrypted_data'] = !empty($updated_payout_data['encrypted_details']) || !empty($updated_payout_data['payout_account']);
 
         // Возвращаем только обновленные данные выплаты
         wp_send_json_success([
@@ -938,8 +941,8 @@ class Cashback_Payouts_Admin
         // Получаем данные из базы
         $payout_data = $wpdb->get_row(
             $wpdb->prepare(
-                "SELECT provider, provider_payout_id, attempts, fail_reason, status 
-                 FROM {$this->table_name} 
+                "SELECT provider, provider_payout_id, attempts, fail_reason, status, encrypted_details, payout_account
+                 FROM {$this->table_name}
                  WHERE id = %d",
                 $payout_id
             ),
@@ -950,6 +953,9 @@ class Cashback_Payouts_Admin
             wp_send_json_error(['message' => __('Не удалось получить данные запроса выплаты.', 'cashback-plugin')]);
             return;
         }
+
+        // Добавляем информацию о наличии зашифрованных данных
+        $payout_data['has_encrypted_data'] = !empty($payout_data['encrypted_details']) || !empty($payout_data['payout_account']);
 
         // Возвращаем данные
         wp_send_json_success($payout_data);
