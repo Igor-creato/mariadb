@@ -1,7 +1,5 @@
 <?php
 
-namespace WP_Cashback_Plugin\Admin;
-
 if (!defined('ABSPATH')) {
     exit;
 }

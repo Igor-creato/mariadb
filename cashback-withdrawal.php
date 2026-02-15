@@ -609,7 +609,12 @@ class CashbackWithdrawal
         // Устанавливаем блокировку на 30 секунд
         set_transient($transient_key, true, 30);
 
-        $withdrawal_amount = floatval(sanitize_text_field(wp_unslash($_POST['withdrawal_amount'] ?? '0')));
+        $withdrawal_amount = sanitize_text_field(wp_unslash($_POST['withdrawal_amount'] ?? '0'));
+        if (!is_numeric($withdrawal_amount)) {
+            delete_transient($transient_key);
+            wp_send_json_error(__('Некорректная сумма вывода.', 'woocommerce'));
+            return;
+        }
 
         // === 3. Check if payout method and account are filled ===
         $payout_method = $this->get_payout_method($user_id);
@@ -714,7 +719,7 @@ class CashbackWithdrawal
             }
 
             // Re-check balance under lock (in case it changed after initial read)
-            if ($withdrawal_amount > $user_balance->available_balance) {
+            if (bccomp($withdrawal_amount, $user_balance->available_balance, 2) > 0) {
                 throw new Exception('Insufficient available balance after lock');
             }
 
@@ -750,7 +755,7 @@ class CashbackWithdrawal
                     'idempotency_key' => $idempotency_key,
                     'status' => 'waiting'
                 ),
-                array('%d', '%f', '%s', '%s', '%s', '%s', '%s')
+                array('%d', '%s', '%s', '%s', '%s', '%s', '%s')
             );
 
             if ($result === false) {
@@ -770,8 +775,8 @@ class CashbackWithdrawal
             // Делаем это ПОСЛЕ создания заявки для корректного rollback
             $result = $wpdb->query($wpdb->prepare(
                 "UPDATE {$table_balance}
-                SET available_balance = available_balance - %f,
-                    pending_balance = pending_balance + %f,
+                SET available_balance = available_balance - %s,
+                    pending_balance = pending_balance + %s,
                     version = version + 1
                 WHERE user_id = %d AND version = %d",
                 $withdrawal_amount,
@@ -806,9 +811,9 @@ class CashbackWithdrawal
 
             wp_send_json_success(sprintf(
                 __('Заявка на вывод кэшбэка на сумму %s руб. успешно добавлена', 'woocommerce'),
-                number_format($withdrawal_amount, 2, '.', ' ')
+                number_format((float) $withdrawal_amount, 2, '.', ' ')
             ));
-        } catch (Exception $e) {
+        } catch (\Throwable $e) {
             $wpdb->query('ROLLBACK');
             $error_message = $e->getMessage();
 

@@ -2,12 +2,8 @@
 
 declare(strict_types=1);
 
-namespace WP_Cashback_Plugin\Admin;
-
 /**
  * Класс для управления выплатами кэшбэка в админ-панели.
- *
- * @package WP_Cashback_Plugin\Admin
  */
 
 // Проверяем, что файл вызывается из WordPress
@@ -32,9 +28,9 @@ class Cashback_Payouts_Admin
     /**
      * WooCommerce logger instance
      *
-     * @var \WC_Logger_Interface|null
+     * @var WC_Logger_Interface|null
      */
-    private ?\WC_Logger_Interface $logger = null;
+    private ?WC_Logger_Interface $logger = null;
 
     /**
      * Конструктор класса
@@ -332,7 +328,7 @@ class Cashback_Payouts_Admin
                                 ?>
                                 <tr data-payout-id="<?php echo esc_attr($payout['id']); ?>">
                                     <td><?php echo esc_html($payout['user_id']); ?></td>
-                                    <td><?php echo esc_html(number_format(floatval($payout['total_amount']), 2, '.', ' ')); ?></td>
+                                    <td><?php echo esc_html(number_format((float) $payout['total_amount'], 2, '.', ' ')); ?></td>
                                     <td<?php if ($method_inactive && $is_actionable_status): ?> class="cashback-inactive-warning" title="<?php echo esc_attr__('Платежная система деактивирована', 'cashback-plugin'); ?>" <?php endif; ?>>
                                         <?php echo esc_html($payout_method_info['name']); ?>
                                         <?php if ($method_inactive && $is_actionable_status): ?>
@@ -575,7 +571,7 @@ class Cashback_Payouts_Admin
             );
 
             if (!$payout_request) {
-                throw new \Exception("Не найден запрос на выплату с ID {$payout_id}");
+                throw new Exception("Не найден запрос на выплату с ID {$payout_id}");
             }
 
             // Защита от повторного выполнения: если статус уже 'paid', баланс уже был обновлён
@@ -588,7 +584,7 @@ class Cashback_Payouts_Admin
             }
 
             $user_id = (int) $payout_request['user_id'];
-            $amount = floatval($payout_request['total_amount']);
+            $amount = $payout_request['total_amount'];
 
             // Получаем текущий баланс пользователя с блокировкой строки
             $balance_table = $wpdb->prefix . 'cashback_user_balance';
@@ -601,18 +597,18 @@ class Cashback_Payouts_Admin
             );
 
             if (!$current_balance) {
-                throw new \Exception("Не найден баланс для пользователя {$user_id}");
+                throw new Exception("Не найден баланс для пользователя {$user_id}");
             }
 
-            // Проверяем, достаточно ли средств в pending_balance
-            $pending_balance = floatval($current_balance['pending_balance']);
-            if ($pending_balance < $amount) {
-                throw new \Exception("Недостаточно средств в pending_balance для пользователя {$user_id}. Требуется: {$amount}, доступно: {$pending_balance}");
+            // Проверяем, достаточно ли средств в pending_balance (bcmath для точной арифметики)
+            $pending_balance = $current_balance['pending_balance'];
+            if (bccomp($pending_balance, $amount, 2) < 0) {
+                throw new Exception("Недостаточно средств в pending_balance для пользователя {$user_id}. Требуется: {$amount}, доступно: {$pending_balance}");
             }
 
             // Обновляем баланс: вычитаем из pending_balance и добавляем к paid_balance
-            $new_pending_balance = $pending_balance - $amount;
-            $new_paid_balance = floatval($current_balance['paid_balance']) + $amount;
+            $new_pending_balance = bcsub($pending_balance, $amount, 2);
+            $new_paid_balance = bcadd($current_balance['paid_balance'], $amount, 2);
             $old_version = intval($current_balance['version']);
 
             // Используем оптимистичную блокировку через version
@@ -627,12 +623,12 @@ class Cashback_Payouts_Admin
                     'user_id' => $user_id,
                     'version' => $old_version
                 ],
-                ['%f', '%f', '%d'],
+                ['%s', '%s', '%d'],
                 ['%d', '%d']
             );
 
             if ($result === false || $result === 0) {
-                throw new \Exception("Ошибка обновления баланса пользователя {$user_id} или конфликт версий");
+                throw new Exception("Ошибка обновления баланса пользователя {$user_id} или конфликт версий");
             }
 
             if (!$in_transaction) {
@@ -643,7 +639,7 @@ class Cashback_Payouts_Admin
             $this->log_info("Баланс пользователя {$user_id} обновлен. Выплачено: {$amount}, pending_balance: {$new_pending_balance}, paid_balance: {$new_paid_balance}");
 
             return true;
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             if (!$in_transaction) {
                 $wpdb->query('ROLLBACK');
             }
@@ -680,7 +676,7 @@ class Cashback_Payouts_Admin
             );
 
             if (!$payout_request) {
-                throw new \Exception("Не найден запрос на выплату с ID {$payout_id}");
+                throw new Exception("Не найден запрос на выплату с ID {$payout_id}");
             }
 
             // Защита от повторного выполнения: если статус уже 'declined', баланс уже был обновлён
@@ -693,7 +689,7 @@ class Cashback_Payouts_Admin
             }
 
             $user_id = (int) $payout_request['user_id'];
-            $amount = floatval($payout_request['total_amount']);
+            $amount = $payout_request['total_amount'];
 
             // Получаем текущий баланс пользователя с блокировкой строки
             $balance_table = $wpdb->prefix . 'cashback_user_balance';
@@ -706,18 +702,18 @@ class Cashback_Payouts_Admin
             );
 
             if (!$current_balance) {
-                throw new \Exception("Не найден баланс для пользователя {$user_id}");
+                throw new Exception("Не найден баланс для пользователя {$user_id}");
             }
 
-            // Проверяем, достаточно ли средств в pending_balance
-            $pending_balance = floatval($current_balance['pending_balance']);
-            if ($pending_balance < $amount) {
-                throw new \Exception("Недостаточно средств в pending_balance для пользователя {$user_id}. Требуется: {$amount}, доступно: {$pending_balance}");
+            // Проверяем, достаточно ли средств в pending_balance (bcmath для точной арифметики)
+            $pending_balance = $current_balance['pending_balance'];
+            if (bccomp($pending_balance, $amount, 2) < 0) {
+                throw new Exception("Недостаточно средств в pending_balance для пользователя {$user_id}. Требуется: {$amount}, доступно: {$pending_balance}");
             }
 
             // Обновляем баланс: вычитаем из pending_balance и добавляем к frozen_balance
-            $new_pending_balance = $pending_balance - $amount;
-            $new_frozen_balance = floatval($current_balance['frozen_balance']) + $amount;
+            $new_pending_balance = bcsub($pending_balance, $amount, 2);
+            $new_frozen_balance = bcadd($current_balance['frozen_balance'], $amount, 2);
             $old_version = intval($current_balance['version']);
 
             // Используем оптимистичную блокировку через version
@@ -732,12 +728,12 @@ class Cashback_Payouts_Admin
                     'user_id' => $user_id,
                     'version' => $old_version
                 ],
-                ['%f', '%f', '%d'],
+                ['%s', '%s', '%d'],
                 ['%d', '%d']
             );
 
             if ($result === false || $result === 0) {
-                throw new \Exception("Ошибка обновления баланса пользователя {$user_id} или конфликт версий");
+                throw new Exception("Ошибка обновления баланса пользователя {$user_id} или конфликт версий");
             }
 
             if (!$in_transaction) {
@@ -748,7 +744,7 @@ class Cashback_Payouts_Admin
             $this->log_info("Баланс пользователя {$user_id} обновлен при отклонении выплаты. Сумма: {$amount}, pending_balance: {$new_pending_balance}, frozen_balance: {$new_frozen_balance}");
 
             return true;
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             if (!$in_transaction) {
                 $wpdb->query('ROLLBACK');
             }
@@ -788,7 +784,7 @@ class Cashback_Payouts_Admin
             );
 
             if (!$payout_request) {
-                throw new \Exception("Не найден запрос на выплату с ID {$payout_id}");
+                throw new Exception("Не найден запрос на выплату с ID {$payout_id}");
             }
 
             // Проверка на повторный возврат средств ВНУТРИ транзакции (защита от race condition)
@@ -801,7 +797,7 @@ class Cashback_Payouts_Admin
             }
 
             $user_id = (int) $payout_request['user_id'];
-            $amount = floatval($payout_request['total_amount']);
+            $amount = $payout_request['total_amount'];
 
             // Получаем текущий баланс пользователя с блокировкой строки
             $balance_table = $wpdb->prefix . 'cashback_user_balance';
@@ -817,18 +813,18 @@ class Cashback_Payouts_Admin
             );
 
             if (!$current_balance) {
-                throw new \Exception("Не найден баланс для пользователя {$user_id}");
+                throw new Exception("Не найден баланс для пользователя {$user_id}");
             }
 
-            // Проверяем, достаточно ли средств в pending_balance
-            $pending_balance = floatval($current_balance['pending_balance']);
-            if ($pending_balance < $amount) {
-                throw new \Exception("Недостаточно средств в pending_balance для пользователя {$user_id}. Требуется: {$amount}, доступно: {$pending_balance}");
+            // Проверяем, достаточно ли средств в pending_balance (bcmath для точной арифметики)
+            $pending_balance = $current_balance['pending_balance'];
+            if (bccomp($pending_balance, $amount, 2) < 0) {
+                throw new Exception("Недостаточно средств в pending_balance для пользователя {$user_id}. Требуется: {$amount}, доступно: {$pending_balance}");
             }
 
             // Обновляем баланс: вычитаем из pending_balance и добавляем к available_balance
-            $new_pending_balance = $pending_balance - $amount;
-            $new_available_balance = floatval($current_balance['available_balance']) + $amount;
+            $new_pending_balance = bcsub($pending_balance, $amount, 2);
+            $new_available_balance = bcadd($current_balance['available_balance'], $amount, 2);
             $old_version = intval($current_balance['version']);
 
             // Используем оптимистичную блокировку через version
@@ -843,12 +839,12 @@ class Cashback_Payouts_Admin
                     'user_id' => $user_id,
                     'version' => $old_version
                 ],
-                ['%f', '%f', '%d'],
+                ['%s', '%s', '%d'],
                 ['%d', '%d']
             );
 
             if ($result === false || $result === 0) {
-                throw new \Exception("Ошибка обновления баланса пользователя {$user_id} или конфликт версий");
+                throw new Exception("Ошибка обновления баланса пользователя {$user_id} или конфликт версий");
             }
 
             // Обновляем запись заявки, устанавливаем refunded_at для предотвращения повторного возврата
@@ -865,7 +861,7 @@ class Cashback_Payouts_Admin
             );
 
             if ($update_result === false) {
-                throw new \Exception("Ошибка обновления поля refunded_at для заявки {$payout_id}");
+                throw new Exception("Ошибка обновления поля refunded_at для заявки {$payout_id}");
             }
 
             if (!$in_transaction) {
@@ -876,7 +872,7 @@ class Cashback_Payouts_Admin
             $this->log_info("Баланс пользователя {$user_id} обновлен при failed-статусе. Возвращено: {$amount}, pending_balance: {$new_pending_balance}, available_balance: {$new_available_balance}, refunded_at: {$refund_time}");
 
             return true;
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             if (!$in_transaction) {
                 $wpdb->query('ROLLBACK');
             }

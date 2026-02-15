@@ -30,6 +30,24 @@
     font-weight: 600;
 }
 
+/* Стили для полей редактирования в таблицах */
+.edit-field .edit-input {
+    max-width: 100%;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.edit-field input[type="text"],
+.edit-field input[type="number"],
+.edit-field select {
+    max-width: 150px;
+    width: 100%;
+}
+
+.edit-field[data-field="ban_reason"] input {
+    max-width: 200px;
+}
+
 .cashback-inactive-badge {
     color: #d63638;
     font-size: 11px;
