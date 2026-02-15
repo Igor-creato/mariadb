@@ -523,7 +523,7 @@ class Cashback_Users_Management_Admin
         }
 
         // 2. Логируем бан пользователя
-        if (class_exists('MariadbPlugin\Cashback_Encryption')) {
+        if (class_exists('Cashback_Encryption')) {
             Cashback_Encryption::write_audit_log(
                 'user_banned',
                 get_current_user_id(),
