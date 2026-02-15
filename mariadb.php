@@ -288,6 +288,15 @@ class Mariadb_Plugin
         // Добавление индексов производительности (для существующих установок)
         $this->add_performance_indexes();
 
+        // Таблица аудит-лога
+        $this->create_audit_log_table();
+
+        // Добавление колонок шифрования (для существующих установок)
+        $this->add_encryption_columns();
+
+        // Миграция существующих данных в зашифрованный формат
+        $this->migrate_encrypt_existing_data();
+
         error_log('Mariadb Plugin: Tables created successfully');
     }
 
@@ -504,6 +513,243 @@ class Mariadb_Plugin
                 }
             }
         }
+    }
+
+    /**
+     * Создание таблицы аудит-лога
+     */
+    private function create_audit_log_table(): void
+    {
+        global $wpdb;
+        $charset_collate = "DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
+
+        $table_audit = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_audit_log` (
+            `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            `action` varchar(100) NOT NULL COMMENT 'Тип действия',
+            `actor_id` bigint(20) unsigned NOT NULL COMMENT 'ID пользователя-инициатора',
+            `entity_type` varchar(50) DEFAULT NULL COMMENT 'Тип сущности (payout_request, user_profile)',
+            `entity_id` bigint(20) unsigned DEFAULT NULL COMMENT 'ID сущности',
+            `ip_address` varchar(45) DEFAULT NULL,
+            `user_agent` text DEFAULT NULL,
+            `details` longtext DEFAULT NULL COMMENT 'Доп. данные в JSON',
+            `created_at` datetime DEFAULT current_timestamp(),
+            PRIMARY KEY (`id`),
+            KEY `idx_action_actor` (`action`, `actor_id`),
+            KEY `idx_entity` (`entity_type`, `entity_id`),
+            KEY `idx_created` (`created_at`)
+        ) ENGINE=InnoDB {$charset_collate} COMMENT='Аудит-лог действий с чувствительными данными';";
+
+        require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+        dbDelta($table_audit);
+    }
+
+    /**
+     * Добавление колонок шифрования к существующим таблицам
+     *
+     * dbDelta не всегда добавляет новые колонки, поэтому используем ALTER TABLE.
+     */
+    private function add_encryption_columns(): void
+    {
+        global $wpdb;
+
+        $profile_table = $wpdb->prefix . 'cashback_user_profile';
+        $requests_table = $wpdb->prefix . 'cashback_payout_requests';
+
+        // === cashback_user_profile: encrypted_details, masked_details, details_hash ===
+        $columns_profile = [
+            'encrypted_details' => "ALTER TABLE `{$profile_table}` ADD COLUMN `encrypted_details` BLOB DEFAULT NULL COMMENT 'AES-256-CBC зашифрованные реквизиты (JSON)' AFTER `payout_full_name`",
+            'masked_details' => "ALTER TABLE `{$profile_table}` ADD COLUMN `masked_details` TEXT DEFAULT NULL COMMENT 'Маскированные реквизиты для отображения (JSON)' AFTER `encrypted_details`",
+            'details_hash' => "ALTER TABLE `{$profile_table}` ADD COLUMN `details_hash` char(64) DEFAULT NULL COMMENT 'SHA-256 хеш реквизитов для антифрода' AFTER `masked_details`",
+        ];
+
+        foreach ($columns_profile as $col_name => $alter_sql) {
+            if (!$this->column_exists($profile_table, $col_name)) {
+                $wpdb->query($alter_sql);
+                if ($wpdb->last_error) {
+                    error_log("Mariadb Plugin Error: Failed to add column {$col_name} to {$profile_table}: " . $wpdb->last_error);
+                }
+            }
+        }
+
+        // Индекс на details_hash для антифрода
+        $idx_exists = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM information_schema.STATISTICS
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND INDEX_NAME = 'idx_details_hash'",
+            $profile_table
+        ));
+        if (!$idx_exists && $this->column_exists($profile_table, 'details_hash')) {
+            $wpdb->query("ALTER TABLE `{$profile_table}` ADD KEY `idx_details_hash` (`details_hash`)");
+        }
+
+        // === cashback_payout_requests: encrypted_details, masked_details ===
+        $columns_requests = [
+            'encrypted_details' => "ALTER TABLE `{$requests_table}` ADD COLUMN `encrypted_details` BLOB DEFAULT NULL COMMENT 'AES-256-CBC зашифрованные реквизиты (снапшот)' AFTER `payout_account`",
+            'masked_details' => "ALTER TABLE `{$requests_table}` ADD COLUMN `masked_details` TEXT DEFAULT NULL COMMENT 'Маскированные реквизиты для отображения (JSON)' AFTER `encrypted_details`",
+        ];
+
+        foreach ($columns_requests as $col_name => $alter_sql) {
+            if (!$this->column_exists($requests_table, $col_name)) {
+                $wpdb->query($alter_sql);
+                if ($wpdb->last_error) {
+                    error_log("Mariadb Plugin Error: Failed to add column {$col_name} to {$requests_table}: " . $wpdb->last_error);
+                }
+            }
+        }
+
+        error_log('Mariadb Plugin: Encryption columns check complete');
+    }
+
+    /**
+     * Проверяет существование колонки в таблице
+     */
+    private function column_exists(string $table, string $column): bool
+    {
+        global $wpdb;
+        $result = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM information_schema.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND COLUMN_NAME = %s",
+            $table,
+            $column
+        ));
+        return (int) $result > 0;
+    }
+
+    /**
+     * Миграция существующих данных: шифрует plaintext реквизиты
+     *
+     * Работает батчами по 100 записей. Безопасна для повторного запуска.
+     */
+    private function migrate_encrypt_existing_data(): void
+    {
+        // Проверяем, настроен ли ключ шифрования
+        if (!class_exists('Cashback_Encryption') || !Cashback_Encryption::is_configured()) {
+            error_log('Mariadb Plugin: Skipping encryption migration — CB_ENCRYPTION_KEY not configured');
+            return;
+        }
+
+        global $wpdb;
+        $profile_table = $wpdb->prefix . 'cashback_user_profile';
+        $requests_table = $wpdb->prefix . 'cashback_payout_requests';
+        $batch_size = 100;
+
+        // === Миграция профилей пользователей ===
+        $offset = 0;
+        do {
+            $rows = $wpdb->get_results($wpdb->prepare(
+                "SELECT user_id, payout_account, payout_full_name, bank_id
+                 FROM {$profile_table}
+                 WHERE encrypted_details IS NULL AND payout_account IS NOT NULL AND payout_account != ''
+                 LIMIT %d OFFSET %d",
+                $batch_size,
+                $offset
+            ), ARRAY_A);
+
+            if (empty($rows)) {
+                break;
+            }
+
+            foreach ($rows as $row) {
+                try {
+                    $bank_name = '';
+                    if (!empty($row['bank_id'])) {
+                        $banks_table = $wpdb->prefix . 'cashback_banks';
+                        $bank_name = $wpdb->get_var($wpdb->prepare(
+                            "SELECT name FROM {$banks_table} WHERE id = %d",
+                            $row['bank_id']
+                        )) ?: '';
+                    }
+
+                    $encrypted = Cashback_Encryption::encrypt_details([
+                        'account' => $row['payout_account'],
+                        'full_name' => $row['payout_full_name'] ?? '',
+                        'bank' => $bank_name,
+                    ]);
+
+                    $wpdb->update(
+                        $profile_table,
+                        [
+                            'encrypted_details' => $encrypted['encrypted_details'],
+                            'masked_details' => $encrypted['masked_details'],
+                            'details_hash' => $encrypted['details_hash'],
+                            'payout_account' => '',
+                            'payout_full_name' => '',
+                        ],
+                        ['user_id' => $row['user_id']],
+                        ['%s', '%s', '%s', '%s', '%s'],
+                        ['%d']
+                    );
+                } catch (\Exception $e) {
+                    error_log("Mariadb Plugin Error: Failed to encrypt profile for user {$row['user_id']}: " . $e->getMessage());
+                }
+            }
+
+            $offset += $batch_size;
+        } while (count($rows) === $batch_size);
+
+        // === Миграция заявок на выплату ===
+        // Временно снимаем триггеры, блокирующие UPDATE на заявках с финальным статусом
+        $safe_prefix = $this->validate_table_prefix($wpdb->prefix);
+        $payout_triggers = [
+            "{$safe_prefix}tr_prevent_update_paid_payout",
+            "{$safe_prefix}tr_prevent_update_failed_payout",
+        ];
+        foreach ($payout_triggers as $trigger) {
+            $wpdb->query("DROP TRIGGER IF EXISTS `{$trigger}`");
+        }
+
+        $offset = 0;
+        do {
+            $rows = $wpdb->get_results($wpdb->prepare(
+                "SELECT id, payout_account, provider
+                 FROM {$requests_table}
+                 WHERE encrypted_details IS NULL AND payout_account IS NOT NULL AND payout_account != ''
+                 LIMIT %d OFFSET %d",
+                $batch_size,
+                $offset
+            ), ARRAY_A);
+
+            if (empty($rows)) {
+                break;
+            }
+
+            foreach ($rows as $row) {
+                try {
+                    $bank_name = '';
+                    if (!empty($row['provider'])) {
+                        $banks_table = $wpdb->prefix . 'cashback_banks';
+                        $bank_name = $wpdb->get_var($wpdb->prepare(
+                            "SELECT name FROM {$banks_table} WHERE bank_code = %s",
+                            $row['provider']
+                        )) ?: '';
+                    }
+
+                    $encrypted = Cashback_Encryption::encrypt_details([
+                        'account' => $row['payout_account'],
+                        'full_name' => '',
+                        'bank' => $bank_name,
+                    ]);
+
+                    $wpdb->update(
+                        $requests_table,
+                        [
+                            'encrypted_details' => $encrypted['encrypted_details'],
+                            'masked_details' => $encrypted['masked_details'],
+                            'payout_account' => '',
+                        ],
+                        ['id' => $row['id']],
+                        ['%s', '%s', '%s'],
+                        ['%d']
+                    );
+                } catch (\Exception $e) {
+                    error_log("Mariadb Plugin Error: Failed to encrypt payout request {$row['id']}: " . $e->getMessage());
+                }
+            }
+
+            $offset += $batch_size;
+        } while (count($rows) === $batch_size);
+        // Триггеры будут воссозданы в create_triggers() сразу после этого метода
+
+        error_log('Mariadb Plugin: Encryption migration pass completed');
     }
 
     /**

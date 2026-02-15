@@ -47,6 +47,7 @@ class Cashback_Payouts_Admin
         // Обработка AJAX запросов
         add_action('wp_ajax_update_payout_request', [$this, 'handle_update_payout_request']);
         add_action('wp_ajax_get_payout_request', [$this, 'handle_get_payout_request']);
+        add_action('wp_ajax_decrypt_payout_details', [$this, 'handle_decrypt_payout_details']);
 
         // Подключение скриптов
         add_action('admin_enqueue_scripts', [$this, 'enqueue_admin_scripts']);
@@ -95,7 +96,8 @@ class Cashback_Payouts_Admin
         wp_localize_script('cashback-admin-payouts', 'cashbackPayoutsData', [
             'updateNonce' => wp_create_nonce('update_payout_request_nonce'),
             'getNonce' => wp_create_nonce('get_payout_request_nonce'),
-            'banks' => $this->get_all_banks(), // Передаем список банков
+            'decryptNonce' => wp_create_nonce('decrypt_payout_details_nonce'),
+            'banks' => $this->get_all_banks(),
         ]);
     }
 
@@ -202,8 +204,8 @@ class Cashback_Payouts_Admin
         if (!empty($where_params)) {
             $payouts = $wpdb->get_results(
                 $wpdb->prepare(
-                    "SELECT id, user_id, total_amount, payout_method, payout_account, 
-                    provider, provider_payout_id, attempts, fail_reason, status, 
+                    "SELECT id, user_id, total_amount, payout_method, payout_account, masked_details,
+                    encrypted_details, provider, provider_payout_id, attempts, fail_reason, status,
                     created_at, updated_at
             FROM {$this->table_name}
             {$where_clause}
@@ -216,8 +218,8 @@ class Cashback_Payouts_Admin
         } else {
             $payouts = $wpdb->get_results(
                 $wpdb->prepare(
-                    "SELECT id, user_id, total_amount, payout_method, payout_account, 
-                    provider, provider_payout_id, attempts, fail_reason, status, 
+                    "SELECT id, user_id, total_amount, payout_method, payout_account, masked_details,
+                    encrypted_details, provider, provider_payout_id, attempts, fail_reason, status,
                     created_at, updated_at
             FROM {$this->table_name}
             ORDER BY created_at DESC
@@ -337,7 +339,13 @@ class Cashback_Payouts_Admin
                                             <span class="cashback-inactive-badge"><?php echo esc_html__('(неактивна)', 'cashback-plugin'); ?></span>
                                         <?php endif; ?>
                                         </td>
-                                        <td><?php echo esc_html($payout['payout_account']); ?></td>
+                                        <td class="payout-account-cell" data-payout-id="<?php echo esc_attr($payout['id']); ?>">
+                                            <span class="masked-account"><?php echo esc_html($this->get_display_account($payout)); ?></span>
+                                            <span class="decrypted-account" style="display:none;"></span>
+                                            <?php if ($payout['status'] === 'processing' && (!empty($payout['encrypted_details']) || !empty($payout['payout_account']))): ?>
+                                                <button type="button" class="button button-small decrypt-btn" title="<?php echo esc_attr__('Показать реквизиты', 'cashback-plugin'); ?>">&#128065;</button>
+                                            <?php endif; ?>
+                                        </td>
                                         <td<?php if ($bank_inactive && $is_actionable_status && !empty($bank_info['name'])): ?> class="cashback-inactive-warning" title="<?php echo esc_attr__('Банк деактивирован', 'cashback-plugin'); ?>" <?php endif; ?>>
                                             <?php echo esc_html($bank_info['name']); ?>
                                             <?php if ($bank_inactive && $is_actionable_status && !empty($bank_info['name'])): ?>
@@ -945,6 +953,117 @@ class Cashback_Payouts_Admin
 
         // Возвращаем данные
         wp_send_json_success($payout_data);
+    }
+
+    /**
+     * Получает маскированный номер счёта для отображения в таблице.
+     */
+    private function get_display_account(array $payout): string
+    {
+        if (class_exists('Cashback_Encryption')) {
+            return Cashback_Encryption::get_masked_account(
+                $payout['masked_details'] ?? null,
+                $payout['payout_account'] ?? null
+            );
+        }
+        return $payout['payout_account'] ?? '';
+    }
+
+    /**
+     * AJAX: Расшифровка реквизитов заявки на выплату
+     *
+     * Доступно только Администраторам и Менеджерам магазина.
+     * Только для заявок в статусе 'processing'.
+     * Логирует действие в аудит-лог.
+     */
+    public function handle_decrypt_payout_details(): void
+    {
+        // Проверяем nonce
+        if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'decrypt_payout_details_nonce')) {
+            wp_send_json_error(['message' => __('Неверный nonce.', 'cashback-plugin')]);
+            return;
+        }
+
+        // Проверяем роль: Администратор или Менеджер магазина
+        if (!current_user_can('manage_options') && !current_user_can('manage_woocommerce')) {
+            wp_send_json_error(['message' => __('Недостаточно прав для выполнения этого действия.', 'cashback-plugin')]);
+            return;
+        }
+
+        global $wpdb;
+        $payout_id = intval($_POST['payout_id'] ?? 0);
+
+        if ($payout_id <= 0) {
+            wp_send_json_error(['message' => __('Некорректный ID заявки.', 'cashback-plugin')]);
+            return;
+        }
+
+        // Получаем заявку и проверяем статус
+        $payout = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT id, user_id, status, encrypted_details, payout_account FROM {$this->table_name} WHERE id = %d",
+                $payout_id
+            ),
+            ARRAY_A
+        );
+
+        if (!$payout) {
+            wp_send_json_error(['message' => __('Заявка не найдена.', 'cashback-plugin')]);
+            return;
+        }
+
+        if ($payout['status'] !== 'processing') {
+            wp_send_json_error(['message' => __('Расшифровка доступна только для заявок в статусе "В обработке".', 'cashback-plugin')]);
+            return;
+        }
+
+        // Если есть зашифрованные данные — расшифровываем
+        if (!empty($payout['encrypted_details']) && class_exists('Cashback_Encryption') && Cashback_Encryption::is_configured()) {
+            try {
+                $decrypted = Cashback_Encryption::decrypt_details($payout['encrypted_details']);
+
+                // Аудит-лог
+                Cashback_Encryption::write_audit_log(
+                    'payout_details_decrypted',
+                    get_current_user_id(),
+                    'payout_request',
+                    $payout_id,
+                    ['target_user_id' => (int) $payout['user_id']]
+                );
+
+                wp_send_json_success([
+                    'account' => $decrypted['account'] ?? '',
+                    'full_name' => $decrypted['full_name'] ?? '',
+                    'bank' => $decrypted['bank'] ?? '',
+                ]);
+                return;
+            } catch (\Exception $e) {
+                $this->log_error('Decrypt failed for payout ' . $payout_id . ': ' . $e->getMessage());
+            }
+        }
+
+        // Fallback: возвращаем plaintext payout_account (для записей до миграции)
+        if (!empty($payout['payout_account'])) {
+            // Аудит-лог
+            if (class_exists('Cashback_Encryption')) {
+                Cashback_Encryption::write_audit_log(
+                    'payout_details_viewed_plaintext',
+                    get_current_user_id(),
+                    'payout_request',
+                    $payout_id,
+                    ['target_user_id' => (int) $payout['user_id']]
+                );
+            }
+
+            wp_send_json_success([
+                'account' => $payout['payout_account'],
+                'full_name' => '',
+                'bank' => '',
+            ]);
+            return;
+        }
+
+        wp_send_json_error(['message' => __('Реквизиты отсутствуют.', 'cashback-plugin')]);
     }
 
     /**

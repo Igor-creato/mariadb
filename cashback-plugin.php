@@ -138,6 +138,12 @@ class CashbackPlugin
      */
     public function activate()
     {
+        // Подключаем утилиту шифрования (используется в миграции при активации)
+        $this->require_file('includes/class-cashback-encryption.php');
+
+        // Автоматически генерируем ключ шифрования (wp-content/.cashback-encryption-key.php)
+        $this->maybe_generate_encryption_key();
+
         // Подключаем файл mariadb.php для активации
         $this->require_file('mariadb.php');
         // Активация основного функционала (таблицы, триггеры, события)
@@ -210,6 +216,11 @@ class CashbackPlugin
         if (class_exists('WooCommerce')) {
             $this->load_dependencies();
             $this->initialize_components();
+
+            // Предупреждение если ключ шифрования не настроен
+            if (class_exists('Cashback_Encryption') && !Cashback_Encryption::is_configured()) {
+                add_action('admin_notices', array($this, 'encryption_key_missing_notice'));
+            }
         } else {
             add_action('admin_notices', array($this, 'woocommerce_required_notice'));
         }
@@ -220,6 +231,12 @@ class CashbackPlugin
      */
     public function load_dependencies()
     {
+        // Подключаем ключ шифрования из wp-content/.cashback-encryption-key.php
+        $this->load_encryption_key();
+
+        // Утилита шифрования (загружаем первой, т.к. используется в других компонентах)
+        $this->require_file('includes/class-cashback-encryption.php');
+
         // Подключение зависимых файлов
         $this->require_file('mariadb.php');
         $this->require_file('cashback-history.php');
@@ -288,6 +305,96 @@ class CashbackPlugin
         if (class_exists('Cashback_User_Support')) {
             Cashback_User_Support::get_instance();
         }
+    }
+
+    /**
+     * Путь к файлу с ключом шифрования
+     */
+    private function get_encryption_key_path(): string
+    {
+        return WP_CONTENT_DIR . '/.cashback-encryption-key.php';
+    }
+
+    /**
+     * Подключает файл с ключом шифрования если он существует
+     */
+    private function load_encryption_key(): void
+    {
+        if (defined('CB_ENCRYPTION_KEY')) {
+            return;
+        }
+
+        $key_file = $this->get_encryption_key_path();
+        if (file_exists($key_file)) {
+            require_once $key_file;
+        }
+    }
+
+    /**
+     * Генерирует ключ шифрования и сохраняет в отдельный файл wp-content/.cashback-encryption-key.php
+     *
+     * @return bool true если ключ уже существует или был успешно создан
+     */
+    private function maybe_generate_encryption_key(): bool
+    {
+        // Ключ уже определён (из файла или wp-config.php) — ничего не делаем
+        if (defined('CB_ENCRYPTION_KEY')) {
+            return true;
+        }
+
+        // Пробуем подключить существующий файл ключа
+        $this->load_encryption_key();
+        if (defined('CB_ENCRYPTION_KEY')) {
+            return true;
+        }
+
+        $key_file = $this->get_encryption_key_path();
+        $key_dir = dirname($key_file);
+
+        if (!is_writable($key_dir)) {
+            error_log('Cashback Plugin: Directory not writable for encryption key: ' . $key_dir);
+            return false;
+        }
+
+        // Генерируем криптографически стойкий ключ
+        $key = bin2hex(random_bytes(32));
+
+        $content = "<?php\n"
+            . "/**\n"
+            . " * Cashback Plugin — Encryption Key (auto-generated)\n"
+            . " *\n"
+            . " * WARNING: Do not share, commit to VCS, or delete this file.\n"
+            . " * Loss of this key = loss of access to encrypted user payment details.\n"
+            . " */\n"
+            . "if (!defined('ABSPATH')) { exit; }\n"
+            . "define('CB_ENCRYPTION_KEY', '{$key}');\n";
+
+        $result = file_put_contents($key_file, $content, LOCK_EX);
+
+        if ($result === false) {
+            error_log('Cashback Plugin: Failed to write encryption key file: ' . $key_file);
+            return false;
+        }
+
+        // Определяем константу для текущего запроса
+        define('CB_ENCRYPTION_KEY', $key);
+
+        error_log('Cashback Plugin: Encryption key generated and saved to ' . $key_file);
+        return true;
+    }
+
+    /**
+     * Уведомление об отсутствии ключа шифрования
+     */
+    public function encryption_key_missing_notice()
+    {
+        $key_file = $this->get_encryption_key_path();
+        printf(
+            '<div class="notice notice-error"><p><strong>%s:</strong> %s <code>%s</code></p></div>',
+            esc_html__('Cashback Plugin', 'cashback-plugin'),
+            esc_html__('Не удалось создать файл с ключом шифрования. Проверьте права на запись в директорию wp-content. Ожидаемый путь:', 'cashback-plugin'),
+            esc_html($key_file)
+        );
     }
 
     /**

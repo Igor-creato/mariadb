@@ -53,6 +53,7 @@ function cashback_plugin_uninstall(): void
         "{$prefix}cashback_banks",
         "{$prefix}cashback_support_tickets",
         "{$prefix}cashback_support_messages",
+        "{$prefix}cashback_audit_log",
     ];
 
     // Drop triggers
@@ -97,6 +98,7 @@ function cashback_plugin_uninstall(): void
         'cashback_support_module_enabled',
         'cashback_plugin_version',
         'cashback_plugin_db_version',
+        'cashback_encryption_migrated',
     ];
 
     foreach ($options as $option) {
@@ -105,6 +107,12 @@ function cashback_plugin_uninstall(): void
 
     // Delete transients
     delete_transient('cashback_support_flush_rules');
+
+    // Delete encryption key file
+    $key_file = WP_CONTENT_DIR . '/.cashback-encryption-key.php';
+    if (file_exists($key_file)) {
+        unlink($key_file);
+    }
 
     // Clear any cached data
     wp_cache_flush();

@@ -60,6 +60,7 @@
     initEditButtons();
     initCancelButtons();
     initSaveButtons();
+    initDecryptButtons();
   });
 
   /**
@@ -453,6 +454,64 @@
 
       row.find('.save-btn, .cancel-btn').hide();
       row.find('.edit-btn').show();
+    });
+  }
+
+  /**
+   * Инициализация кнопок расшифровки реквизитов
+   */
+  function initDecryptButtons() {
+    $(document).on('click', '.decrypt-btn', function () {
+      const btn = $(this);
+      const cell = btn.closest('.payout-account-cell');
+      const payoutId = cell.data('payout-id');
+
+      if (!payoutId) {
+        return;
+      }
+
+      // Блокируем кнопку на время запроса
+      btn.prop('disabled', true).text('...');
+
+      const data = {
+        action: 'decrypt_payout_details',
+        payout_id: payoutId,
+        nonce: cashbackPayoutsData.decryptNonce,
+      };
+
+      $.post(ajaxurl, data, function (response) {
+        if (response.success) {
+          const details = response.data;
+          let displayText = escapeHtml(details.account || '');
+          if (details.full_name) {
+            displayText += ' (' + escapeHtml(details.full_name) + ')';
+          }
+
+          // Показываем расшифрованные данные
+          cell.find('.masked-account').hide();
+          cell.find('.decrypted-account').html(displayText).show();
+          btn.hide();
+
+          // Автоскрытие через 30 секунд
+          setTimeout(function () {
+            cell.find('.decrypted-account').hide();
+            cell.find('.masked-account').show();
+            btn.show().prop('disabled', false).html('&#128065;');
+          }, 30000);
+        } else {
+          alert(response.data.message || 'Ошибка расшифровки');
+          btn.prop('disabled', false).html('&#128065;');
+        }
+      }).fail(function (jqXHR, textStatus) {
+        let errorMsg = 'Ошибка соединения';
+        if (jqXHR.status === 403) {
+          errorMsg = 'Ошибка 403: Доступ запрещён. Обновите страницу.';
+        } else if (jqXHR.status === 500) {
+          errorMsg = 'Ошибка 500: Внутренняя ошибка сервера.';
+        }
+        alert(errorMsg);
+        btn.prop('disabled', false).html('&#128065;');
+      });
     });
   }
 })(jQuery);

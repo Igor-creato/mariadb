@@ -178,7 +178,7 @@ class CashbackWithdrawal
 
         $table_name = $wpdb->prefix . 'cashback_user_profile';
         $result = $wpdb->get_row($wpdb->prepare(
-            "SELECT payout_method_id, payout_account, bank_id FROM {$table_name} WHERE user_id = %d",
+            "SELECT payout_method_id, payout_account, encrypted_details, bank_id FROM {$table_name} WHERE user_id = %d",
             $user_id
         ), ARRAY_A);
 
@@ -186,9 +186,11 @@ class CashbackWithdrawal
             return false;
         }
 
-        // Проверяем, что все три поля заполнены
+        // Реквизиты считаются заполненными если есть зашифрованные данные или plaintext
+        $has_account = !empty($result['encrypted_details']) || !empty($result['payout_account']);
+
         return !empty($result['payout_method_id']) &&
-            !empty($result['payout_account']) &&
+            $has_account &&
             !empty($result['bank_id']);
     }
 
@@ -354,12 +356,69 @@ class CashbackWithdrawal
         global $wpdb;
 
         $table_name = $wpdb->prefix . 'cashback_user_profile';
-        $payout_account = $wpdb->get_var($wpdb->prepare(
-            "SELECT payout_account FROM {$table_name} WHERE user_id = %d",
+        $row = $wpdb->get_row($wpdb->prepare(
+            "SELECT payout_account, encrypted_details FROM {$table_name} WHERE user_id = %d",
+            $user_id
+        ), ARRAY_A);
+
+        if (!$row) {
+            return null;
+        }
+
+        // Если есть зашифрованные данные — расшифровываем
+        if (!empty($row['encrypted_details']) && class_exists('Cashback_Encryption') && Cashback_Encryption::is_configured()) {
+            try {
+                $decrypted = Cashback_Encryption::decrypt_details($row['encrypted_details']);
+                return $decrypted['account'] ?? null;
+            } catch (\Exception $e) {
+                error_log('Cashback: Failed to decrypt payout account for user ' . $user_id . ': ' . $e->getMessage());
+            }
+        }
+
+        // Fallback на plaintext
+        return $row['payout_account'] ?: null;
+    }
+
+    /**
+     * Получает маскированный номер счёта из профиля пользователя.
+     * Fallback на маскирование plaintext payout_account.
+     */
+    private function get_user_masked_account(int $user_id, ?string $fallback_payout_account = null): string
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'cashback_user_profile';
+        $masked_details = $wpdb->get_var($wpdb->prepare(
+            "SELECT masked_details FROM {$table_name} WHERE user_id = %d",
             $user_id
         ));
 
-        return $payout_account;
+        if (class_exists('Cashback_Encryption')) {
+            return Cashback_Encryption::get_masked_account($masked_details, $fallback_payout_account);
+        }
+
+        return $fallback_payout_account ?: '';
+    }
+
+    /**
+     * Получает зашифрованные данные профиля для копирования в заявку
+     *
+     * @return array{encrypted_details: string|null, masked_details: string|null}
+     */
+    private function get_user_encryption_data(int $user_id): array
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'cashback_user_profile';
+        $row = $wpdb->get_row($wpdb->prepare(
+            "SELECT encrypted_details, masked_details FROM {$table_name} WHERE user_id = %d",
+            $user_id
+        ), ARRAY_A);
+
+        return [
+            'encrypted_details' => $row['encrypted_details'] ?? null,
+            'masked_details' => $row['masked_details'] ?? null,
+        ];
     }
 
     /**
@@ -436,6 +495,7 @@ class CashbackWithdrawal
         // Получаем информацию о способе вывода и номере счета
         $payout_method_id = $this->get_user_payout_method_id($user_id);
         $payout_account = $this->get_payout_account($user_id);
+        $masked_account = $this->get_user_masked_account($user_id, $payout_account);
         $bank_id = $this->get_user_bank_id($user_id);
 
         // Проверяем, есть ли у пользователя сохраненные настройки
@@ -492,7 +552,7 @@ class CashbackWithdrawal
             echo '</p>';
             echo '<p class="woocommerce-form-row">';
             echo '<strong>' . __('Номер счета/телефона:', 'cashback-plugin') . '</strong> ';
-            echo esc_html($payout_account);
+            echo esc_html($masked_account);
             echo '</p>';
             echo '<p class="woocommerce-form-row">';
             echo '<strong>' . __('Банк:', 'cashback-plugin') . '</strong> ';
@@ -745,20 +805,36 @@ class CashbackWithdrawal
             $bank_id = $bank_info['id'] ?? null;
             $bank_code = $bank_info['bank_code'] ?? '';
 
+            // Получаем зашифрованные данные из профиля для снапшота в заявке
+            $encryption_data = $this->get_user_encryption_data($user_id);
+
             // 📝 АТОМАРНАЯ ОПЕРАЦИЯ: Создаем заявку на выплату с идемпотентным ключом
             // UNIQUE KEY на idempotency_key гарантирует отсутствие дублей даже при повторных попытках
+            $has_encrypted = !empty($encryption_data['encrypted_details']);
+
+            $insert_data = array(
+                'user_id' => $user_id,
+                'total_amount' => $withdrawal_amount,
+                'payout_method' => $payout_method,
+                'payout_account' => $has_encrypted ? '' : ($payout_account ?: ''),
+                'provider' => $bank_code,
+                'idempotency_key' => $idempotency_key,
+                'status' => 'waiting',
+            );
+            $insert_formats = array('%d', '%s', '%s', '%s', '%s', '%s', '%s');
+
+            // Добавляем зашифрованные поля если доступны
+            if ($has_encrypted) {
+                $insert_data['encrypted_details'] = $encryption_data['encrypted_details'];
+                $insert_data['masked_details'] = $encryption_data['masked_details'];
+                $insert_formats[] = '%s';
+                $insert_formats[] = '%s';
+            }
+
             $result = $wpdb->insert(
                 $table_requests,
-                array(
-                    'user_id' => $user_id,
-                    'total_amount' => $withdrawal_amount,
-                    'payout_method' => $payout_method, // Всегда валидный slug (проверено выше)
-                    'payout_account' => $payout_account ?: '',
-                    'provider' => $bank_code, // Сохраняем код банка как провайдера
-                    'idempotency_key' => $idempotency_key,
-                    'status' => 'waiting'
-                ),
-                array('%d', '%s', '%s', '%s', '%s', '%s', '%s')
+                $insert_data,
+                $insert_formats
             );
 
             if ($result === false) {
@@ -939,8 +1015,38 @@ class CashbackWithdrawal
             return;
         }
 
+        // Шифрование реквизитов
+        $encrypted_details = null;
+        $masked_details = null;
+        $details_hash = null;
+
+        if (class_exists('Cashback_Encryption') && Cashback_Encryption::is_configured()) {
+            try {
+                $bank_name = $this->get_bank_name($bank_id);
+                $enc_result = Cashback_Encryption::encrypt_details([
+                    'account' => $payout_account,
+                    'full_name' => '',
+                    'bank' => $bank_name ?: '',
+                ]);
+                $encrypted_details = $enc_result['encrypted_details'];
+                $masked_details = $enc_result['masked_details'];
+                $details_hash = $enc_result['details_hash'];
+            } catch (\Exception $e) {
+                wp_send_json_error(array('message' => __('Ошибка шифрования данных.', 'cashback-plugin')));
+                return;
+            }
+        }
+
         // Обновляем данные пользователя
-        $result = $this->update_user_payout_details($user_id, $payout_method_id, $payout_account, $bank_id);
+        $result = $this->update_user_payout_details(
+            $user_id,
+            $payout_method_id,
+            $payout_account,
+            $bank_id,
+            $encrypted_details,
+            $masked_details,
+            $details_hash
+        );
 
         if ($result) {
             wp_send_json_success(array(
@@ -1046,10 +1152,20 @@ class CashbackWithdrawal
      * @param int $payout_method_id
      * @param string $payout_account
      * @param int $bank_id
+     * @param string|null $encrypted_details
+     * @param string|null $masked_details
+     * @param string|null $details_hash
      * @return bool
      */
-    private function update_user_payout_details(int $user_id, int $payout_method_id, string $payout_account, int $bank_id): bool
-    {
+    private function update_user_payout_details(
+        int $user_id,
+        int $payout_method_id,
+        string $payout_account,
+        int $bank_id,
+        ?string $encrypted_details = null,
+        ?string $masked_details = null,
+        ?string $details_hash = null
+    ): bool {
         global $wpdb;
 
         $table_name = $wpdb->prefix . 'cashback_user_profile';
@@ -1065,32 +1181,44 @@ class CashbackWithdrawal
                 )
             );
 
+            $data = array(
+                'payout_method_id' => $payout_method_id,
+                'bank_id' => $bank_id,
+                'payout_details_updated_at' => current_time('mysql'),
+            );
+            $formats = array('%d', '%d', '%s');
+
+            // Если шифрование настроено — сохраняем только зашифрованные данные, plaintext очищаем
+            if ($encrypted_details !== null) {
+                $data['encrypted_details'] = $encrypted_details;
+                $data['masked_details'] = $masked_details;
+                $data['details_hash'] = $details_hash;
+                $data['payout_account'] = '';
+                $data['payout_full_name'] = '';
+                $formats = array_merge($formats, ['%s', '%s', '%s', '%s', '%s']);
+            } else {
+                // Fallback: если шифрование не настроено, сохраняем plaintext
+                $data['payout_account'] = $payout_account;
+                $formats[] = '%s';
+            }
+
             if ($existing_record) {
                 // Обновляем существующую запись
                 $result = $wpdb->update(
                     $table_name,
-                    array(
-                        'payout_method_id' => $payout_method_id,
-                        'payout_account' => $payout_account,
-                        'bank_id' => $bank_id,
-                        'payout_details_updated_at' => current_time('mysql')
-                    ),
+                    $data,
                     array('user_id' => $user_id),
-                    array('%d', '%s', '%d', '%s'),
+                    $formats,
                     array('%d')
                 );
             } else {
                 // Создаем новую запись
+                $data['user_id'] = $user_id;
+                array_unshift($formats, '%d');
                 $result = $wpdb->insert(
                     $table_name,
-                    array(
-                        'user_id' => $user_id,
-                        'payout_method_id' => $payout_method_id,
-                        'payout_account' => $payout_account,
-                        'bank_id' => $bank_id,
-                        'payout_details_updated_at' => current_time('mysql')
-                    ),
-                    array('%d', '%d', '%s', '%d', '%s')
+                    $data,
+                    $formats
                 );
             }
 

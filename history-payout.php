@@ -100,7 +100,7 @@ class HistoryPayout
                 echo '<td data-title="' . esc_attr__('Дата', 'cashback-plugin') . '">' . $this->format_date($payout->created_at) . '</td>';
                 echo '<td data-title="' . esc_attr__('Сумма', 'cashback-plugin') . '">' . esc_html($payout->total_amount ?? '0.00') . '</td>';
                 echo '<td data-title="' . esc_attr__('Способ вывода', 'cashback-plugin') . '">' . esc_html($this->get_payout_method_label($payout->payout_method) ?: __('Не указан', 'cashback-plugin')) . '</td>';
-                echo '<td data-title="' . esc_attr__('Счет', 'cashback-plugin') . '">' . esc_html($payout->payout_account ?: __('Не указан', 'cashback-plugin')) . '</td>';
+                echo '<td data-title="' . esc_attr__('Счет', 'cashback-plugin') . '">' . esc_html($this->get_display_account($payout) ?: __('Не указан', 'cashback-plugin')) . '</td>';
                 echo '<td data-title="' . esc_attr__('Банк', 'cashback-plugin') . '">' . esc_html($this->get_bank_name_by_code($payout->provider ?? '') ?: __('Не указан', 'cashback-plugin')) . '</td>';
                 echo '<td data-title="' . esc_attr__('Статус', 'cashback-plugin') . '">' . esc_html($this->get_status_label($payout->status)) . '</td>';
                 echo '</tr>';
@@ -175,7 +175,7 @@ class HistoryPayout
         global $wpdb;
         $table_name = $wpdb->prefix . 'cashback_payout_requests';
         return $wpdb->get_results($wpdb->prepare(
-            "SELECT created_at, total_amount, payout_method, payout_account, provider, status
+            "SELECT created_at, total_amount, payout_method, payout_account, masked_details, provider, status
              FROM {$table_name}
              WHERE user_id = %d
              ORDER BY created_at DESC
@@ -226,7 +226,7 @@ class HistoryPayout
             $html .= '<td>' . $this->format_date($payout->created_at) . '</td>';
             $html .= '<td>' . esc_html($payout->total_amount ?? '0.00') . '</td>';
             $html .= '<td>' . esc_html($this->get_payout_method_label($payout->payout_method) ?: __('Не указан', 'cashback-plugin')) . '</td>';
-            $html .= '<td>' . esc_html($payout->payout_account ?: __('Не указан', 'cashback-plugin')) . '</td>';
+            $html .= '<td>' . esc_html($this->get_display_account($payout) ?: __('Не указан', 'cashback-plugin')) . '</td>';
             $html .= '<td>' . esc_html($this->get_bank_name_by_code($payout->provider ?? '') ?: __('Не указан', 'cashback-plugin')) . '</td>';
             $html .= '<td>' . esc_html($this->get_status_label($payout->status)) . '</td>';
             $html .= '</tr>';
@@ -346,6 +346,21 @@ class HistoryPayout
         foreach ($methods as $method) {
             $this->payout_method_labels[$method['slug']] = $method['name'];
         }
+    }
+
+    /**
+     * Получает маскированный номер счёта для отображения.
+     * Использует masked_details если доступен, иначе fallback на payout_account.
+     */
+    private function get_display_account($payout): string
+    {
+        if (class_exists('Cashback_Encryption')) {
+            return Cashback_Encryption::get_masked_account(
+                $payout->masked_details ?? null,
+                $payout->payout_account ?? null
+            );
+        }
+        return $payout->payout_account ?? '';
     }
 
     /**
