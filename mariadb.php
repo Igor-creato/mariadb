@@ -692,7 +692,7 @@ class Mariadb_Plugin
         $safe_prefix = $this->validate_table_prefix($wpdb->prefix);
 
         $events = [
-            // Событие ежедневно проверяет одобренный кэшбэк если старше 14 дней переводит в доступный баланс
+            // Событие ежедневно проверяет одобренный кэшбэк если старше n дней переводит в доступный баланс
             // ПОЛНАЯ ЗАЩИТА ОТ ДУБЛИРОВАНИЯ: идемпотентность через processed_at и атомарные операции
             "CREATE EVENT IF NOT EXISTS `{$safe_prefix}cashback_ev_confirmed_cashback`
 ON SCHEDULE EVERY 1 DAY

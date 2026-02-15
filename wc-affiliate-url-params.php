@@ -242,16 +242,6 @@ class WC_Affiliate_URL_Params
         $url = add_query_arg($params, $url);
         $logger->debug(sprintf('Final URL: %s', $url), ['source' => self::LOGGER_SOURCE]);
 
-        // Сохраняем информацию о необходимости проверки авторизации
-        if ($has_user_param) {
-            $product->update_meta_data('_requires_auth_warning', 'yes');
-            $logger->debug('Set _requires_auth_warning to yes', ['source' => self::LOGGER_SOURCE]);
-        } else {
-            $product->delete_meta_data('_requires_auth_warning');
-            $logger->debug('Removed _requires_auth_warning', ['source' => self::LOGGER_SOURCE]);
-        }
-        $product->save_meta_data();
-
         return $url;
     }
 
