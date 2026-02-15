@@ -363,6 +363,15 @@ class Cashback_Users_Management_Admin
                 return;
             }
 
+            // Если устанавливаем статус "banned", проверяем обязательность причины бана
+            if ($status === 'banned') {
+                $ban_reason = isset($_POST['ban_reason']) ? trim(sanitize_text_field(wp_unslash($_POST['ban_reason']))) : '';
+                if (empty($ban_reason)) {
+                    wp_send_json_error(['message' => 'Заполните причину бана пользователя.']);
+                    return;
+                }
+            }
+
             $update_data['status'] = $status;
             $update_formats[] = '%s';
         }
@@ -373,6 +382,12 @@ class Cashback_Users_Management_Admin
             $update_data['ban_reason'] = $ban_reason;
             $update_formats[] = '%s';
         }
+
+        // Получаем текущий статус пользователя (для проверки бана/разбана)
+        $old_status = $wpdb->get_var($wpdb->prepare(
+            "SELECT status FROM {$this->profile_table_name} WHERE user_id = %d",
+            $user_id
+        ));
 
         // Добавляем дату обновления
         $update_data['updated_at'] = current_time('mysql');
@@ -396,6 +411,11 @@ class Cashback_Users_Management_Admin
         if (isset($_POST['status']) && $_POST['status'] === 'banned') {
             $ban_reason = isset($_POST['ban_reason']) ? sanitize_text_field(wp_unslash($_POST['ban_reason'])) : '';
             $this->handle_user_ban($user_id, $ban_reason);
+        }
+
+        // Если пользователь был разбанен - обрабатываем последствия
+        if ($old_status === 'banned' && isset($_POST['status']) && $_POST['status'] !== 'banned') {
+            $this->handle_user_unban($user_id);
         }
 
         // Получаем обновленные данные из базы
@@ -502,7 +522,7 @@ class Cashback_Users_Management_Admin
                 $requests_table,
                 [
                     'status' => 'declined',
-                    'fail_reason' => 'Account banned',
+                    'fail_reason' => '(Аккаунт забанен)',
                     'updated_at' => current_time('mysql')
                 ],
                 ['id' => $request->id],
@@ -545,6 +565,39 @@ class Cashback_Users_Management_Admin
             );
 
             wp_mail($user->user_email, $subject, $message);
+        }
+    }
+
+    /**
+     * Обработка последствий разбана пользователя
+     *
+     * @param int $user_id ID разбаненного пользователя
+     */
+    private function handle_user_unban(int $user_id): void
+    {
+        global $wpdb;
+
+        // Обновляем надпись в declined выплатах которые были отменены при бане
+        $requests_table = $wpdb->prefix . 'cashback_payout_requests';
+
+        $wpdb->query($wpdb->prepare(
+            "UPDATE {$requests_table}
+             SET fail_reason = '(Аккаунт был забанен)'
+             WHERE user_id = %d
+             AND status = 'declined'
+             AND fail_reason = '(Аккаунт забанен)'",
+            $user_id
+        ));
+
+        // Логируем разбан
+        if (class_exists('Cashback_Encryption')) {
+            Cashback_Encryption::write_audit_log(
+                'user_unbanned',
+                get_current_user_id(),
+                'user',
+                $user_id,
+                []
+            );
         }
     }
 
