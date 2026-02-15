@@ -175,6 +175,11 @@
 
 // Frontend JavaScript for the cashback withdrawal functionality
 jQuery(document).ready(function ($) {
+  // Сброс подсветки ошибки при вводе суммы
+  $('#withdrawal-amount').on('input', function () {
+    $(this).removeClass('input--error');
+  });
+
   // Обработчик отправки формы вывода кэшбэка
   $('#withdrawal-form').on('submit', function (e) {
     e.preventDefault(); // Предотвращаем стандартную отправку формы
@@ -195,6 +200,7 @@ jQuery(document).ready(function ($) {
 
     // Проверяем, является ли введенное значение корректным числом
     if (isNaN(amount) || amount <= 0) {
+      withdrawalAmount.addClass('input--error');
       $('#withdrawal-messages').html(
         '<div class="error-message">' +
           'Пожалуйста, введите корректную сумму для вывода.' +
@@ -245,13 +251,17 @@ jQuery(document).ready(function ($) {
           $('#withdrawal-messages').html('<div class="error-message">' + errorMsg + '</div>');
 
           // Если сервер указал показать форму настроек (платёжная система или банк неактивны)
-          if (
+          var isFormError =
             typeof response.data === 'object' &&
             response.data !== null &&
-            response.data.show_form
-          ) {
+            response.data.show_form;
+
+          if (isFormError) {
             $('#payout_settings_display').hide();
             $('#payout_settings_form').removeClass('payout-settings-form-hidden').show();
+          } else {
+            // Ошибка связана с суммой — подсвечиваем поле
+            withdrawalAmount.addClass('input--error');
           }
         }
       },
@@ -314,6 +324,15 @@ jQuery(document).ready(function ($) {
   }
 
   console.log('Payout settings handler loaded', cashback_ajax);
+
+  // Сброс подсветки ошибок при взаимодействии с полями
+  $(document).on('change', '#payout_method_id', function () {
+    $(this).removeClass('input--error');
+  });
+
+  $(document).on('input', '#payout_account', function () {
+    $(this).removeClass('input--error');
+  });
 
   // ============================================================
   // Компонент поиска банков с AJAX, клавиатурной навигацией и a11y
@@ -604,58 +623,76 @@ jQuery(document).ready(function ($) {
 
     console.log('Form values:', { payoutMethodId, payoutAccount, bankId, bankInputVal });
 
+    // Сбрасываем подсветку ошибок перед валидацией
+    $('#payout_method_id').removeClass('input--error');
+    $('#payout_account').removeClass('input--error');
+    $('#bank_search_input').removeClass('bank-search-input--error');
+    $('#bank_search_error').text('').hide();
+
     // Валидация
+    var hasErrors = false;
+
     if (!payoutMethodId || payoutMethodId === '' || payoutMethodId === '0') {
+      $('#payout_method_id').addClass('input--error');
       $('#payout_settings_message')
         .removeClass('success')
         .addClass('error')
         .text('Пожалуйста, выберите способ вывода');
-      return;
+      hasErrors = true;
     }
 
     if (!payoutAccount || !payoutAccount.trim()) {
-      $('#payout_settings_message')
-        .removeClass('success')
-        .addClass('error')
-        .text('Пожалуйста, введите номер счета или телефона');
-      return;
+      $('#payout_account').addClass('input--error');
+      if (!hasErrors) {
+        $('#payout_settings_message')
+          .removeClass('success')
+          .addClass('error')
+          .text('Пожалуйста, введите номер счета или телефона');
+      }
+      hasErrors = true;
     }
 
     // Валидация банка: проверяем что пользователь выбрал из списка
     if (!bankId || bankId === '' || bankId === '0' || parseInt(bankId, 10) <= 0) {
+      $('#bank_search_input').addClass('bank-search-input--error');
       // Если введено название но не выбрано из списка
       if (bankInputVal.length > 0 && !bankSelectedFromList) {
         $('#bank_search_error').text('Вы не выбрали банк из списка').show();
-        $('#bank_search_input').addClass('bank-search-input--error');
+        if (!hasErrors) {
+          $('#payout_settings_message')
+            .removeClass('success')
+            .addClass('error')
+            .text('Вы не выбрали банк из списка');
+        }
+      } else {
+        if (!hasErrors) {
+          $('#payout_settings_message')
+            .removeClass('success')
+            .addClass('error')
+            .text('Пожалуйста, выберите банк');
+        }
+      }
+      hasErrors = true;
+    } else if (bankInputVal.length > 0 && !bankSelectedFromList) {
+      // Дополнительная проверка: если bank_id есть, но bankSelectedFromList = false
+      // и текст в поле отличается от выбранного — значит пользователь изменил текст после выбора
+      $('#bank_search_error').text('Вы не выбрали банк из списка').show();
+      $('#bank_search_input').addClass('bank-search-input--error');
+      if (!hasErrors) {
         $('#payout_settings_message')
           .removeClass('success')
           .addClass('error')
           .text('Вы не выбрали банк из списка');
-      } else {
-        $('#payout_settings_message')
-          .removeClass('success')
-          .addClass('error')
-          .text('Пожалуйста, выберите банк');
       }
-      return;
+      hasErrors = true;
     }
 
-    // Дополнительная проверка: если bank_id есть, но bankSelectedFromList = false
-    // и текст в поле отличается от выбранного — значит пользователь изменил текст после выбора
-    if (bankInputVal.length > 0 && !bankSelectedFromList) {
-      $('#bank_search_error').text('Вы не выбрали банк из списка').show();
-      $('#bank_search_input').addClass('bank-search-input--error');
-      $('#payout_settings_message')
-        .removeClass('success')
-        .addClass('error')
-        .text('Вы не выбрали банк из списка');
+    if (hasErrors) {
       return;
     }
 
     // Очищаем предыдущие сообщения
     $('#payout_settings_message').text('').removeClass('success error');
-    $('#bank_search_error').text('').hide();
-    $('#bank_search_input').removeClass('bank-search-input--error');
 
     console.log('Sending AJAX request to:', cashback_ajax.ajax_url);
 

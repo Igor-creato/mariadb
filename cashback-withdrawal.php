@@ -474,10 +474,12 @@ class CashbackWithdrawal
             echo '</div>';
         }
 
+        // Получаем название банка один раз для использования в обоих блоках
+        $bank_name = ($bank_id > 0) ? $this->get_bank_name($bank_id) : '';
+
         if ($has_settings && !$settings_inactive) {
             // Если настройки есть и активны - показываем их в виде текста
             $method_name = $this->get_payout_method_name($payout_method_id);
-            $bank_name = $this->get_bank_name($bank_id);
 
             echo '<div id="payout_settings_display" class="payout-settings-display">';
             echo '<p class="woocommerce-form-row">';
@@ -524,11 +526,8 @@ class CashbackWithdrawal
         echo '<label for="bank_search_input" id="bank_search_label">' . __('Банк', 'woocommerce') . ' <span class="required">*</span></label>';
         echo '<input type="hidden" name="bank_id" id="bank_id" value="' . esc_attr($bank_id) . '" />';
         echo '<div class="bank-search-wrapper" role="combobox" aria-expanded="false" aria-owns="bank_search_results" aria-haspopup="listbox">';
-        // Определяем текущее название банка для поля ввода
-        $current_bank_name = '';
-        if ($bank_id > 0) {
-            $current_bank_name = $this->get_bank_name($bank_id);
-        }
+        // Используем ранее полученное название банка
+        $current_bank_name = $bank_name;
         echo '<input type="text" class="woocommerce-Input woocommerce-Input--text input-text" id="bank_search_input" autocomplete="off" placeholder="' . esc_attr__('Начните вводить название банка...', 'woocommerce') . '" value="' . esc_attr($current_bank_name) . '" role="searchbox" aria-autocomplete="list" aria-controls="bank_search_results" aria-labelledby="bank_search_label" />';
         echo '<ul id="bank_search_results" class="bank-search-results" role="listbox" aria-label="' . esc_attr__('Список банков', 'woocommerce') . '">';
         // Первый элемент — показ начальных 10 банков при фокусе

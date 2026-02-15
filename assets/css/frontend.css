@@ -541,7 +541,16 @@ button#save_payout_details_btn:hover {
     outline: none;
 }
 
-/* Ошибка ввода */
+/* Ошибка ввода — общий стиль для всех полей формы */
+.payout-settings-form .input--error,
+.payout-settings-form .input--error:focus,
+.cashback-withdrawal-form .input--error,
+.cashback-withdrawal-form .input--error:focus {
+    border-color: #dc3232 !important;
+    box-shadow: 0 0 0 1px #dc3232 !important;
+}
+
+/* Ошибка ввода — поле поиска банка */
 #bank_search_input.bank-search-input--error,
 #bank_search_input.bank-search-input--error:focus {
     border-color: #dc3232;
