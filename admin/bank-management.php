@@ -163,7 +163,7 @@ class Cashback_Bank_Management_Admin
         // Выводим сообщения об ошибках или успехе
         $message = '';
         if (isset($_GET['message'])) {
-            $msg_type = sanitize_text_field($_GET['message']);
+            $msg_type = sanitize_text_field(wp_unslash($_GET['message']));
             if ($msg_type === 'added') {
                 $message = '<div class="notice notice-success is-dismissible"><p>Банк успешно добавлен.</p></div>';
             } elseif ($msg_type === 'updated') {
@@ -337,7 +337,7 @@ class Cashback_Bank_Management_Admin
     public function handle_update_bank(): void
     {
         // Проверяем nonce
-        if (!wp_verify_nonce(sanitize_text_field($_POST['nonce']), 'update_bank_nonce')) {
+        if (!wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'update_bank_nonce')) {
             wp_send_json_error(['message' => 'Неверный токен безопасности.']);
             return;
         }
@@ -351,9 +351,9 @@ class Cashback_Bank_Management_Admin
         global $wpdb;
 
         $id = intval($_POST['id']);
-        $bank_code = sanitize_text_field($_POST['bank_code']);
-        $name = sanitize_text_field($_POST['name']);
-        $short_name = sanitize_text_field($_POST['short_name']);
+        $bank_code = sanitize_text_field(wp_unslash($_POST['bank_code']));
+        $name = sanitize_text_field(wp_unslash($_POST['name']));
+        $short_name = sanitize_text_field(wp_unslash($_POST['short_name']));
         $is_active = intval($_POST['is_active']);
         $sort_order = intval($_POST['sort_order']);
 
@@ -400,7 +400,7 @@ class Cashback_Bank_Management_Admin
     public function handle_add_bank(): void
     {
         // Проверяем nonce
-        if (!wp_verify_nonce(sanitize_text_field($_POST['nonce']), 'add_bank_nonce')) {
+        if (!wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'add_bank_nonce')) {
             wp_send_json_error(['message' => 'Неверный токен безопасности.']);
             return;
         }
@@ -413,9 +413,9 @@ class Cashback_Bank_Management_Admin
 
         global $wpdb;
 
-        $bank_code = sanitize_text_field($_POST['bank_code']);
-        $name = sanitize_text_field($_POST['name']);
-        $short_name = sanitize_text_field($_POST['short_name']);
+        $bank_code = sanitize_text_field(wp_unslash($_POST['bank_code']));
+        $name = sanitize_text_field(wp_unslash($_POST['name']));
+        $short_name = sanitize_text_field(wp_unslash($_POST['short_name']));
         $is_active = intval($_POST['is_active']);
         $sort_order = intval($_POST['sort_order']);
 

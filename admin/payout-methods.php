@@ -266,7 +266,7 @@ class Cashback_Payout_Methods_Admin
     public function handle_update_payout_method(): void
     {
         // Проверяем nonce
-        if (!wp_verify_nonce(sanitize_text_field($_POST['nonce']), 'update_payout_method_nonce')) {
+        if (!wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'update_payout_method_nonce')) {
             wp_send_json_error(['message' => 'Неверный токен безопасности.']);
             return;
         }
@@ -280,8 +280,8 @@ class Cashback_Payout_Methods_Admin
         global $wpdb;
 
         $id = intval($_POST['id']);
-        $slug = sanitize_text_field($_POST['slug']);
-        $name = sanitize_text_field($_POST['name']);
+        $slug = sanitize_text_field(wp_unslash($_POST['slug']));
+        $name = sanitize_text_field(wp_unslash($_POST['name']));
         $is_active = intval($_POST['is_active']);
         $sort_order = intval($_POST['sort_order']);
 
@@ -326,7 +326,7 @@ class Cashback_Payout_Methods_Admin
     public function handle_add_payout_method(): void
     {
         // Проверяем nonce
-        if (!wp_verify_nonce(sanitize_text_field($_POST['nonce']), 'add_payout_method_nonce')) {
+        if (!wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'add_payout_method_nonce')) {
             wp_send_json_error(['message' => 'Неверный токен безопасности.']);
             return;
         }
@@ -339,8 +339,8 @@ class Cashback_Payout_Methods_Admin
 
         global $wpdb;
 
-        $slug = sanitize_text_field($_POST['slug']);
-        $name = sanitize_text_field($_POST['name']);
+        $slug = sanitize_text_field(wp_unslash($_POST['slug']));
+        $name = sanitize_text_field(wp_unslash($_POST['name']));
         $is_active = intval($_POST['is_active']);
         $sort_order = intval($_POST['sort_order']);
 

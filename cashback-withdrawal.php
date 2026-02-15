@@ -79,7 +79,7 @@ class CashbackWithdrawal
     {
         // Insert after 'orders'
         $new_items = array();
-        $new_items['cashback-withdrawal'] = __('Вывод кэшбэка', 'woocommerce');
+        $new_items['cashback-withdrawal'] = __('Вывод кэшбэка', 'cashback-plugin');
 
         return $this->insert_after_helper($items, $new_items, 'orders');
     }
@@ -387,9 +387,9 @@ class CashbackWithdrawal
 
         // Если не найдено в базе, используем старую логику
         $labels = array(
-            'sbp' => __('Система быстрых платежей (СБП)', 'woocommerce'),
-            'mir' => __('Карта МИР', 'woocommerce'),
-            'yoomoney' => __('ЮMoney', 'woocommerce')
+            'sbp' => __('Система быстрых платежей (СБП)', 'cashback-plugin'),
+            'mir' => __('Карта МИР', 'cashback-plugin'),
+            'yoomoney' => __('ЮMoney', 'cashback-plugin')
         );
 
         return isset($labels[$method]) ? $labels[$method] : ucfirst($method);
@@ -405,24 +405,24 @@ class CashbackWithdrawal
             // Вместо вывода сообщения об ошибке, просто выходим
             // Ошибка авторизации будет обрабатываться через AJAX
             echo '<div class="cashback-withdrawal-container">';
-            echo '<h2>' . __('Вывод кэшбэка', 'woocommerce') . '</h2>';
+            echo '<h2>' . __('Вывод кэшбэка', 'cashback-plugin') . '</h2>';
             echo '<div id="withdrawal-messages"></div>';
             echo '<div id="cashback-content">';
             echo '<div class="balance-display">';
-            echo '<p>' . __('Доступный баланс:', 'woocommerce') . ' <span id="cashback-balance-amount" class="balance-amount">0</span></p>';
+            echo '<p>' . __('Доступный баланс:', 'cashback-plugin') . ' <span id="cashback-balance-amount" class="balance-amount">0</span></p>';
             echo '</div>';
-            echo '<p>' . __('Минимальная сумма выплаты:', 'woocommerce') . ' <span class="min-payout-amount">0</span></p>';
-            echo '<div class="error-message">' . __('Вы должны быть авторизованы для просмотра этой страницы.', 'woocommerce') . '</div>';
+            echo '<p>' . __('Минимальная сумма выплаты:', 'cashback-plugin') . ' <span class="min-payout-amount">0</span></p>';
+            echo '<div class="error-message">' . __('Вы должны быть авторизованы для просмотра этой страницы.', 'cashback-plugin') . '</div>';
             echo '</div>';
             echo '</div>';
             echo '<div class="cashback-withdrawal-form">';
             echo '<form id="withdrawal-form">';
             echo '<p class="form-row">';
-            echo '<label for="withdrawal-amount">' . __('Сумма вывода', 'woocommerce') . ' <span class="required">*</span></label>';
-            echo '<input type="number" class="input-text" name="withdrawal_amount" id="withdrawal-amount" placeholder="' . __('Введите сумму', 'woocommerce') . '" value="" min="0" max="0" step="0.01" disabled/>';
+            echo '<label for="withdrawal-amount">' . __('Сумма вывода', 'cashback-plugin') . ' <span class="required">*</span></label>';
+            echo '<input type="number" class="input-text" name="withdrawal_amount" id="withdrawal-amount" placeholder="' . __('Введите сумму', 'cashback-plugin') . '" value="" min="0" max="0" step="0.01" disabled/>';
             echo '</p>';
             echo '<p class="form-row">';
-            echo '<button type="submit" class="woocommerce-Button button" id="withdrawal-submit" name="withdrawal_submit" value="' . esc_attr__('Вывести', 'woocommerce') . '" disabled>' . __('Вывести', 'woocommerce') . '</button>';
+            echo '<button type="submit" class="woocommerce-Button button" id="withdrawal-submit" name="withdrawal_submit" value="' . esc_attr__('Вывести', 'cashback-plugin') . '" disabled>' . __('Вывести', 'cashback-plugin') . '</button>';
             echo '</p>';
             echo '<div id="withdrawal-messages"></div>';
             echo '</form>';
@@ -460,21 +460,21 @@ class CashbackWithdrawal
         $banks = $this->get_banks();
 
         echo '<div class="cashback-withdrawal-container">';
-        echo '<h2>' . __('Вывод кэшбэка', 'woocommerce') . '</h2>';
+        echo '<h2>' . __('Вывод кэшбэка', 'cashback-plugin') . '</h2>';
         echo '<div class="balance-display">';
-        echo '<p>' . __('Доступный баланс:', 'woocommerce') . ' <span id="cashback-balance-amount" class="balance-amount ' . ($balance > 0 ? 'balance-green' : 'balance-gray') . '">' . wc_price($balance) . '</span></p>';
+        echo '<p>' . __('Доступный баланс:', 'cashback-plugin') . ' <span id="cashback-balance-amount" class="balance-amount ' . ($balance > 0 ? 'balance-green' : 'balance-gray') . '">' . wc_price($balance) . '</span></p>';
         echo '</div>';
-        echo '<p>' . __('Минимальная сумма выплаты:', 'woocommerce') . ' <span class="min-payout-amount">' . wc_price($min_payout_amount) . '</span></p>';
+        echo '<p>' . __('Минимальная сумма выплаты:', 'cashback-plugin') . ' <span class="min-payout-amount">' . wc_price($min_payout_amount) . '</span></p>';
 
         // Отображаем настройки вывода
         echo '<div class="payout-settings-section woocommerce-EditAccountForm edit-account">';
-        echo '<h3>' . __('Настройки вывода кэшбэка', 'woocommerce') . '</h3>';
+        echo '<h3>' . __('Настройки вывода кэшбэка', 'cashback-plugin') . '</h3>';
         echo '<div id="payout_settings_message"></div>';
 
         // Предупреждение о неактивных платежных данных
         if ($settings_inactive) {
             echo '<div class="woocommerce-message woocommerce-error cashback-inactive-warning" role="alert">';
-            echo esc_html__('Измените Ваши платежные данные, выплата по Вашим старым данным сейчас не производится', 'woocommerce');
+            echo esc_html__('Измените Ваши платежные данные, выплата по Вашим старым данным сейчас не производится', 'cashback-plugin');
             echo '</div>';
         }
 
@@ -487,19 +487,19 @@ class CashbackWithdrawal
 
             echo '<div id="payout_settings_display" class="payout-settings-display">';
             echo '<p class="woocommerce-form-row">';
-            echo '<strong>' . __('Способ вывода:', 'woocommerce') . '</strong> ';
+            echo '<strong>' . __('Способ вывода:', 'cashback-plugin') . '</strong> ';
             echo esc_html($method_name);
             echo '</p>';
             echo '<p class="woocommerce-form-row">';
-            echo '<strong>' . __('Номер счета/телефона:', 'woocommerce') . '</strong> ';
+            echo '<strong>' . __('Номер счета/телефона:', 'cashback-plugin') . '</strong> ';
             echo esc_html($payout_account);
             echo '</p>';
             echo '<p class="woocommerce-form-row">';
-            echo '<strong>' . __('Банк:', 'woocommerce') . '</strong> ';
+            echo '<strong>' . __('Банк:', 'cashback-plugin') . '</strong> ';
             echo esc_html($bank_name);
             echo '</p>';
             echo '<p class="woocommerce-form-row">';
-            echo '<button type="button" class="woocommerce-Button button" id="edit_payout_settings_btn">' . __('Изменить данные', 'woocommerce') . '</button>';
+            echo '<button type="button" class="woocommerce-Button button" id="edit_payout_settings_btn">' . __('Изменить данные', 'cashback-plugin') . '</button>';
             echo '</p>';
             echo '</div>';
         }
@@ -510,9 +510,9 @@ class CashbackWithdrawal
         echo '<form id="payout-settings-form">';
 
         echo '<p class="woocommerce-form-row woocommerce-form-row--first form-row form-row-first">';
-        echo '<label for="payout_method_id">' . __('Способ вывода', 'woocommerce') . ' <span class="required">*</span></label>';
+        echo '<label for="payout_method_id">' . __('Способ вывода', 'cashback-plugin') . ' <span class="required">*</span></label>';
         echo '<select name="payout_method_id" id="payout_method_id" class="woocommerce-Input woocommerce-Input--text input-text">';
-        echo '<option value="">' . __('Выберите платежную систему', 'woocommerce') . '</option>';
+        echo '<option value="">' . __('Выберите платежную систему', 'cashback-plugin') . '</option>';
         foreach ($payout_methods as $method) {
             $selected = ($payout_method_id === intval($method['id'])) ? 'selected' : '';
             echo '<option value="' . esc_attr($method['id']) . '" ' . $selected . '>' . esc_html($method['name']) . '</option>';
@@ -521,19 +521,19 @@ class CashbackWithdrawal
         echo '</p>';
 
         echo '<p class="woocommerce-form-row woocommerce-form-row--last form-row form-row-last">';
-        echo '<label for="payout_account">' . __('Номер счета или телефона', 'woocommerce') . ' <span class="required">*</span></label>';
+        echo '<label for="payout_account">' . __('Номер счета или телефона', 'cashback-plugin') . ' <span class="required">*</span></label>';
         echo '<input type="text" class="woocommerce-Input woocommerce-Input--text input-text" name="payout_account" id="payout_account" value="' . esc_attr($payout_account) . '" />';
         echo '</p>';
 
         // Кастомный компонент поиска банков с autocomplete
         echo '<p class="woocommerce-form-row woocommerce-form-row--wide form-row form-row-wide">';
-        echo '<label for="bank_search_input" id="bank_search_label">' . __('Банк', 'woocommerce') . ' <span class="required">*</span></label>';
+        echo '<label for="bank_search_input" id="bank_search_label">' . __('Банк', 'cashback-plugin') . ' <span class="required">*</span></label>';
         echo '<input type="hidden" name="bank_id" id="bank_id" value="' . esc_attr($bank_id) . '" />';
         echo '<div class="bank-search-wrapper" role="combobox" aria-expanded="false" aria-owns="bank_search_results" aria-haspopup="listbox">';
         // Используем ранее полученное название банка
         $current_bank_name = $bank_name;
-        echo '<input type="text" class="woocommerce-Input woocommerce-Input--text input-text" id="bank_search_input" autocomplete="off" placeholder="' . esc_attr__('Начните вводить название банка...', 'woocommerce') . '" value="' . esc_attr($current_bank_name) . '" role="searchbox" aria-autocomplete="list" aria-controls="bank_search_results" aria-labelledby="bank_search_label" />';
-        echo '<ul id="bank_search_results" class="bank-search-results" role="listbox" aria-label="' . esc_attr__('Список банков', 'woocommerce') . '">';
+        echo '<input type="text" class="woocommerce-Input woocommerce-Input--text input-text" id="bank_search_input" autocomplete="off" placeholder="' . esc_attr__('Начните вводить название банка...', 'cashback-plugin') . '" value="' . esc_attr($current_bank_name) . '" role="searchbox" aria-autocomplete="list" aria-controls="bank_search_results" aria-labelledby="bank_search_label" />';
+        echo '<ul id="bank_search_results" class="bank-search-results" role="listbox" aria-label="' . esc_attr__('Список банков', 'cashback-plugin') . '">';
         // Первый элемент — показ начальных 10 банков при фокусе
         foreach ($banks as $idx => $bank) {
             echo '<li class="bank-search-item" role="option" aria-selected="' . ($bank_id === intval($bank['id']) ? 'true' : 'false') . '" data-bank-id="' . esc_attr($bank['id']) . '" data-bank-name="' . esc_attr($bank['name']) . '" tabindex="-1">' . esc_html($bank['name']) . '</li>';
@@ -546,9 +546,9 @@ class CashbackWithdrawal
         echo '<div class="clear"></div>';
 
         echo '<p class="woocommerce-form-row form-row">';
-        echo '<button type="button" class="woocommerce-Button button" id="save_payout_settings_btn">' . __('Сохранить настройки', 'woocommerce') . '</button>';
+        echo '<button type="button" class="woocommerce-Button button" id="save_payout_settings_btn">' . __('Сохранить настройки', 'cashback-plugin') . '</button>';
         if ($has_settings && !$settings_inactive) {
-            echo ' <button type="button" class="woocommerce-Button button button-secondary" id="cancel_edit_payout_settings_btn">' . __('Отменить', 'woocommerce') . '</button>';
+            echo ' <button type="button" class="woocommerce-Button button button-secondary" id="cancel_edit_payout_settings_btn">' . __('Отменить', 'cashback-plugin') . '</button>';
         }
         echo '</p>';
 
@@ -560,18 +560,16 @@ class CashbackWithdrawal
         echo '<div class="cashback-withdrawal-form">';
         echo '<form id="withdrawal-form">';
         echo '<p class="form-row">';
-        echo '<label for="withdrawal-amount">' . __('Сумма вывода', 'woocommerce') . ' <span class="required">*</span></label>';
-        echo '<input type="number" class="input-text" name="withdrawal_amount" id="withdrawal-amount" placeholder="' . __('Введите сумму', 'woocommerce') . '" value="" step="0.01" />';
+        echo '<label for="withdrawal-amount">' . __('Сумма вывода', 'cashback-plugin') . ' <span class="required">*</span></label>';
+        echo '<input type="number" class="input-text" name="withdrawal_amount" id="withdrawal-amount" placeholder="' . __('Введите сумму', 'cashback-plugin') . '" value="" step="0.01" />';
         echo '</p>';
         echo '<p class="form-row">';
-        echo '<button type="submit" class="woocommerce-Button button" id="withdrawal-submit" name="withdrawal_submit" value="' . esc_attr__('Вывести', 'woocommerce') . '">' . __('Вывести', 'woocommerce') . '</button>';
+        echo '<button type="submit" class="woocommerce-Button button" id="withdrawal-submit" name="withdrawal_submit" value="' . esc_attr__('Вывести', 'cashback-plugin') . '">' . __('Вывести', 'cashback-plugin') . '</button>';
         echo '</p>';
         echo '<div id="withdrawal-messages"></div>';
+        wp_nonce_field('cashback_withdrawal_nonce', 'withdrawal_nonce');
         echo '</form>';
         echo '</div>';
-
-        // Добавляем nonce для безопасности
-        wp_nonce_field('cashback_withdrawal_nonce', 'withdrawal_nonce');
     }
 
     /**
@@ -583,11 +581,11 @@ class CashbackWithdrawal
     {
         // === 1. Security: nonce and authentication ===
         if (!wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'] ?? '')), 'cashback_withdrawal_nonce')) {
-            wp_send_json_error(__('Ошибка безопасности.', 'woocommerce'));
+            wp_send_json_error(__('Ошибка безопасности.', 'cashback-plugin'));
         }
 
         if (!is_user_logged_in()) {
-            wp_send_json_error(__('Вы должны быть авторизованы для выполнения этого действия.', 'woocommerce'));
+            wp_send_json_error(__('Вы должны быть авторизованы для выполнения этого действия.', 'cashback-plugin'));
             return;
         }
 
@@ -595,14 +593,14 @@ class CashbackWithdrawal
 
         // Проверяем, что пользователь имеет корректный ID
         if (!$user_id || $user_id <= 0) {
-            wp_send_json_error(__('Некорректный идентификатор пользователя.', 'woocommerce'));
+            wp_send_json_error(__('Некорректный идентификатор пользователя.', 'cashback-plugin'));
             return;
         }
 
         // === 2. Защита от повторных запросов ===
         $transient_key = 'withdrawal_request_' . $user_id;
         if (get_transient($transient_key)) {
-            wp_send_json_error(__('Предыдущий запрос еще обрабатывается. Пожалуйста, подождите.', 'woocommerce'));
+            wp_send_json_error(__('Предыдущий запрос еще обрабатывается. Пожалуйста, подождите.', 'cashback-plugin'));
             return;
         }
 
@@ -612,7 +610,7 @@ class CashbackWithdrawal
         $withdrawal_amount = sanitize_text_field(wp_unslash($_POST['withdrawal_amount'] ?? '0'));
         if (!is_numeric($withdrawal_amount)) {
             delete_transient($transient_key);
-            wp_send_json_error(__('Некорректная сумма вывода.', 'woocommerce'));
+            wp_send_json_error(__('Некорректная сумма вывода.', 'cashback-plugin'));
             return;
         }
 
@@ -622,7 +620,7 @@ class CashbackWithdrawal
 
         if (empty($payout_method) || empty($payout_account)) {
             delete_transient($transient_key); // Снимаем блокировку
-            wp_send_json_error(__('Для вывода средств пожалуйста, заполните способ вывода и номер счета в вашем профиле.', 'woocommerce'));
+            wp_send_json_error(__('Для вывода средств пожалуйста, заполните способ вывода и номер счета в вашем профиле.', 'cashback-plugin'));
             return;
         }
 
@@ -634,7 +632,7 @@ class CashbackWithdrawal
             $method_name = $this->get_payout_method_name($user_payout_method_id);
             delete_transient($transient_key); // Снимаем блокировку
             wp_send_json_error(array(
-                'message' => sprintf(__('Через %s сейчас выплаты не производятся, выберите другую', 'woocommerce'), $method_name),
+                'message' => sprintf(__('Через %s сейчас выплаты не производятся, выберите другую', 'cashback-plugin'), $method_name),
                 'show_form' => true
             ));
             return;
@@ -644,7 +642,7 @@ class CashbackWithdrawal
             $bank_name = $this->get_bank_name($user_bank_id);
             delete_transient($transient_key); // Снимаем блокировку
             wp_send_json_error(array(
-                'message' => sprintf(__('Через %s сейчас выплаты не производятся, выберите другой', 'woocommerce'), $bank_name),
+                'message' => sprintf(__('Через %s сейчас выплаты не производятся, выберите другой', 'cashback-plugin'), $bank_name),
                 'show_form' => true
             ));
             return;
@@ -655,34 +653,39 @@ class CashbackWithdrawal
         $available_balance = $this->get_available_balance($user_id);
         $max_withdrawal_amount = 50000.00; // Максимальная сумма вывода
 
-        if ($withdrawal_amount <= 0) {
+        $withdrawal_str = (string) $withdrawal_amount;
+        $min_payout_str = (string) $min_payout_amount;
+        $balance_str = (string) $available_balance;
+        $max_withdrawal_str = (string) $max_withdrawal_amount;
+
+        if (bccomp($withdrawal_str, '0', 2) <= 0) {
             delete_transient($transient_key); // Снимаем блокировку
-            wp_send_json_error(__('Сумма вывода должна быть положительной.', 'woocommerce'));
+            wp_send_json_error(__('Сумма вывода должна быть положительной.', 'cashback-plugin'));
             return;
         }
 
         // Проверяем, что баланс пользователя больше или равен минимальной сумме для вывода
-        if ($available_balance < $min_payout_amount) {
+        if (bccomp($balance_str, $min_payout_str, 2) < 0) {
             delete_transient($transient_key); // Снимаем блокировку
-            wp_send_json_error(sprintf(__('Вы не можете вывести средства, Ваш баланс %s меньше минимально допустимой суммы для вывода %s', 'woocommerce'), wc_price($available_balance), wc_price($min_payout_amount)));
+            wp_send_json_error(sprintf(__('Вы не можете вывести средства, Ваш баланс %s меньше минимально допустимой суммы для вывода %s', 'cashback-plugin'), wc_price($available_balance), wc_price($min_payout_amount)));
             return;
         }
 
-        if ($withdrawal_amount < $min_payout_amount) {
+        if (bccomp($withdrawal_str, $min_payout_str, 2) < 0) {
             delete_transient($transient_key); // Снимаем блокировку
-            wp_send_json_error(sprintf(__('Вы ввели сумму меньше минимально допустимой, введите сумму больше или равно %s', 'woocommerce'), wc_price($min_payout_amount)));
+            wp_send_json_error(sprintf(__('Вы ввели сумму меньше минимально допустимой, введите сумму больше или равно %s', 'cashback-plugin'), wc_price($min_payout_amount)));
             return;
         }
 
-        if ($withdrawal_amount > $available_balance) {
+        if (bccomp($withdrawal_str, $balance_str, 2) > 0) {
             delete_transient($transient_key); // Снимаем блокировку
-            wp_send_json_error(sprintf(__('Вы ввели сумму больше доступной, введите сумму меньше или равно %s', 'woocommerce'), wc_price($available_balance)));
+            wp_send_json_error(sprintf(__('Вы ввели сумму больше доступной, введите сумму меньше или равно %s', 'cashback-plugin'), wc_price($available_balance)));
             return;
         }
 
-        if ($withdrawal_amount > $max_withdrawal_amount) {
+        if (bccomp($withdrawal_str, $max_withdrawal_str, 2) > 0) {
             delete_transient($transient_key); // Снимаем блокировку
-            wp_send_json_error(sprintf(__('Максимальная сумма вывода %s', 'woocommerce'), wc_price($max_withdrawal_amount)));
+            wp_send_json_error(sprintf(__('Максимальная сумма вывода %s', 'cashback-plugin'), wc_price($max_withdrawal_amount)));
             return;
         }
 
@@ -699,7 +702,7 @@ class CashbackWithdrawal
 
         if (!$lock_acquired) {
             delete_transient($transient_key); // Снимаем блокировку
-            wp_send_json_error(__('Не удалось получить блокировку для операции. Пожалуйста, попробуйте позже.', 'woocommerce'));
+            wp_send_json_error(__('Не удалось получить блокировку для операции. Пожалуйста, попробуйте позже.', 'cashback-plugin'));
             return;
         }
 
@@ -810,7 +813,7 @@ class CashbackWithdrawal
             delete_transient($transient_key); // Снимаем блокировку
 
             wp_send_json_success(sprintf(
-                __('Заявка на вывод кэшбэка на сумму %s руб. успешно добавлена', 'woocommerce'),
+                __('Заявка на вывод кэшбэка на сумму %s руб. успешно добавлена', 'cashback-plugin'),
                 number_format((float) $withdrawal_amount, 2, '.', ' ')
             ));
         } catch (\Throwable $e) {
@@ -836,9 +839,9 @@ class CashbackWithdrawal
             }
 
             if ($error_message === 'Insufficient available balance after lock') {
-                wp_send_json_error(__('Недостаточно средств для вывода. Пожалуйста, обновите страницу и попробуйте снова.', 'woocommerce'));
+                wp_send_json_error(__('Недостаточно средств для вывода. Пожалуйста, обновите страницу и попробуйте снова.', 'cashback-plugin'));
             } else {
-                wp_send_json_error(__('Ошибка при обработке запроса на вывод. Пожалуйста, попробуйте еще раз.', 'woocommerce'));
+                wp_send_json_error(__('Ошибка при обработке запроса на вывод. Пожалуйста, попробуйте еще раз.', 'cashback-plugin'));
             }
         }
     }
@@ -848,7 +851,7 @@ class CashbackWithdrawal
      */
     public function enqueue_styles()
     {
-        if (is_user_logged_in() && !is_admin()) {
+        if (is_user_logged_in() && !is_admin() && function_exists('is_account_page') && is_account_page()) {
             wp_enqueue_style(
                 'cashback-withdrawal-styles',
                 plugins_url('assets/css/frontend.css', __FILE__),
@@ -880,59 +883,59 @@ class CashbackWithdrawal
     {
         // Проверяем nonce
         if (!wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['security'] ?? '')), 'cashback_withdrawal_nonce')) {
-            wp_send_json_error(array('message' => __('Неверный nonce.', 'woocommerce')));
+            wp_send_json_error(array('message' => __('Неверный nonce.', 'cashback-plugin')));
             return;
         }
 
         // Проверяем авторизацию пользователя
         if (!is_user_logged_in()) {
-            wp_send_json_error(array('message' => __('Пользователь не авторизован.', 'woocommerce')));
+            wp_send_json_error(array('message' => __('Пользователь не авторизован.', 'cashback-plugin')));
             return;
         }
 
         $user_id = get_current_user_id();
 
         if (!$user_id) {
-            wp_send_json_error(array('message' => __('Пользователь не найден.', 'woocommerce')));
+            wp_send_json_error(array('message' => __('Пользователь не найден.', 'cashback-plugin')));
             return;
         }
 
         $payout_method_id = intval($_POST['payout_method_id'] ?? 0);
-        $payout_account = sanitize_text_field($_POST['payout_account'] ?? '');
+        $payout_account = sanitize_text_field(wp_unslash($_POST['payout_account'] ?? ''));
         $bank_id = intval($_POST['bank_id'] ?? 0);
 
         // Валидация данных
         if (empty($payout_method_id)) {
-            wp_send_json_error(array('message' => __('Пожалуйста, выберите способ вывода.', 'woocommerce')));
+            wp_send_json_error(array('message' => __('Пожалуйста, выберите способ вывода.', 'cashback-plugin')));
             return;
         }
 
         if (empty($payout_account)) {
-            wp_send_json_error(array('message' => __('Пожалуйста, введите номер счета или телефона.', 'woocommerce')));
+            wp_send_json_error(array('message' => __('Пожалуйста, введите номер счета или телефона.', 'cashback-plugin')));
             return;
         }
 
         if (mb_strlen($payout_account) > 50) {
-            wp_send_json_error(array('message' => __('Номер счета слишком длинный (максимум 50 символов).', 'woocommerce')));
+            wp_send_json_error(array('message' => __('Номер счета слишком длинный (максимум 50 символов).', 'cashback-plugin')));
             return;
         }
 
         if (!$bank_id || $bank_id <= 0) {
-            wp_send_json_error(array('message' => __('Пожалуйста, выберите банк.', 'woocommerce')));
+            wp_send_json_error(array('message' => __('Пожалуйста, выберите банк.', 'cashback-plugin')));
             return;
         }
 
         // Проверяем, что способ вывода существует и активен
         $valid_method = $this->validate_payout_method($payout_method_id);
         if (!$valid_method) {
-            wp_send_json_error(array('message' => __('Недопустимый способ вывода.', 'woocommerce')));
+            wp_send_json_error(array('message' => __('Недопустимый способ вывода.', 'cashback-plugin')));
             return;
         }
 
         // Проверяем, что банк существует и активен
         $valid_bank = $this->validate_bank($bank_id);
         if (!$valid_bank) {
-            wp_send_json_error(array('message' => __('Недопустимый банк.', 'woocommerce')));
+            wp_send_json_error(array('message' => __('Недопустимый банк.', 'cashback-plugin')));
             return;
         }
 
@@ -941,10 +944,10 @@ class CashbackWithdrawal
 
         if ($result) {
             wp_send_json_success(array(
-                'message' => __('Настройки успешно сохранены.', 'woocommerce')
+                'message' => __('Настройки успешно сохранены.', 'cashback-plugin')
             ));
         } else {
-            wp_send_json_error(array('message' => __('Ошибка при сохранении данных.', 'woocommerce')));
+            wp_send_json_error(array('message' => __('Ошибка при сохранении данных.', 'cashback-plugin')));
         }
     }
 
@@ -1112,13 +1115,13 @@ class CashbackWithdrawal
     {
         // Проверяем nonce
         if (!check_ajax_referer('cashback_withdrawal_nonce', 'security', false)) {
-            wp_send_json_error(array('message' => __('Ошибка безопасности.', 'woocommerce')));
+            wp_send_json_error(array('message' => __('Ошибка безопасности.', 'cashback-plugin')));
             return;
         }
 
         // Запрещаем анонимный доступ
         if (!is_user_logged_in()) {
-            wp_send_json_error(array('message' => __('Пользователь не авторизован.', 'woocommerce')));
+            wp_send_json_error(array('message' => __('Пользователь не авторизован.', 'cashback-plugin')));
             return;
         }
 
@@ -1167,13 +1170,13 @@ class CashbackWithdrawal
     {
         // Проверяем nonce
         if (!check_ajax_referer('cashback_withdrawal_nonce', 'nonce', false)) {
-            wp_send_json_error(__('Ошибка безопасности.', 'woocommerce'));
+            wp_send_json_error(__('Ошибка безопасности.', 'cashback-plugin'));
             return;
         }
 
         // Проверяем, авторизован ли пользователь
         if (!is_user_logged_in()) {
-            wp_send_json_error(__('Вы должны быть авторизованы для выполнения этого действия.', 'woocommerce'));
+            wp_send_json_error(__('Вы должны быть авторизованы для выполнения этого действия.', 'cashback-plugin'));
             return;
         }
 

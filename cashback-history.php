@@ -74,10 +74,10 @@ class CashbackHistory
         if (isset($items['customer-logout'])) {
             $logout = $items['customer-logout'];
             unset($items['customer-logout']);
-            $items['cashback-history'] = __('История покупок', 'cashback-history');
+            $items['cashback-history'] = __('История покупок', 'cashback-plugin');
             $items['customer-logout'] = $logout;
         } else {
-            $items['cashback-history'] = __('История покупок', 'cashback-history');
+            $items['cashback-history'] = __('История покупок', 'cashback-plugin');
         }
         return $items;
     }
@@ -91,7 +91,7 @@ class CashbackHistory
     {
         $user_id = get_current_user_id();
         if (!$user_id) {
-            echo '<p>' . esc_html__('Вы должны быть авторизованы.', 'cashback-history') . '</p>';
+            echo '<p>' . esc_html__('Вы должны быть авторизованы.', 'cashback-plugin') . '</p>';
             return;
         }
 
@@ -107,18 +107,18 @@ class CashbackHistory
         $transactions = $this->get_transactions($user_id, $per_page, $offset);
 
         echo '<div class="wd-cashback-history">';
-        echo '<h2>' . esc_html__('История покупок', 'cashback-history') . '</h2>';
+        echo '<h2>' . esc_html__('История покупок', 'cashback-plugin') . '</h2>';
 
         if (empty($transactions)) {
-            echo '<p>' . esc_html__('У вас нет истории покупок.', 'cashback-history') . '</p>';
+            echo '<p>' . esc_html__('У вас нет истории покупок.', 'cashback-plugin') . '</p>';
         } else {
             echo '<table class="wd-table shop_table_responsive">';
             echo '<thead>';
             echo '<tr>';
-            echo '<th>' . esc_html__('Дата', 'cashback-history') . '</th>';
-            echo '<th>' . esc_html__('Магазин', 'cashback-history') . '</th>';
-            echo '<th>' . esc_html__('Кэшбэк', 'cashback-history') . '</th>';
-            echo '<th>' . esc_html__('Статус', 'cashback-history') . '</th>';
+            echo '<th>' . esc_html__('Дата', 'cashback-plugin') . '</th>';
+            echo '<th>' . esc_html__('Магазин', 'cashback-plugin') . '</th>';
+            echo '<th>' . esc_html__('Кэшбэк', 'cashback-plugin') . '</th>';
+            echo '<th>' . esc_html__('Статус', 'cashback-plugin') . '</th>';
             echo '</tr>';
             echo '</thead>';
             echo '<tbody id="transactions-body">';
@@ -126,7 +126,7 @@ class CashbackHistory
             foreach ($transactions as $transaction) {
                 echo '<tr>';
                 echo '<td>' . $this->format_date($transaction->created_at) . '</td>';
-                echo '<td>' . esc_html($transaction->offer_name ?? __('Н/Д', 'cashback-history')) . '</td>';
+                echo '<td>' . esc_html($transaction->offer_name ?? __('Н/Д', 'cashback-plugin')) . '</td>';
                 echo '<td>' . esc_html($transaction->cashback ?? '0.00') . '</td>';
                 echo '<td>' . esc_html($this->get_status_label($transaction->order_status)) . '</td>';
                 echo '</tr>';
@@ -252,16 +252,16 @@ class CashbackHistory
     {
         // Verify nonce
         if (!isset($_POST['nonce']) || !check_ajax_referer('load_page_transactions_nonce', 'nonce', false)) {
-            wp_send_json_error(esc_html__('Ошибка безопасности: неверный nonce.', 'cashback-history'));
+            wp_send_json_error(esc_html__('Ошибка безопасности: неверный nonce.', 'cashback-plugin'));
         }
 
         $user_id = get_current_user_id();
         if (!$user_id) {
-            wp_send_json_error(esc_html__('Вы должны быть авторизованы.', 'cashback-history'));
+            wp_send_json_error(esc_html__('Вы должны быть авторизованы.', 'cashback-plugin'));
         }
 
         if (!isset($_POST['page'])) {
-            wp_send_json_error(esc_html__('Некорректный запрос.', 'cashback-history'));
+            wp_send_json_error(esc_html__('Некорректный запрос.', 'cashback-plugin'));
         }
 
         $per_page = self::PER_PAGE;
@@ -279,7 +279,7 @@ class CashbackHistory
         foreach ($transactions as $transaction) {
             $html .= '<tr>';
             $html .= '<td>' . $this->format_date($transaction->created_at) . '</td>';
-            $html .= '<td>' . esc_html($transaction->offer_name ?? __('Н/Д', 'cashback-history')) . '</td>';
+            $html .= '<td>' . esc_html($transaction->offer_name ?? __('Н/Д', 'cashback-plugin')) . '</td>';
             $html .= '<td>' . esc_html($transaction->cashback ?? '0.00') . '</td>';
             $html .= '<td>' . esc_html($this->get_status_label($transaction->order_status)) . '</td>';
             $html .= '</tr>';
@@ -348,15 +348,15 @@ class CashbackHistory
     {
         switch ($status) {
             case 'waiting':
-                return __('В ожидании', 'cashback-history');
+                return __('В ожидании', 'cashback-plugin');
             case 'completed':
-                return __('Подтвержден', 'cashback-history');
+                return __('Подтвержден', 'cashback-plugin');
             case 'declined':
-                return __('Отклонен', 'cashback-history');
+                return __('Отклонен', 'cashback-plugin');
             case 'balance':
-                return __('Зачислен на баланс', 'cashback-history');
+                return __('Зачислен на баланс', 'cashback-plugin');
             default:
-                return esc_html($status ?: __('Неизвестно', 'cashback-history'));
+                return esc_html($status ?: __('Неизвестно', 'cashback-plugin'));
         }
     }
 
@@ -369,12 +369,12 @@ class CashbackHistory
     private function format_date($date_string)
     {
         if (empty($date_string) || $date_string === '0000-00-00 00:00:00') {
-            return esc_html__('Н/Д', 'cashback-history');
+            return esc_html__('Н/Д', 'cashback-plugin');
         }
 
         $timestamp = strtotime($date_string);
         if ($timestamp === false) {
-            return esc_html__('Некорректная дата', 'cashback-history');
+            return esc_html__('Некорректная дата', 'cashback-plugin');
         }
 
         return esc_html(date_i18n(get_option('date_format'), $timestamp));

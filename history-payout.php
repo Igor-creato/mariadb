@@ -49,10 +49,10 @@ class HistoryPayout
         if (isset($items['customer-logout'])) {
             $logout = $items['customer-logout'];
             unset($items['customer-logout']);
-            $items['history-payout'] = __('История выплат', 'history-payout');
+            $items['history-payout'] = __('История выплат', 'cashback-plugin');
             $items['customer-logout'] = $logout;
         } else {
-            $items['history-payout'] = __('История выплат', 'history-payout');
+            $items['history-payout'] = __('История выплат', 'cashback-plugin');
         }
         return $items;
     }
@@ -61,7 +61,7 @@ class HistoryPayout
     {
         $user_id = get_current_user_id();
         if (!$user_id) {
-            echo '<p>' . esc_html__('Вы должны быть авторизованы.', 'history-payout') . '</p>';
+            echo '<p>' . esc_html__('Вы должны быть авторизованы.', 'cashback-plugin') . '</p>';
             return;
         }
 
@@ -77,32 +77,32 @@ class HistoryPayout
         $payouts = $this->get_payouts($user_id, $per_page, $offset);
 
         echo '<div class="wd-history-payout">';
-        echo '<h2>' . esc_html__('История выплат', 'history-payout') . '</h2>';
+        echo '<h2>' . esc_html__('История выплат', 'cashback-plugin') . '</h2>';
 
         if (empty($payouts)) {
-            echo '<p>' . esc_html__('У вас нет истории выплат.', 'history-payout') . '</p>';
+            echo '<p>' . esc_html__('У вас нет истории выплат.', 'cashback-plugin') . '</p>';
         } else {
             echo '<table class="wd-table shop_table_responsive">';
             echo '<thead>';
             echo '<tr>';
-            echo '<th>' . esc_html__('Дата', 'history-payout') . '</th>';
-            echo '<th>' . esc_html__('Сумма', 'history-payout') . '</th>';
-            echo '<th>' . esc_html__('Способ вывода', 'history-payout') . '</th>';
-            echo '<th>' . esc_html__('Счет', 'history-payout') . '</th>';
-            echo '<th>' . esc_html__('Банк', 'history-payout') . '</th>';
-            echo '<th>' . esc_html__('Статус', 'history-payout') . '</th>';
+            echo '<th>' . esc_html__('Дата', 'cashback-plugin') . '</th>';
+            echo '<th>' . esc_html__('Сумма', 'cashback-plugin') . '</th>';
+            echo '<th>' . esc_html__('Способ вывода', 'cashback-plugin') . '</th>';
+            echo '<th>' . esc_html__('Счет', 'cashback-plugin') . '</th>';
+            echo '<th>' . esc_html__('Банк', 'cashback-plugin') . '</th>';
+            echo '<th>' . esc_html__('Статус', 'cashback-plugin') . '</th>';
             echo '</tr>';
             echo '</thead>';
             echo '<tbody id="payouts-body">';
 
             foreach ($payouts as $payout) {
                 echo '<tr>';
-                echo '<td data-title="' . esc_attr__('Дата', 'history-payout') . '">' . $this->format_date($payout->created_at) . '</td>';
-                echo '<td data-title="' . esc_attr__('Сумма', 'history-payout') . '">' . esc_html($payout->total_amount ?? '0.00') . '</td>';
-                echo '<td data-title="' . esc_attr__('Способ вывода', 'history-payout') . '">' . esc_html($this->get_payout_method_label($payout->payout_method) ?: __('Не указан', 'history-payout')) . '</td>';
-                echo '<td data-title="' . esc_attr__('Счет', 'history-payout') . '">' . esc_html($payout->payout_account ?: __('Не указан', 'history-payout')) . '</td>';
-                echo '<td data-title="' . esc_attr__('Банк', 'history-payout') . '">' . esc_html($this->get_bank_name_by_code($payout->provider ?? '') ?: __('Не указан', 'history-payout')) . '</td>';
-                echo '<td data-title="' . esc_attr__('Статус', 'history-payout') . '">' . esc_html($this->get_status_label($payout->status)) . '</td>';
+                echo '<td data-title="' . esc_attr__('Дата', 'cashback-plugin') . '">' . $this->format_date($payout->created_at) . '</td>';
+                echo '<td data-title="' . esc_attr__('Сумма', 'cashback-plugin') . '">' . esc_html($payout->total_amount ?? '0.00') . '</td>';
+                echo '<td data-title="' . esc_attr__('Способ вывода', 'cashback-plugin') . '">' . esc_html($this->get_payout_method_label($payout->payout_method) ?: __('Не указан', 'cashback-plugin')) . '</td>';
+                echo '<td data-title="' . esc_attr__('Счет', 'cashback-plugin') . '">' . esc_html($payout->payout_account ?: __('Не указан', 'cashback-plugin')) . '</td>';
+                echo '<td data-title="' . esc_attr__('Банк', 'cashback-plugin') . '">' . esc_html($this->get_bank_name_by_code($payout->provider ?? '') ?: __('Не указан', 'cashback-plugin')) . '</td>';
+                echo '<td data-title="' . esc_attr__('Статус', 'cashback-plugin') . '">' . esc_html($this->get_status_label($payout->status)) . '</td>';
                 echo '</tr>';
             }
 
@@ -202,11 +202,11 @@ class HistoryPayout
 
         $user_id = get_current_user_id();
         if (!$user_id) {
-            wp_send_json_error(esc_html__('Вы должны быть авторизованы.', 'history-payout'));
+            wp_send_json_error(esc_html__('Вы должны быть авторизованы.', 'cashback-plugin'));
         }
 
         if (!isset($_POST['page'])) {
-            wp_send_json_error(esc_html__('Некорректный запрос.', 'history-payout'));
+            wp_send_json_error(esc_html__('Некорректный запрос.', 'cashback-plugin'));
         }
 
         $per_page = self::PER_PAGE;
@@ -225,9 +225,9 @@ class HistoryPayout
             $html .= '<tr>';
             $html .= '<td>' . $this->format_date($payout->created_at) . '</td>';
             $html .= '<td>' . esc_html($payout->total_amount ?? '0.00') . '</td>';
-            $html .= '<td>' . esc_html($this->get_payout_method_label($payout->payout_method) ?: __('Не указан', 'history-payout')) . '</td>';
-            $html .= '<td>' . esc_html($payout->payout_account ?: __('Не указан', 'history-payout')) . '</td>';
-            $html .= '<td>' . esc_html($this->get_bank_name_by_code($payout->provider ?? '') ?: __('Не указан', 'history-payout')) . '</td>';
+            $html .= '<td>' . esc_html($this->get_payout_method_label($payout->payout_method) ?: __('Не указан', 'cashback-plugin')) . '</td>';
+            $html .= '<td>' . esc_html($payout->payout_account ?: __('Не указан', 'cashback-plugin')) . '</td>';
+            $html .= '<td>' . esc_html($this->get_bank_name_by_code($payout->provider ?? '') ?: __('Не указан', 'cashback-plugin')) . '</td>';
             $html .= '<td>' . esc_html($this->get_status_label($payout->status)) . '</td>';
             $html .= '</tr>';
         }
@@ -241,7 +241,7 @@ class HistoryPayout
 
     public function enqueue_scripts()
     {
-        if (is_account_page() && $this->is_history_payout_page()) {
+        if (function_exists('is_account_page') && is_account_page() && $this->is_history_payout_page()) {
             wp_enqueue_script(
                 'history-payout-ajax',
                 plugin_dir_url(__FILE__) . 'assets/js/history-payout.js',
@@ -266,19 +266,19 @@ class HistoryPayout
     {
         switch ($status) {
             case 'waiting':
-                return __('В ожидании', 'history-payout');
+                return __('В ожидании', 'cashback-plugin');
             case 'processing':
-                return __('В обработке', 'history-payout');
+                return __('В обработке', 'cashback-plugin');
             case 'paid':
-                return __('Выплачен', 'history-payout');
+                return __('Выплачен', 'cashback-plugin');
             case 'failed':
-                return __('Возврат в доступный баланс', 'history-payout');
+                return __('Возврат в доступный баланс', 'cashback-plugin');
             case 'declined':
-                return __('Выплата заморожена', 'history-payout');
+                return __('Выплата заморожена', 'cashback-plugin');
             case 'needs_retry':
-                return __('В обработке', 'history-payout');
+                return __('В обработке', 'cashback-plugin');
             default:
-                return esc_html($status ?: __('Неизвестно', 'history-payout'));
+                return esc_html($status ?: __('Неизвестно', 'cashback-plugin'));
         }
     }
 
@@ -288,12 +288,12 @@ class HistoryPayout
     private function format_date($date_string)
     {
         if (empty($date_string) || $date_string === '0000-00-00 00:00:00') {
-            return esc_html__('Н/Д', 'history-payout');
+            return esc_html__('Н/Д', 'cashback-plugin');
         }
 
         $timestamp = strtotime($date_string);
         if ($timestamp === false) {
-            return esc_html__('Некорректная дата', 'history-payout');
+            return esc_html__('Некорректная дата', 'cashback-plugin');
         }
 
         return esc_html(date_i18n(get_option('date_format'), $timestamp));
@@ -319,10 +319,10 @@ class HistoryPayout
 
         // Fallback to hardcoded labels for backward compatibility
         $fallback_labels = array(
-            'sbp' => __('Система быстрых платежей (СБП)', 'history-payout'),
-            'mir' => __('Карта МИР', 'history-payout'),
-            'yoomoney' => __('ЮMoney', 'history-payout'),
-            'ppl' => __('Paypal', 'history-payout')
+            'sbp' => __('Система быстрых платежей (СБП)', 'cashback-plugin'),
+            'mir' => __('Карта МИР', 'cashback-plugin'),
+            'yoomoney' => __('ЮMoney', 'cashback-plugin'),
+            'ppl' => __('Paypal', 'cashback-plugin')
         );
 
         return isset($fallback_labels[$method]) ? $fallback_labels[$method] : ucfirst($method);

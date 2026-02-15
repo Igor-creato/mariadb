@@ -307,8 +307,8 @@ class Cashback_User_Support
         global $wpdb;
 
         $user_id = get_current_user_id();
-        $subject = sanitize_text_field($_POST['subject'] ?? '');
-        $priority = sanitize_text_field($_POST['priority'] ?? 'not_urgent');
+        $subject = sanitize_text_field(wp_unslash($_POST['subject'] ?? ''));
+        $priority = sanitize_text_field(wp_unslash($_POST['priority'] ?? 'not_urgent'));
         $message = sanitize_textarea_field($_POST['message'] ?? '');
 
         if (empty($subject) || empty($priority) || empty($message)) {
@@ -388,7 +388,7 @@ class Cashback_User_Support
 
         $ticket_number = Cashback_Support_DB::format_ticket_number($ticket_id);
         $priority_label = $this->get_priority_label($priority);
-        $date = date_i18n('d.m.Y H:i', current_time('timestamp'));
+        $date = wp_date('d.m.Y H:i');
 
         $ticket_html = sprintf(
             '<div class="support-ticket-row" data-ticket-id="%d">

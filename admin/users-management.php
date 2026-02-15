@@ -106,8 +106,12 @@ class Cashback_Users_Management_Admin
         $per_page = 10;
         $offset = ($current_page - 1) * $per_page;
 
-        // Получаем фильтр статуса
-        $filter_status = isset($_GET['status']) ? sanitize_text_field($_GET['status']) : '';
+        // Получаем фильтр статуса с валидацией по допустимому списку
+        $filter_status = isset($_GET['status']) ? sanitize_text_field(wp_unslash($_GET['status'])) : '';
+        $allowed_filter_statuses = ['active', 'inactive', 'blocked'];
+        if (!empty($filter_status) && !in_array($filter_status, $allowed_filter_statuses, true)) {
+            $filter_status = '';
+        }
 
         // Подсчет общего количества пользователей
         if (!empty($filter_status)) {
@@ -172,7 +176,7 @@ class Cashback_Users_Management_Admin
         // Выводим сообщения об ошибках или успехе
         $message = '';
         if (isset($_GET['message'])) {
-            $message_type = sanitize_text_field($_GET['message']);
+            $message_type = sanitize_text_field(wp_unslash($_GET['message']));
             if ($message_type === 'updated') {
                 $message = '<div class="notice notice-success is-dismissible"><p>' . esc_html__('Профиль пользователя успешно обновлен.', 'cashback-plugin') . '</p></div>';
             } elseif ($message_type === 'error') {
@@ -298,7 +302,7 @@ class Cashback_Users_Management_Admin
         }
 
         // Проверяем nonce
-        if (!wp_verify_nonce(sanitize_text_field($_POST['nonce']), 'update_user_profile_nonce')) {
+        if (!wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'update_user_profile_nonce')) {
             wp_send_json_error(['message' => 'Неверный nonce.']);
             return;
         }
@@ -325,7 +329,7 @@ class Cashback_Users_Management_Admin
 
         // Проверяем и добавляем только измененные поля
         if (isset($_POST['cashback_rate'])) {
-            $cashback_rate = sanitize_text_field($_POST['cashback_rate']);
+            $cashback_rate = sanitize_text_field(wp_unslash($_POST['cashback_rate']));
 
             // Валидация данных
             if (!is_numeric($cashback_rate) || bccomp($cashback_rate, '0', 2) < 0 || bccomp($cashback_rate, '100', 2) > 0) {
@@ -338,7 +342,7 @@ class Cashback_Users_Management_Admin
         }
 
         if (isset($_POST['min_payout_amount'])) {
-            $min_payout_amount = sanitize_text_field($_POST['min_payout_amount']);
+            $min_payout_amount = sanitize_text_field(wp_unslash($_POST['min_payout_amount']));
 
             if (!is_numeric($min_payout_amount) || bccomp($min_payout_amount, '0', 2) < 0) {
                 wp_send_json_error(['message' => 'Минимальная сумма выплаты должна быть положительным числом.']);
@@ -350,7 +354,7 @@ class Cashback_Users_Management_Admin
         }
 
         if (isset($_POST['status'])) {
-            $status = sanitize_text_field($_POST['status']);
+            $status = sanitize_text_field(wp_unslash($_POST['status']));
 
             // Проверяем, что статус допустим
             $allowed_statuses = ['active', 'noactive', 'banned', 'deleted'];
@@ -364,7 +368,7 @@ class Cashback_Users_Management_Admin
         }
 
         if (isset($_POST['ban_reason'])) {
-            $ban_reason = sanitize_text_field($_POST['ban_reason']);
+            $ban_reason = sanitize_text_field(wp_unslash($_POST['ban_reason']));
 
             $update_data['ban_reason'] = $ban_reason;
             $update_formats[] = '%s';
@@ -420,7 +424,7 @@ class Cashback_Users_Management_Admin
         }
 
         // Проверяем nonce
-        if (!wp_verify_nonce(sanitize_text_field($_POST['nonce']), 'get_user_profile_nonce')) {
+        if (!wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'get_user_profile_nonce')) {
             wp_send_json_error(['message' => 'Неверный nonce.']);
             return;
         }

@@ -89,7 +89,7 @@ class Cashback_Support_Admin
         }
 
         // Определяем текущее действие
-        $action = sanitize_text_field($_GET['action'] ?? '');
+        $action = sanitize_text_field(wp_unslash($_GET['action'] ?? ''));
         $ticket_id = absint($_GET['ticket_id'] ?? 0);
 
         if ($action === 'view' && $ticket_id > 0) {
@@ -185,8 +185,8 @@ class Cashback_Support_Admin
         $nonce = wp_create_nonce('support_toggle_module_nonce');
 
         // Фильтры
-        $filter_status = sanitize_text_field($_GET['filter_status'] ?? '');
-        $filter_priority = sanitize_text_field($_GET['filter_priority'] ?? '');
+        $filter_status = sanitize_text_field(wp_unslash($_GET['filter_status'] ?? ''));
+        $filter_priority = sanitize_text_field(wp_unslash($_GET['filter_priority'] ?? ''));
 
         // Пагинация
         $current_page = max(1, absint($_GET['paged'] ?? 1));
@@ -647,7 +647,7 @@ class Cashback_Support_Admin
      */
     public function handle_toggle_module(): void
     {
-        if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field($_POST['nonce']), 'support_toggle_module_nonce')) {
+        if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'support_toggle_module_nonce')) {
             wp_send_json_error(['message' => 'Неверный токен безопасности.']);
             return;
         }
@@ -679,7 +679,7 @@ class Cashback_Support_Admin
      */
     public function handle_admin_reply(): void
     {
-        if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field($_POST['nonce']), 'support_admin_reply_nonce')) {
+        if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'support_admin_reply_nonce')) {
             wp_send_json_error(['message' => 'Неверный токен безопасности.']);
             return;
         }
@@ -769,7 +769,7 @@ class Cashback_Support_Admin
      */
     public function handle_change_status(): void
     {
-        if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field($_POST['nonce']), 'support_change_status_nonce')) {
+        if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'support_change_status_nonce')) {
             wp_send_json_error(['message' => 'Неверный токен безопасности.']);
             return;
         }
@@ -782,7 +782,7 @@ class Cashback_Support_Admin
         global $wpdb;
 
         $ticket_id = absint($_POST['ticket_id'] ?? 0);
-        $new_status = sanitize_text_field($_POST['status'] ?? '');
+        $new_status = sanitize_text_field(wp_unslash($_POST['status'] ?? ''));
 
         if (!$ticket_id || !in_array($new_status, ['open', 'answered', 'closed'], true)) {
             wp_send_json_error(['message' => 'Некорректные данные.']);

@@ -136,9 +136,9 @@ class Cashback_Payouts_Admin
         $offset = ($current_page - 1) * $per_page;
 
         // Получаем фильтры с валидацией
-        $filter_status = sanitize_text_field($_GET['status'] ?? '');
-        $filter_date_from = sanitize_text_field($_GET['date_from'] ?? '');
-        $filter_date_to = sanitize_text_field($_GET['date_to'] ?? '');
+        $filter_status = sanitize_text_field(wp_unslash($_GET['status'] ?? ''));
+        $filter_date_from = sanitize_text_field(wp_unslash($_GET['date_from'] ?? ''));
+        $filter_date_to = sanitize_text_field(wp_unslash($_GET['date_to'] ?? ''));
 
         // Валидация дат
         if (!empty($filter_date_from) && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $filter_date_from)) {
@@ -148,9 +148,11 @@ class Cashback_Payouts_Admin
             $filter_date_to = '';
         }
 
-        // Валидация статуса - проверяем только что это не пустая строка
-        // Защита от SQL injection обеспечивается через sanitize_text_field
-        $filter_status = !empty($filter_status) ? $filter_status : '';
+        // Валидация статуса по допустимому списку
+        $allowed_filter_statuses = ['waiting', 'processing', 'paid', 'failed', 'declined', 'needs_retry'];
+        if (!empty($filter_status) && !in_array($filter_status, $allowed_filter_statuses, true)) {
+            $filter_status = '';
+        }
 
         // Подготовка условий для фильтрации
         $where_conditions = [];
@@ -234,7 +236,7 @@ class Cashback_Payouts_Admin
         $message = '';
         $message_type = '';
         if (isset($_GET['message'])) {
-            $message_code = sanitize_text_field($_GET['message']);
+            $message_code = sanitize_text_field(wp_unslash($_GET['message']));
             if ($message_code === 'updated') {
                 $message = __('Запрос на выплату успешно обновлен.', 'cashback-plugin');
                 $message_type = 'success';
@@ -401,7 +403,7 @@ class Cashback_Payouts_Admin
     public function handle_update_payout_request(): void
     {
         // Проверяем nonce
-        if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field($_POST['nonce']), 'update_payout_request_nonce')) {
+        if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'update_payout_request_nonce')) {
             wp_send_json_error(['message' => __('Неверный nonce.', 'cashback-plugin')]);
             return;
         }
@@ -426,7 +428,7 @@ class Cashback_Payouts_Admin
         // Оно обновляется автоматически только для статуса 'waiting' при изменении настроек пользователя
 
         if (isset($_POST['provider_payout_id'])) {
-            $provider_payout_id = sanitize_text_field($_POST['provider_payout_id']);
+            $provider_payout_id = sanitize_text_field(wp_unslash($_POST['provider_payout_id']));
             $update_data['provider_payout_id'] = $provider_payout_id;
             $update_formats[] = '%s';
         }
@@ -444,13 +446,13 @@ class Cashback_Payouts_Admin
         }
 
         if (isset($_POST['fail_reason'])) {
-            $fail_reason = sanitize_text_field($_POST['fail_reason']);
+            $fail_reason = sanitize_text_field(wp_unslash($_POST['fail_reason']));
             $update_data['fail_reason'] = $fail_reason;
             $update_formats[] = '%s';
         }
 
         if (isset($_POST['status'])) {
-            $status = sanitize_text_field($_POST['status']);
+            $status = sanitize_text_field(wp_unslash($_POST['status']));
 
             // Проверяем, что статус допустим
             $allowed_statuses = ['waiting', 'processing', 'paid', 'failed', 'declined', 'needs_retry'];
@@ -464,6 +466,27 @@ class Cashback_Payouts_Admin
                 "SELECT status FROM {$this->table_name} WHERE id = %d",
                 $payout_id
             ));
+
+            // Валидация допустимых переходов статусов
+            $allowed_transitions = [
+                'waiting'     => ['processing', 'paid', 'failed', 'declined', 'needs_retry'],
+                'processing'  => ['paid', 'failed', 'declined', 'needs_retry'],
+                'needs_retry' => ['processing', 'paid', 'failed', 'declined'],
+                'paid'        => [],
+                'failed'      => [],
+                'declined'    => [],
+            ];
+
+            if ($old_status === $status) {
+                // Статус не изменился — пропускаем проверку перехода
+            } elseif (!isset($allowed_transitions[$old_status]) || !in_array($status, $allowed_transitions[$old_status], true)) {
+                wp_send_json_error(['message' => sprintf(
+                    __('Недопустимый переход статуса: %s → %s.', 'cashback-plugin'),
+                    esc_html($old_status),
+                    esc_html($status)
+                )]);
+                return;
+            }
 
             $update_data['status'] = $status;
             $update_formats[] = '%s';
@@ -889,7 +912,7 @@ class Cashback_Payouts_Admin
     public function handle_get_payout_request(): void
     {
         // Проверяем nonce
-        if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field($_POST['nonce']), 'get_payout_request_nonce')) {
+        if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'get_payout_request_nonce')) {
             wp_send_json_error(['message' => __('Неверный nonce.', 'cashback-plugin')]);
             return;
         }

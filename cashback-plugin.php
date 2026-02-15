@@ -249,6 +249,8 @@ class CashbackPlugin
         $filepath = plugin_dir_path(__FILE__) . $filename;
         if (file_exists($filepath)) {
             require_once $filepath;
+        } else {
+            error_log(sprintf('[Cashback Plugin] Required file not found: %s', $filepath));
         }
     }
 
