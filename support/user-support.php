@@ -394,16 +394,34 @@ class Cashback_User_Support
                 display: flex;
                 justify-content: center;
                 align-items: center;
-                gap: 10px;
+                gap: 4px;
                 margin-top: 15px;
                 padding: 10px 0;
+                flex-wrap: wrap;
             }
-            #support-pagination button:disabled {
+            #support-pagination .support-page-btn {
+                min-width: 32px;
+                height: 32px;
+                padding: 0 8px;
+                text-align: center;
+            }
+            #support-pagination .support-page-btn:disabled {
                 opacity: 0.4;
                 cursor: not-allowed;
             }
-            #support-pagination .support-page-info {
-                font-size: 14px;
+            #support-pagination .support-page-num.current {
+                min-width: 32px;
+                height: 32px;
+                line-height: 32px;
+                text-align: center;
+                background: #2271b1;
+                color: #fff;
+                border-radius: 3px;
+                font-weight: 600;
+            }
+            #support-pagination .support-page-dots {
+                min-width: 24px;
+                text-align: center;
                 color: #666;
             }
             .support-ticket-row.has-unread {

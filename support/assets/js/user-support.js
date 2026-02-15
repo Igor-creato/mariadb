@@ -194,13 +194,42 @@
             showPage(1, $rows, totalPages);
         }
 
+        function getPageNumbers(current, total) {
+            var range = 2, edge = 2, pages = [], i;
+            for (i = 1; i <= Math.min(edge, total); i++) pages.push(i);
+            for (i = Math.max(1, current - range); i <= Math.min(total, current + range); i++) pages.push(i);
+            for (i = Math.max(1, total - edge + 1); i <= total; i++) pages.push(i);
+            // unique + sort
+            pages = pages.filter(function(v, idx, arr) { return arr.indexOf(v) === idx; });
+            pages.sort(function(a, b) { return a - b; });
+            return pages;
+        }
+
         function renderPagination(totalPages) {
             var $pagination = $('#support-pagination');
-            $pagination.html(
-                '<button type="button" class="button" id="support-page-prev">&lsaquo; Назад</button>' +
-                '<span class="support-page-info"><span id="support-page-current">1</span> / ' + totalPages + '</span>' +
-                '<button type="button" class="button" id="support-page-next">Вперёд &rsaquo;</button>'
-            );
+            var html = '';
+
+            // Кнопка «Назад»
+            html += '<button type="button" class="button support-page-btn" data-page="' + (currentPage - 1) + '"' + (currentPage <= 1 ? ' disabled' : '') + '>&lsaquo;</button>';
+
+            var pages = getPageNumbers(currentPage, totalPages);
+            var prev = 0;
+            for (var i = 0; i < pages.length; i++) {
+                if (prev && pages[i] - prev > 1) {
+                    html += '<span class="support-page-dots">&hellip;</span>';
+                }
+                if (pages[i] === currentPage) {
+                    html += '<span class="support-page-num current">' + pages[i] + '</span>';
+                } else {
+                    html += '<button type="button" class="button support-page-btn" data-page="' + pages[i] + '">' + pages[i] + '</button>';
+                }
+                prev = pages[i];
+            }
+
+            // Кнопка «Вперёд»
+            html += '<button type="button" class="button support-page-btn" data-page="' + (currentPage + 1) + '"' + (currentPage >= totalPages ? ' disabled' : '') + '>&rsaquo;</button>';
+
+            $pagination.html(html);
         }
 
         function showPage(page, $rows, totalPages) {
@@ -209,25 +238,15 @@
             var end = start + TICKETS_PER_PAGE;
 
             $rows.hide().slice(start, end).show();
-
-            $('#support-page-current').text(page);
-            $('#support-page-prev').prop('disabled', page <= 1);
-            $('#support-page-next').prop('disabled', page >= totalPages);
+            renderPagination(totalPages);
         }
 
-        $(document).on('click', '#support-page-prev', function() {
-            if (currentPage > 1) {
-                var $rows = $('#support-tickets-list .support-ticket-row');
-                var totalPages = Math.ceil($rows.length / TICKETS_PER_PAGE);
-                showPage(currentPage - 1, $rows, totalPages);
-            }
-        });
-
-        $(document).on('click', '#support-page-next', function() {
+        $(document).on('click', '.support-page-btn:not(:disabled)', function() {
+            var page = parseInt($(this).data('page'), 10);
             var $rows = $('#support-tickets-list .support-ticket-row');
             var totalPages = Math.ceil($rows.length / TICKETS_PER_PAGE);
-            if (currentPage < totalPages) {
-                showPage(currentPage + 1, $rows, totalPages);
+            if (page >= 1 && page <= totalPages) {
+                showPage(page, $rows, totalPages);
             }
         });
 
