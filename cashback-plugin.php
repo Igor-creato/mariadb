@@ -176,6 +176,11 @@ class CashbackPlugin
             wp_schedule_event(time(), 'daily', 'cashback_support_auto_delete_cron');
         }
 
+        // Планируем cron для мониторинга целостности данных
+        if (!wp_next_scheduled('cashback_health_check_cron')) {
+            wp_schedule_event(time(), 'daily', 'cashback_health_check_cron');
+        }
+
         // Сбрасываем переписывание URL
         flush_rewrite_rules();
     }
@@ -188,6 +193,11 @@ class CashbackPlugin
         $timestamp = wp_next_scheduled('cashback_support_auto_delete_cron');
         if ($timestamp) {
             wp_unschedule_event($timestamp, 'cashback_support_auto_delete_cron');
+        }
+
+        $timestamp = wp_next_scheduled('cashback_health_check_cron');
+        if ($timestamp) {
+            wp_unschedule_event($timestamp, 'cashback_health_check_cron');
         }
     }
 
@@ -220,6 +230,7 @@ class CashbackPlugin
         $this->require_file('admin/users-management.php');
         $this->require_file('admin/payouts.php');
         $this->require_file('admin/bank-management.php');
+        $this->require_file('admin/health-check.php');
 
         // Модуль поддержки
         $this->require_file('support/support-db.php');

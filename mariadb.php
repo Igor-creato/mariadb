@@ -98,7 +98,7 @@ class Mariadb_Plugin
             `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
             `user_id` bigint(20) unsigned NOT NULL,
             `total_amount` decimal(18,2) NOT NULL,
-            `payout_method` varchar(255) NOT NULL COMMENT 'Способ выплаты (например: СБП, карта, юmoney)',
+            `payout_method` varchar(50) DEFAULT NULL COMMENT 'Slug способа выплаты из cashback_payout_methods',
             `payout_account` varchar(255) NOT NULL COMMENT 'Реквизиты получателя (номер телефона, карты и т.п.)',
             `provider` varchar(100) DEFAULT NULL COMMENT 'Идентификатор провайдера выплат (банк/сервис)',
             `provider_payout_id` varchar(255) DEFAULT NULL COMMENT 'ID операции у провайдера',
@@ -115,6 +115,8 @@ class Mariadb_Plugin
             KEY `idx_status_updated` (`status`,`updated_at`),
             KEY `idx_provider_payout_id` (`provider_payout_id`),
             KEY `idx_refunded` (`refunded_at`),
+            KEY `idx_payout_method_slug` (`payout_method`),
+            KEY `idx_user_created` (`user_id`,`created_at` DESC),
             CONSTRAINT `fk_payout_user` FOREIGN KEY (`user_id`) REFERENCES `{$wpdb->prefix}users` (`ID`) ON DELETE CASCADE,
             CHECK (total_amount > 0)
         ) ENGINE=InnoDB {$charset_collate} COMMENT='Заявки на выплаты с защитой от дублирования';";
@@ -142,6 +144,7 @@ class Mariadb_Plugin
             UNIQUE KEY `unique_uniq_partner` (`uniq_id`,`partner`),
             UNIQUE KEY `idx_idempotency_key` (`idempotency_key`),
             KEY `user_id` (`user_id`),
+            KEY `idx_user_created` (`user_id`,`created_at` DESC),
             KEY `idx_order_status_updated_cashback` (`order_status`,`updated_at`,`cashback`),
             KEY `idx_processed` (`processed_at`),
             KEY `idx_processed_batch_id` (`processed_batch_id`),
@@ -279,6 +282,12 @@ class Mariadb_Plugin
         $this->insert_default_payout_methods();
         $this->insert_default_banks();
 
+        // Миграция: FK на payout_method (для существующих установок)
+        $this->migrate_payout_method_fk();
+
+        // Добавление индексов производительности (для существующих установок)
+        $this->add_performance_indexes();
+
         error_log('Mariadb Plugin: Tables created successfully');
     }
 
@@ -344,6 +353,157 @@ class Mariadb_Plugin
         }
 
         error_log('Mariadb Plugin: Initialized ' . count($defaults) . ' default banks');
+    }
+
+    /**
+     * Миграция: добавление FK на payout_method в cashback_payout_requests
+     *
+     * Для существующих установок:
+     * 1. Изменяет тип колонки на varchar(50) DEFAULT NULL
+     * 2. Конвертирует пустые строки и невалидные значения в NULL
+     * 3. Добавляет FK constraint на cashback_payout_methods.slug
+     *
+     * @return void
+     */
+    private function migrate_payout_method_fk(): void
+    {
+        global $wpdb;
+
+        $table_requests = $wpdb->prefix . 'cashback_payout_requests';
+        $table_methods = $wpdb->prefix . 'cashback_payout_methods';
+
+        // Проверяем, существует ли FK
+        $fk_exists = $wpdb->get_var(
+            "SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS
+             WHERE CONSTRAINT_NAME = 'fk_payout_request_method'
+             AND TABLE_SCHEMA = DATABASE()"
+        );
+
+        if ($fk_exists) {
+            return; // FK уже создан
+        }
+
+        // Проверяем, существует ли таблица payout_requests (может быть пустая установка)
+        $table_exists = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT COUNT(*) FROM information_schema.TABLES
+                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s",
+                $table_requests
+            )
+        );
+
+        if (!$table_exists) {
+            return;
+        }
+
+        // Шаг 1: Изменяем тип колонки (для существующих таблиц с varchar(255) NOT NULL)
+        $wpdb->query(
+            "ALTER TABLE `{$table_requests}`
+             MODIFY `payout_method` varchar(50) DEFAULT NULL COMMENT 'Slug способа выплаты из cashback_payout_methods'"
+        );
+
+        if ($wpdb->last_error) {
+            error_log('Mariadb Plugin Error: Failed to alter payout_method column: ' . $wpdb->last_error);
+            return;
+        }
+
+        // Шаг 2: Конвертируем пустые строки в NULL
+        $wpdb->query("UPDATE `{$table_requests}` SET payout_method = NULL WHERE payout_method = ''");
+
+        // Шаг 3: Проверяем и исправляем невалидные значения (не совпадающие со slug)
+        $invalid = $wpdb->get_results(
+            "SELECT DISTINCT r.payout_method
+             FROM `{$table_requests}` r
+             LEFT JOIN `{$table_methods}` m ON r.payout_method = m.slug
+             WHERE r.payout_method IS NOT NULL AND m.slug IS NULL"
+        );
+
+        if (!empty($invalid)) {
+            $slugs = array_column($invalid, 'payout_method');
+            error_log('Mariadb Plugin Warning: Invalid payout_method values found: ' . implode(', ', $slugs) . '. Setting to NULL.');
+
+            $wpdb->query(
+                "UPDATE `{$table_requests}` r
+                 LEFT JOIN `{$table_methods}` m ON r.payout_method = m.slug
+                 SET r.payout_method = NULL
+                 WHERE r.payout_method IS NOT NULL AND m.slug IS NULL"
+            );
+        }
+
+        // Шаг 4: Добавляем индекс для FK (если dbDelta не создал)
+        $idx_exists = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT COUNT(*) FROM information_schema.STATISTICS
+                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND INDEX_NAME = 'idx_payout_method_slug'",
+                $table_requests
+            )
+        );
+
+        if (!$idx_exists) {
+            $wpdb->query("ALTER TABLE `{$table_requests}` ADD KEY `idx_payout_method_slug` (`payout_method`)");
+        }
+
+        // Шаг 5: Создаём FK constraint
+        $result = $wpdb->query(
+            "ALTER TABLE `{$table_requests}`
+             ADD CONSTRAINT `fk_payout_request_method`
+             FOREIGN KEY (`payout_method`)
+             REFERENCES `{$table_methods}` (`slug`)
+             ON DELETE RESTRICT
+             ON UPDATE CASCADE"
+        );
+
+        if ($result === false) {
+            error_log('Mariadb Plugin Error: Failed to add FK fk_payout_request_method: ' . $wpdb->last_error);
+        } else {
+            error_log('Mariadb Plugin: Added FK constraint fk_payout_request_method');
+        }
+    }
+
+    /**
+     * Добавление индексов производительности для существующих установок
+     *
+     * dbDelta не всегда создаёт индексы при обновлении схемы,
+     * поэтому добавляем вручную если отсутствуют.
+     *
+     * @return void
+     */
+    private function add_performance_indexes(): void
+    {
+        global $wpdb;
+
+        $indexes = [
+            // Пагинация истории транзакций: WHERE user_id = %d ORDER BY created_at DESC
+            [
+                'table' => $wpdb->prefix . 'cashback_transactions',
+                'index' => 'idx_user_created',
+                'sql' => "CREATE INDEX `idx_user_created` ON `{$wpdb->prefix}cashback_transactions` (`user_id`, `created_at` DESC)"
+            ],
+            // Пагинация истории выплат: WHERE user_id = %d ORDER BY created_at DESC
+            [
+                'table' => $wpdb->prefix . 'cashback_payout_requests',
+                'index' => 'idx_user_created',
+                'sql' => "CREATE INDEX `idx_user_created` ON `{$wpdb->prefix}cashback_payout_requests` (`user_id`, `created_at` DESC)"
+            ],
+        ];
+
+        foreach ($indexes as $idx) {
+            $exists = $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM information_schema.STATISTICS
+                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND INDEX_NAME = %s",
+                $idx['table'],
+                $idx['index']
+            ));
+
+            if (!$exists) {
+                $wpdb->query($idx['sql']);
+                if ($wpdb->last_error) {
+                    error_log("Mariadb Plugin Error: Failed to create index {$idx['index']}: " . $wpdb->last_error);
+                } else {
+                    error_log("Mariadb Plugin: Created index {$idx['index']} on {$idx['table']}");
+                }
+            }
+        }
     }
 
     /**

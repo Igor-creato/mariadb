@@ -741,7 +741,7 @@ class CashbackWithdrawal
                 array(
                     'user_id' => $user_id,
                     'total_amount' => $withdrawal_amount,
-                    'payout_method' => $payout_method ?: '',
+                    'payout_method' => $payout_method, // Всегда валидный slug (проверено выше)
                     'payout_account' => $payout_account ?: '',
                     'provider' => $bank_code, // Сохраняем код банка как провайдера
                     'idempotency_key' => $idempotency_key,
