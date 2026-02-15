@@ -383,51 +383,76 @@ class Cashback_Users_Management_Admin
             $update_formats[] = '%s';
         }
 
-        // Получаем текущий статус пользователя (для проверки бана/разбана)
-        $old_status = $wpdb->get_var($wpdb->prepare(
-            "SELECT status FROM {$this->profile_table_name} WHERE user_id = %d",
-            $user_id
-        ));
+        // 🔒 НАЧИНАЕМ ТРАНЗАКЦИЮ ДО чтения и обновления профиля
+        $wpdb->query('START TRANSACTION');
 
-        // Добавляем дату обновления
-        $update_data['updated_at'] = current_time('mysql');
-        $update_formats[] = '%s';
+        try {
+            // БЛОКИРУЕМ строку профиля с FOR UPDATE для предотвращения race conditions
+            $profile = $wpdb->get_row($wpdb->prepare(
+                "SELECT status, ban_reason
+                 FROM {$this->profile_table_name}
+                 WHERE user_id = %d
+                 FOR UPDATE",
+                $user_id
+            ));
 
-        // Обновляем только те поля, которые были изменены
-        $result = $wpdb->update(
-            $this->profile_table_name,
-            $update_data,
-            ['user_id' => $user_id],
-            $update_formats,
-            ['%d']  // Формат условия
-        );
+            if (!$profile) {
+                throw new Exception('Профиль пользователя не найден');
+            }
 
-        if ($result === false) {
-            wp_send_json_error(['message' => 'Ошибка при обновлении профиля пользователя в базе данных.']);
-            return;
-        }
+            $old_status = $profile->status;
 
-        // Если пользователь был забанен - обрабатываем последствия
-        if (isset($_POST['status']) && $_POST['status'] === 'banned') {
-            try {
+            // Добавляем дату обновления
+            $update_data['updated_at'] = current_time('mysql');
+            $update_formats[] = '%s';
+
+            // Обновляем только те поля, которые были изменены
+            $result = $wpdb->update(
+                $this->profile_table_name,
+                $update_data,
+                ['user_id' => $user_id],
+                $update_formats,
+                ['%d']  // Формат условия
+            );
+
+            if ($result === false) {
+                throw new Exception('Ошибка при обновлении профиля пользователя в базе данных');
+            }
+
+            // Если пользователь был забанен - обрабатываем последствия ВНУТРИ транзакции
+            if (isset($_POST['status']) && $_POST['status'] === 'banned') {
                 $ban_reason = isset($_POST['ban_reason']) ? sanitize_text_field(wp_unslash($_POST['ban_reason'])) : '';
 
                 // Перехватываем любой вывод, который может сломать JSON-ответ
                 ob_start();
-                $this->handle_user_ban($user_id, $ban_reason);
+                $ban_success = $this->handle_user_ban($user_id, $ban_reason, true);
                 ob_end_clean();
-            } catch (Exception $e) {
-                wp_send_json_error(['message' => 'Ошибка при обработке бана: ' . $e->getMessage()]);
-                return;
-            }
-        }
 
-        // Если пользователь был разбанен - обрабатываем последствия
-        if ($old_status === 'banned' && isset($_POST['status']) && $_POST['status'] !== 'banned') {
-            // Перехватываем любой вывод, который может сломать JSON-ответ
-            ob_start();
-            $this->handle_user_unban($user_id);
-            ob_end_clean();
+                if (!$ban_success) {
+                    throw new Exception('Ошибка при обработке бана пользователя');
+                }
+            }
+
+            // Если пользователь был разбанен - обрабатываем последствия ВНУТРИ транзакции
+            if ($old_status === 'banned' && isset($_POST['status']) && $_POST['status'] !== 'banned') {
+                // Перехватываем любой вывод, который может сломать JSON-ответ
+                ob_start();
+                $unban_success = $this->handle_user_unban($user_id, true);
+                ob_end_clean();
+
+                if (!$unban_success) {
+                    throw new Exception('Ошибка при обработке разбана пользователя');
+                }
+            }
+
+            // ✅ ФИКСИРУЕМ транзакцию
+            $wpdb->query('COMMIT');
+
+        } catch (Exception $e) {
+            // ❌ ОТКАТЫВАЕМ транзакцию при любой ошибке
+            $wpdb->query('ROLLBACK');
+            wp_send_json_error(['message' => 'Ошибка: ' . $e->getMessage()]);
+            return;
         }
 
         // Получаем обновленные данные из базы
@@ -514,69 +539,98 @@ class Cashback_Users_Management_Admin
      *
      * @param int $user_id ID забаненного пользователя
      * @param string $ban_reason Причина бана
+     * @param bool $in_transaction Флаг, указывающий что метод вызван внутри транзакции
+     * @return bool Успешность операции
      */
-    private function handle_user_ban(int $user_id, string $ban_reason): void
+    private function handle_user_ban(int $user_id, string $ban_reason, bool $in_transaction = false): bool
     {
         global $wpdb;
-
-        // 1. Отменяем активные заявки на выплату (все кроме failed и paid)
         $requests_table = $wpdb->prefix . 'cashback_payout_requests';
 
-        $active_requests = $wpdb->get_results($wpdb->prepare(
-            "SELECT id, total_amount, status FROM {$requests_table}
-             WHERE user_id = %d
-             AND status NOT IN ('failed', 'paid', 'declined')",
-            $user_id
-        ));
+        // Начинаем транзакцию только если еще не внутри
+        if (!$in_transaction) {
+            $wpdb->query('START TRANSACTION');
+        }
 
-        foreach ($active_requests as $request) {
-            $wpdb->update(
-                $requests_table,
-                [
-                    'status' => 'declined',
-                    'fail_reason' => '(Аккаунт забанен)',
-                    'updated_at' => current_time('mysql')
-                ],
-                ['id' => $request->id],
-                ['%s', '%s', '%s'],
-                ['%d']
-            );
+        try {
+            // 🔒 БЛОКИРУЕМ активные заявки на выплату с FOR UPDATE
+            $active_requests = $wpdb->get_results($wpdb->prepare(
+                "SELECT id, total_amount, status
+                 FROM {$requests_table}
+                 WHERE user_id = %d
+                 AND status NOT IN ('failed', 'paid', 'declined')
+                 FOR UPDATE",
+                $user_id
+            ));
 
-            // Логируем отмену
+            // Обновляем все заявки на declined
+            foreach ($active_requests as $request) {
+                $result = $wpdb->update(
+                    $requests_table,
+                    [
+                        'status' => 'declined',
+                        'fail_reason' => '(Аккаунт забанен)',
+                        'updated_at' => current_time('mysql')
+                    ],
+                    ['id' => $request->id],
+                    ['%s', '%s', '%s'],
+                    ['%d']
+                );
+
+                if ($result === false) {
+                    throw new Exception("Failed to decline payout request {$request->id}");
+                }
+
+                // Логируем отмену
+                if (class_exists('Cashback_Encryption')) {
+                    Cashback_Encryption::write_audit_log(
+                        'payout_declined_on_ban',
+                        get_current_user_id(),
+                        'payout_request',
+                        $request->id,
+                        ['amount' => $request->total_amount, 'user_id' => $user_id]
+                    );
+                }
+            }
+
+            // Логируем бан пользователя
             if (class_exists('Cashback_Encryption')) {
                 Cashback_Encryption::write_audit_log(
-                    'payout_declined_on_ban',
+                    'user_banned',
                     get_current_user_id(),
-                    'payout_request',
-                    $request->id,
-                    ['amount' => $request->total_amount, 'user_id' => $user_id]
+                    'user',
+                    $user_id,
+                    ['ban_reason' => $ban_reason]
                 );
             }
-        }
 
-        // 2. Логируем бан пользователя
-        if (class_exists('Cashback_Encryption')) {
-            Cashback_Encryption::write_audit_log(
-                'user_banned',
-                get_current_user_id(),
-                'user',
-                $user_id,
-                ['ban_reason' => $ban_reason]
-            );
-        }
+            // Фиксируем транзакцию если мы ее владельцы
+            if (!$in_transaction) {
+                $wpdb->query('COMMIT');
+            }
 
-        // 3. Отправляем email уведомление
-        $user = get_userdata($user_id);
-        if ($user && $user->user_email) {
-            $subject = 'Ваш аккаунт кэшбэк заблокирован';
-            $message = sprintf(
-                "Здравствуйте, %s!\n\nВаш аккаунт кэшбэк был заблокирован.\nПричина: %s\n\nВаш баланс был заморожен.\nДля разблокировки обратитесь к администратору: %s",
-                $user->display_name,
-                $ban_reason ?: 'Не указана',
-                get_option('admin_email')
-            );
+            // ✉️ Email ПОСЛЕ транзакции (некритичная операция)
+            $user = get_userdata($user_id);
+            if ($user && $user->user_email) {
+                $subject = 'Ваш аккаунт кэшбэк заблокирован';
+                $message = sprintf(
+                    "Здравствуйте, %s!\n\nВаш аккаунт кэшбэк был заблокирован.\nПричина: %s\n\nВаш баланс был заморожен.\nДля разблокировки обратитесь к администратору: %s",
+                    $user->display_name,
+                    $ban_reason ?: 'Не указана',
+                    get_option('admin_email')
+                );
+                wp_mail($user->user_email, $subject, $message);
+            }
 
-            wp_mail($user->user_email, $subject, $message);
+            return true;
+
+        } catch (Exception $e) {
+            // Откатываем транзакцию если мы ее владельцы
+            if (!$in_transaction) {
+                $wpdb->query('ROLLBACK');
+            }
+            error_log('Ban error for user ' . $user_id . ': ' . $e->getMessage());
+            return false;
         }
     }
 
@@ -584,43 +638,71 @@ class Cashback_Users_Management_Admin
      * Обработка последствий разбана пользователя
      *
      * @param int $user_id ID разбаненного пользователя
+     * @param bool $in_transaction Флаг, указывающий что метод вызван внутри транзакции
+     * @return bool Успешность операции
      */
-    private function handle_user_unban(int $user_id): void
+    private function handle_user_unban(int $user_id, bool $in_transaction = false): bool
     {
         global $wpdb;
-
-        // Обновляем надпись в declined выплатах которые были отменены при бане
         $requests_table = $wpdb->prefix . 'cashback_payout_requests';
 
-        // Обновляем новые записи (русский текст)
-        $wpdb->query($wpdb->prepare(
-            "UPDATE {$requests_table}
-             SET fail_reason = '(Аккаунт был забанен)'
-             WHERE user_id = %d
-             AND status = 'declined'
-             AND fail_reason = '(Аккаунт забанен)'",
-            $user_id
-        ));
+        // Начинаем транзакцию только если еще не внутри
+        if (!$in_transaction) {
+            $wpdb->query('START TRANSACTION');
+        }
 
-        // Обновляем старые записи (английский текст)
-        $wpdb->query($wpdb->prepare(
-            "UPDATE {$requests_table}
-             SET fail_reason = '(Аккаунт был забанен)'
-             WHERE user_id = %d
-             AND status = 'declined'
-             AND fail_reason = 'Account banned'",
-            $user_id
-        ));
+        try {
+            // 🔒 БЛОКИРУЕМ declined заявки пользователя с FOR UPDATE
+            $declined_requests = $wpdb->get_results($wpdb->prepare(
+                "SELECT id, fail_reason
+                 FROM {$requests_table}
+                 WHERE user_id = %d
+                 AND status = 'declined'
+                 AND (fail_reason = '(Аккаунт забанен)' OR fail_reason = 'Account banned')
+                 FOR UPDATE",
+                $user_id
+            ));
 
-        // Логируем разбан
-        if (class_exists('Cashback_Encryption')) {
-            Cashback_Encryption::write_audit_log(
-                'user_unbanned',
-                get_current_user_id(),
-                'user',
-                $user_id,
-                []
-            );
+            // Обновляем fail_reason на прошедшее время
+            foreach ($declined_requests as $request) {
+                $result = $wpdb->update(
+                    $requests_table,
+                    ['fail_reason' => '(Аккаунт был забанен)'],
+                    ['id' => $request->id],
+                    ['%s'],
+                    ['%d']
+                );
+
+                if ($result === false) {
+                    throw new Exception("Failed to update payout request {$request->id}");
+                }
+            }
+
+            // Логируем разбан
+            if (class_exists('Cashback_Encryption')) {
+                Cashback_Encryption::write_audit_log(
+                    'user_unbanned',
+                    get_current_user_id(),
+                    'user',
+                    $user_id,
+                    []
+                );
+            }
+
+            // Фиксируем транзакцию если мы ее владельцы
+            if (!$in_transaction) {
+                $wpdb->query('COMMIT');
+            }
+
+            return true;
+
+        } catch (Exception $e) {
+            // Откатываем транзакцию если мы ее владельцы
+            if (!$in_transaction) {
+                $wpdb->query('ROLLBACK');
+            }
+            error_log('Unban error for user ' . $user_id . ': ' . $e->getMessage());
+            return false;
         }
     }
 

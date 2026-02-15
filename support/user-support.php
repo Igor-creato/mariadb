@@ -481,49 +481,72 @@ class Cashback_User_Support
         }
         set_transient($rate_key, $reply_count + 1, HOUR_IN_SECONDS);
 
-        // Проверяем что тикет принадлежит пользователю и не закрыт
-        $ticket = $wpdb->get_row($wpdb->prepare(
-            "SELECT id, user_id, subject, status FROM `{$this->tickets_table}` WHERE id = %d AND user_id = %d",
-            $ticket_id,
-            $user_id
-        ));
+        // 🔒 НАЧИНАЕМ ТРАНЗАКЦИЮ для атомарности операций
+        $wpdb->query('START TRANSACTION');
 
-        if (!$ticket) {
-            wp_send_json_error(['message' => 'Ошибка при отправке, попробуйте еще раз']);
+        try {
+            // БЛОКИРУЕМ тикет с FOR UPDATE
+            $ticket = $wpdb->get_row($wpdb->prepare(
+                "SELECT id, user_id, subject, status
+                 FROM `{$this->tickets_table}`
+                 WHERE id = %d AND user_id = %d
+                 FOR UPDATE",
+                $ticket_id,
+                $user_id
+            ));
+
+            if (!$ticket) {
+                throw new Exception('Тикет не найден или не принадлежит пользователю');
+            }
+
+            if ($ticket->status === 'closed') {
+                throw new Exception('Невозможно ответить на закрытый тикет. Создайте новый тикет.');
+            }
+
+            // Вставляем сообщение
+            $message_inserted = $wpdb->insert(
+                $this->messages_table,
+                [
+                    'ticket_id' => $ticket_id,
+                    'user_id' => $user_id,
+                    'message' => $message,
+                    'is_admin' => 0,
+                    'is_read' => 0,
+                ],
+                ['%d', '%d', '%s', '%d', '%d']
+            );
+
+            if (!$message_inserted) {
+                throw new Exception('Ошибка при вставке сообщения');
+            }
+
+            // Обновляем статус тикета на "open"
+            $ticket_updated = $wpdb->update(
+                $this->tickets_table,
+                [
+                    'status' => 'open',
+                    'updated_at' => current_time('mysql'),
+                ],
+                ['id' => $ticket_id],
+                ['%s', '%s'],
+                ['%d']
+            );
+
+            if ($ticket_updated === false) {
+                throw new Exception('Ошибка при обновлении статуса тикета');
+            }
+
+            // ✅ ФИКСИРУЕМ транзакцию
+            $wpdb->query('COMMIT');
+
+        } catch (Exception $e) {
+            // ❌ ОТКАТЫВАЕМ транзакцию при ошибке
+            $wpdb->query('ROLLBACK');
+            wp_send_json_error(['message' => $e->getMessage()]);
             return;
         }
 
-        if ($ticket->status === 'closed') {
-            wp_send_json_error(['message' => 'Невозможно ответить на закрытый тикет. Создайте новый тикет.']);
-            return;
-        }
-
-        // Вставляем сообщение
-        $wpdb->insert(
-            $this->messages_table,
-            [
-                'ticket_id' => $ticket_id,
-                'user_id' => $user_id,
-                'message' => $message,
-                'is_admin' => 0,
-                'is_read' => 0,
-            ],
-            ['%d', '%d', '%s', '%d', '%d']
-        );
-
-        // Обновляем статус тикета на "open"
-        $wpdb->update(
-            $this->tickets_table,
-            [
-                'status' => 'open',
-                'updated_at' => current_time('mysql'),
-            ],
-            ['id' => $ticket_id],
-            ['%s', '%s'],
-            ['%d']
-        );
-
-        // Отправляем email администратору
+        // ✉️ Email ПОСЛЕ транзакции (некритичная операция)
         $this->send_admin_notification($ticket_id, 'user_reply', $ticket->subject);
 
         $user = wp_get_current_user();

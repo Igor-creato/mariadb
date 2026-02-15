@@ -469,60 +469,73 @@ class Cashback_Payouts_Admin
                 return;
             }
 
-            // Если статус изменяется, проверяем необходимость обновления баланса
-            $old_status = $wpdb->get_var($wpdb->prepare(
-                "SELECT status FROM {$this->table_name} WHERE id = %d",
-                $payout_id
-            ));
+            // 🔒 НАЧИНАЕМ ТРАНЗАКЦИЮ ДО чтения статуса для предотвращения TOCTOU
+            $wpdb->query('START TRANSACTION');
+            $in_transaction = true;
 
-            // Валидация допустимых переходов статусов
-            $allowed_transitions = [
-                'waiting'     => ['processing', 'paid', 'failed', 'declined', 'needs_retry'],
-                'processing'  => ['paid', 'failed', 'declined', 'needs_retry'],
-                'needs_retry' => ['processing', 'paid', 'failed', 'declined'],
-                'paid'        => [],
-                'failed'      => [],
-                'declined'    => [],
-            ];
+            try {
+                // БЛОКИРУЕМ строку выплаты с FOR UPDATE
+                $payout_request = $wpdb->get_row($wpdb->prepare(
+                    "SELECT id, status, user_id, total_amount
+                     FROM {$this->table_name}
+                     WHERE id = %d
+                     FOR UPDATE",
+                    $payout_id
+                ), ARRAY_A);
 
-            if ($old_status === $status) {
-                // Статус не изменился — пропускаем проверку перехода
-            } elseif (!isset($allowed_transitions[$old_status]) || !in_array($status, $allowed_transitions[$old_status], true)) {
-                wp_send_json_error(['message' => sprintf(
-                    __('Недопустимый переход статуса: %s → %s.', 'cashback-plugin'),
-                    esc_html($old_status),
-                    esc_html($status)
-                )]);
+                if (!$payout_request) {
+                    throw new Exception(__('Запрос выплаты не найден.', 'cashback-plugin'));
+                }
+
+                $old_status = $payout_request['status'];
+
+                // Валидация допустимых переходов статусов
+                $allowed_transitions = [
+                    'waiting'     => ['processing', 'paid', 'failed', 'declined', 'needs_retry'],
+                    'processing'  => ['paid', 'failed', 'declined', 'needs_retry'],
+                    'needs_retry' => ['processing', 'paid', 'failed', 'declined'],
+                    'paid'        => [],
+                    'failed'      => [],
+                    'declined'    => [],
+                ];
+
+                if ($old_status === $status) {
+                    // Статус не изменился — пропускаем проверку перехода
+                } elseif (!isset($allowed_transitions[$old_status]) || !in_array($status, $allowed_transitions[$old_status], true)) {
+                    throw new Exception(sprintf(
+                        __('Недопустимый переход статуса: %s → %s.', 'cashback-plugin'),
+                        esc_html($old_status),
+                        esc_html($status)
+                    ));
+                }
+
+                $update_data['status'] = $status;
+                $update_formats[] = '%s';
+
+                // Определяем, нужно ли обновление баланса (используем ЗАБЛОКИРОВАННЫЙ статус)
+                $needs_balance_update = ($old_status !== 'paid' && $status === 'paid')
+                    || ($old_status !== 'declined' && $status === 'declined')
+                    || ($old_status !== 'failed' && $status === 'failed');
+
+                if ($needs_balance_update) {
+                    $balance_result = false;
+                    if ($old_status !== 'paid' && $status === 'paid') {
+                        $balance_result = $this->update_user_balance_on_payout($payout_id, true);
+                    } elseif ($old_status !== 'declined' && $status === 'declined') {
+                        $balance_result = $this->update_user_balance_on_declined($payout_id, true);
+                    } elseif ($old_status !== 'failed' && $status === 'failed') {
+                        $balance_result = $this->update_user_balance_on_failed($payout_id, true);
+                    }
+
+                    if (!$balance_result) {
+                        throw new Exception(__('Ошибка при обновлении баланса.', 'cashback-plugin'));
+                    }
+                }
+
+            } catch (Exception $e) {
+                $wpdb->query('ROLLBACK');
+                wp_send_json_error(['message' => $e->getMessage()]);
                 return;
-            }
-
-            $update_data['status'] = $status;
-            $update_formats[] = '%s';
-
-            // Определяем, нужно ли обновление баланса
-            $needs_balance_update = ($old_status !== 'paid' && $status === 'paid')
-                || ($old_status !== 'declined' && $status === 'declined')
-                || ($old_status !== 'failed' && $status === 'failed');
-
-            if ($needs_balance_update) {
-                // Начинаем транзакцию, чтобы обновление баланса и статуса были атомарными
-                $wpdb->query('START TRANSACTION');
-                $in_transaction = true;
-
-                $balance_result = false;
-                if ($old_status !== 'paid' && $status === 'paid') {
-                    $balance_result = $this->update_user_balance_on_payout($payout_id, true);
-                } elseif ($old_status !== 'declined' && $status === 'declined') {
-                    $balance_result = $this->update_user_balance_on_declined($payout_id, true);
-                } elseif ($old_status !== 'failed' && $status === 'failed') {
-                    $balance_result = $this->update_user_balance_on_failed($payout_id, true);
-                }
-
-                if (!$balance_result) {
-                    $wpdb->query('ROLLBACK');
-                    wp_send_json_error(['message' => __('Ошибка при обновлении баланса.', 'cashback-plugin')]);
-                    return;
-                }
             }
         }
 
