@@ -290,6 +290,23 @@
             } else {
                 $style.remove();
             }
+            // Обновляем бейдж на вкладке «История тикетов»
+            updateTabBadge(count);
+        }
+
+        function updateTabBadge(count) {
+            var $badge = $('#support-tab-unread-badge');
+            if (count > 0) {
+                if ($badge.length) {
+                    $badge.text(parseInt(count));
+                } else {
+                    $('.cashback-support-tab[data-tab="history"]').append(
+                        '<span class="support-tab-badge" id="support-tab-unread-badge">' + parseInt(count) + '</span>'
+                    );
+                }
+            } else {
+                $badge.remove();
+            }
         }
 
         function escapeHtml(text) {

@@ -169,19 +169,20 @@ class Cashback_User_Support
         <h2>Поддержка</h2>
 
         <!-- Вкладки -->
+        <?php $unread_count = Cashback_Support_DB::get_unread_admin_replies_count(get_current_user_id()); ?>
         <div class="cashback-support-tabs">
-            <button type="button" class="cashback-support-tab active" data-tab="history">История тикетов</button>
-            <button type="button" class="cashback-support-tab" data-tab="new">Новый тикет</button>
-        </div>
-
-        <!-- Вкладка: История тикетов -->
-        <div class="cashback-support-tab-content active" id="tab-history">
-            <?php $this->render_tickets_list(); ?>
+            <button type="button" class="cashback-support-tab active" data-tab="new">Новый тикет</button>
+            <button type="button" class="cashback-support-tab" data-tab="history">История тикетов<?php if ($unread_count > 0): ?><span class="support-tab-badge" id="support-tab-unread-badge"><?php echo absint($unread_count); ?></span><?php endif; ?></button>
         </div>
 
         <!-- Вкладка: Новый тикет -->
-        <div class="cashback-support-tab-content" id="tab-new" style="display: none;">
+        <div class="cashback-support-tab-content active" id="tab-new">
             <?php $this->render_create_form(); ?>
+        </div>
+
+        <!-- Вкладка: История тикетов -->
+        <div class="cashback-support-tab-content" id="tab-history" style="display: none;">
+            <?php $this->render_tickets_list(); ?>
         </div>
 
         <!-- Область просмотра тикета -->
@@ -219,6 +220,21 @@ class Cashback_User_Support
                 border-color: #333;
                 font-weight: 600;
                 box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            }
+            .support-tab-badge {
+                display: inline-block;
+                min-width: 18px;
+                height: 18px;
+                line-height: 18px;
+                padding: 0 5px;
+                border-radius: 50%;
+                background: #f44336;
+                color: #fff !important;
+                font-size: 11px;
+                font-weight: bold;
+                text-align: center;
+                margin-left: 6px;
+                vertical-align: middle;
             }
             .cashback-support-tab-content {
                 padding: 10px 0;
