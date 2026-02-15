@@ -76,12 +76,12 @@ class Mariadb_Plugin
             ob_end_clean();
         } catch (Exception $e) {
             ob_end_clean();
-            wc_get_logger()->error('Mariadb Plugin Activation Error: ' . $e->getMessage());
+            if (function_exists('wc_get_logger')) {
+                wc_get_logger()->error('Mariadb Plugin Activation Error: ' . $e->getMessage());
+            }
+            error_log('Mariadb Plugin Activation Error: ' . $e->getMessage());
             wp_die('Ошибка активации плагина Mariadb: ' . esc_html($e->getMessage()));
         }
-
-        // Flush rewrite rules for new endpoints
-        flush_rewrite_rules();
     }
 
     /**

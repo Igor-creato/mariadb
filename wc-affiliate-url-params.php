@@ -354,7 +354,7 @@ class WC_Affiliate_URL_Params
                     'Вы не авторизованы, при переходе покупка не будет учтена сервисом. Продолжить?',
                     'wc-affiliate-url-params'
                 ),
-                'loginUrl' => home_url('/?page_id=13&action=register'),
+                'loginUrl' => add_query_arg('action', 'register', get_permalink(wc_get_page_id('myaccount'))),
                 'nonce' => wp_create_nonce('wc_affiliate_url_params')
             ]);
 

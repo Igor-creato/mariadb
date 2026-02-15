@@ -94,7 +94,11 @@ class CashbackWithdrawal
      */
     private function insert_after_helper($items, $new_items, $after)
     {
-        $position = array_search($after, array_keys($items)) + 1;
+        $position = array_search($after, array_keys($items), true);
+        if ($position === false) {
+            return $items + $new_items;
+        }
+        $position++;
         $array = array_slice($items, 0, $position, true);
         $array += $new_items;
         $array += array_slice($items, $position, count($items) - $position, true);
@@ -605,7 +609,7 @@ class CashbackWithdrawal
         // Устанавливаем блокировку на 30 секунд
         set_transient($transient_key, true, 30);
 
-        $withdrawal_amount = floatval($_POST['withdrawal_amount'] ?? 0);
+        $withdrawal_amount = floatval(sanitize_text_field(wp_unslash($_POST['withdrawal_amount'] ?? '0')));
 
         // === 3. Check if payout method and account are filled ===
         $payout_method = $this->get_payout_method($user_id);

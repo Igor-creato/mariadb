@@ -74,6 +74,7 @@ class Cashback_Payout_Methods_Admin
                     <p>Здесь будет отображаться статистика по кэшбэку</p>
                 </div>
             </div>
+        </div>
         <?php
     }
 

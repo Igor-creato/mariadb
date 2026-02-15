@@ -121,12 +121,51 @@ class HistoryPayout
 
     private function render_pagination($current_page, $total_pages)
     {
+        if ($total_pages <= 1) {
+            return;
+        }
+
+        $range = 2; // соседние страницы вокруг текущей
+        $edge = 2;  // крайние страницы с каждой стороны
+
+        // Собираем номера страниц для отображения
+        $pages = [];
+        for ($i = 1; $i <= min($edge, $total_pages); $i++) {
+            $pages[] = $i;
+        }
+        for ($i = max(1, $current_page - $range); $i <= min($total_pages, $current_page + $range); $i++) {
+            $pages[] = $i;
+        }
+        for ($i = max(1, $total_pages - $edge + 1); $i <= $total_pages; $i++) {
+            $pages[] = $i;
+        }
+
+        $pages = array_unique($pages);
+        sort($pages);
+
         echo '<nav class="woocommerce-pagination">';
         echo '<ul class="page-numbers">';
-        for ($i = 1; $i <= $total_pages; $i++) {
-            $class = ($i == $current_page) ? 'current' : '';
-            echo '<li><a href="#" class="page-numbers ' . esc_attr($class) . '" data-page="' . esc_attr($i) . '">' . esc_html($i) . '</a></li>';
+
+        // Кнопка «Назад»
+        if ($current_page > 1) {
+            echo '<li><a href="#" class="page-numbers prev" data-page="' . esc_attr($current_page - 1) . '">&lsaquo;</a></li>';
         }
+
+        $prev = 0;
+        foreach ($pages as $page) {
+            if ($prev && $page - $prev > 1) {
+                echo '<li><span class="page-numbers dots">&hellip;</span></li>';
+            }
+            $class = ($page == $current_page) ? 'current' : '';
+            echo '<li><a href="#" class="page-numbers ' . esc_attr($class) . '" data-page="' . esc_attr($page) . '">' . esc_html($page) . '</a></li>';
+            $prev = $page;
+        }
+
+        // Кнопка «Вперёд»
+        if ($current_page < $total_pages) {
+            echo '<li><a href="#" class="page-numbers next" data-page="' . esc_attr($current_page + 1) . '">&rsaquo;</a></li>';
+        }
+
         echo '</ul>';
         echo '</nav>';
     }
