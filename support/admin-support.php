@@ -187,6 +187,7 @@ class Cashback_Support_Admin
         // Фильтры
         $filter_status = sanitize_text_field(wp_unslash($_GET['filter_status'] ?? ''));
         $filter_priority = sanitize_text_field(wp_unslash($_GET['filter_priority'] ?? ''));
+        $filter_unread = sanitize_text_field(wp_unslash($_GET['filter_unread'] ?? ''));
 
         // Пагинация
         $current_page = max(1, absint($_GET['paged'] ?? 1));
@@ -196,6 +197,7 @@ class Cashback_Support_Admin
         // Построение WHERE
         $where_conditions = [];
         $where_params = [];
+        $need_unread_join = false;
 
         if (!empty($filter_status) && in_array($filter_status, ['open', 'answered', 'closed'], true)) {
             $where_conditions[] = 't.status = %s';
@@ -205,6 +207,10 @@ class Cashback_Support_Admin
         if (!empty($filter_priority) && in_array($filter_priority, ['urgent', 'normal', 'not_urgent'], true)) {
             $where_conditions[] = 't.priority = %s';
             $where_params[] = $filter_priority;
+        }
+
+        if ($filter_unread === '1') {
+            $where_conditions[] = 'EXISTS (SELECT 1 FROM `' . $this->messages_table . '` m WHERE m.ticket_id = t.id AND m.is_admin = 0 AND m.is_read = 0)';
         }
 
         $where_clause = '';
@@ -286,6 +292,10 @@ class Cashback_Support_Admin
                         <option value="normal" <?php selected($filter_priority, 'normal'); ?>>Обычный</option>
                         <option value="not_urgent" <?php selected($filter_priority, 'not_urgent'); ?>>Не срочный</option>
                     </select>
+                    <select name="filter_unread">
+                        <option value="">Все сообщения</option>
+                        <option value="1" <?php selected($filter_unread, '1'); ?>>Только непрочитанные</option>
+                    </select>
                     <button type="submit" class="button action">Фильтровать</button>
                     <a href="<?php echo esc_url(admin_url('admin.php?page=cashback-support')); ?>" class="button action">Сбросить</a>
                 </div>
@@ -366,6 +376,7 @@ class Cashback_Support_Admin
                 'add_args'  => array_filter([
                     'filter_status' => $filter_status,
                     'filter_priority' => $filter_priority,
+                    'filter_unread' => $filter_unread,
                 ]),
                 'type'      => 'plain',
                 'prev_text' => '&lsaquo; Предыдущая',
