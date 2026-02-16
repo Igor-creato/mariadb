@@ -55,3 +55,139 @@
     display: block;
     margin-top: 2px;
 }
+
+/* === Стили для детальной страницы заявки на выплату === */
+
+.payout-detail-wrap #poststuff {
+    padding-top: 10px;
+}
+
+.payout-detail-wrap #post-body.columns-2 {
+    margin-right: 320px;
+}
+
+.payout-detail-wrap #postbox-container-1 {
+    float: right;
+    margin-right: -320px;
+    width: 300px;
+}
+
+.payout-detail-wrap .postbox {
+    margin-bottom: 20px;
+}
+
+.payout-detail-wrap .postbox .hndle {
+    cursor: default;
+}
+
+/* Таблица данных заявки */
+.payout-detail-table th {
+    width: 180px;
+    font-weight: 600;
+    padding: 10px 10px 10px 0;
+    vertical-align: middle;
+}
+
+.payout-detail-table td {
+    padding: 10px 0;
+    vertical-align: middle;
+}
+
+.payout-detail-table .detail-value {
+    margin-right: 6px;
+}
+
+.payout-detail-table .payout-amount {
+    font-size: 1.2em;
+    color: #1d2327;
+}
+
+/* Кнопка копирования */
+.payout-detail-table .copy-btn,
+.payout-detail-form .copy-btn {
+    vertical-align: middle;
+    min-width: 30px;
+    padding: 0 6px;
+    line-height: 24px;
+    height: 26px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.copy-btn.copied {
+    background-color: #00a32a !important;
+    border-color: #00a32a !important;
+    color: #fff !important;
+}
+
+/* Кнопка расшифровки (глаз) на детальной странице */
+.decrypt-detail-btn {
+    vertical-align: middle;
+    cursor: pointer;
+}
+
+/* Расшифрованные данные */
+.payout-account-detail-cell .decrypted-account {
+    font-weight: 600;
+    color: #1d2327;
+}
+
+.decrypted-full-name {
+    font-weight: 600;
+    color: #1d2327;
+    margin-right: 6px;
+}
+
+/* Форма управления заявкой */
+.payout-detail-form p {
+    margin-bottom: 15px;
+}
+
+.payout-detail-form label {
+    display: block;
+    margin-bottom: 4px;
+}
+
+.payout-detail-form .widefat {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.payout-detail-form textarea.widefat {
+    resize: vertical;
+}
+
+#save-detail-btn {
+    margin-top: 5px;
+    font-size: 14px;
+    height: 36px;
+}
+
+/* Кнопка Просмотр в таблице */
+.view-btn {
+    margin-right: 4px !important;
+}
+
+/* Адаптация для узких экранов */
+@media screen and (max-width: 782px) {
+    .payout-detail-wrap #post-body.columns-2 {
+        margin-right: 0;
+    }
+
+    .payout-detail-wrap #postbox-container-1 {
+        float: none;
+        margin-right: 0;
+        width: 100%;
+    }
+
+    .payout-detail-table th {
+        width: auto;
+        display: block;
+        padding-bottom: 2px;
+    }
+
+    .payout-detail-table td {
+        display: block;
+        padding-top: 0;
+    }
+}

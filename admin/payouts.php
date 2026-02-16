@@ -81,24 +81,45 @@ class Cashback_Payouts_Admin
             'cashback-admin-payouts-css',
             plugins_url('../assets/css/admin.css', __FILE__),
             [],
-            '1.0.1'
+            '1.0.2'
         );
 
-        wp_enqueue_script(
-            'cashback-admin-payouts',
-            plugins_url('../assets/js/admin-payouts.js', __FILE__),
-            ['jquery'],
-            '1.0.3',
-            true
-        );
+        // Определяем, открыта ли детальная страница
+        $is_detail_view = isset($_GET['action']) && sanitize_text_field(wp_unslash($_GET['action'])) === 'view'
+            && !empty($_GET['payout_id']);
 
-        // Передаем данные в JavaScript
-        wp_localize_script('cashback-admin-payouts', 'cashbackPayoutsData', [
-            'updateNonce' => wp_create_nonce('update_payout_request_nonce'),
-            'getNonce' => wp_create_nonce('get_payout_request_nonce'),
-            'decryptNonce' => wp_create_nonce('decrypt_payout_details_nonce'),
-            'banks' => $this->get_all_banks(),
-        ]);
+        if ($is_detail_view) {
+            wp_enqueue_script(
+                'cashback-admin-payout-detail',
+                plugins_url('../assets/js/admin-payout-detail.js', __FILE__),
+                ['jquery'],
+                '1.0.0',
+                true
+            );
+
+            wp_localize_script('cashback-admin-payout-detail', 'cashbackPayoutDetailData', [
+                'updateNonce' => wp_create_nonce('update_payout_request_nonce'),
+                'decryptNonce' => wp_create_nonce('decrypt_payout_details_nonce'),
+                'payoutId' => absint($_GET['payout_id']),
+                'ajaxurl' => admin_url('admin-ajax.php'),
+                'listUrl' => admin_url('admin.php?page=cashback-payouts'),
+            ]);
+        } else {
+            wp_enqueue_script(
+                'cashback-admin-payouts',
+                plugins_url('../assets/js/admin-payouts.js', __FILE__),
+                ['jquery'],
+                '1.0.4',
+                true
+            );
+
+            wp_localize_script('cashback-admin-payouts', 'cashbackPayoutsData', [
+                'updateNonce' => wp_create_nonce('update_payout_request_nonce'),
+                'getNonce' => wp_create_nonce('get_payout_request_nonce'),
+                'decryptNonce' => wp_create_nonce('decrypt_payout_details_nonce'),
+                'banks' => $this->get_all_banks(),
+            ]);
+        }
     }
 
     /**
@@ -128,6 +149,14 @@ class Cashback_Payouts_Admin
         // Проверяем права доступа
         if (!current_user_can('manage_options')) {
             wp_die(__('У вас недостаточно прав для просмотра этой страницы.', 'cashback-plugin'));
+        }
+
+        // Роутинг: если action=view — показываем детальную страницу
+        $action = sanitize_text_field(wp_unslash($_GET['action'] ?? ''));
+        $view_payout_id = absint($_GET['payout_id'] ?? 0);
+        if ($action === 'view' && $view_payout_id > 0) {
+            $this->render_payout_detail_page($view_payout_id);
+            return;
         }
 
         global $wpdb;
@@ -367,6 +396,9 @@ class Cashback_Payouts_Admin
                                             <td><?php echo esc_html(date('Y-m-d H:i', strtotime($payout['created_at']))); ?></td>
                                             <td><?php echo esc_html(!empty($payout['updated_at']) ? date('Y-m-d H:i', strtotime($payout['updated_at'])) : ''); ?></td>
                                             <td>
+                                                <?php if ($payout['status'] === 'processing'): ?>
+                                                    <a href="<?php echo esc_url(admin_url('admin.php?page=cashback-payouts&action=view&payout_id=' . $payout['id'])); ?>" class="button button-primary view-btn"><?php echo esc_html__('Просмотр', 'cashback-plugin'); ?></a>
+                                                <?php endif; ?>
                                                 <button class="button button-secondary edit-btn"><?php echo esc_html__('Редактировать', 'cashback-plugin'); ?></button>
                                                 <button class="button button-primary save-btn" style="display:none;"><?php echo esc_html__('Сохранить', 'cashback-plugin'); ?></button>
                                                 <button class="button button-default cancel-btn" style="display:none;"><?php echo esc_html__('Отмена', 'cashback-plugin'); ?></button>
@@ -401,6 +433,271 @@ class Cashback_Payouts_Admin
             ?>
         </div>
 <?php
+    }
+
+    /**
+     * Отображение детальной страницы заявки на выплату
+     *
+     * @param int $payout_id ID заявки
+     * @return void
+     */
+    private function render_payout_detail_page(int $payout_id): void
+    {
+        global $wpdb;
+
+        // Получаем данные заявки
+        $payout = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT id, user_id, total_amount, payout_method, payout_account, masked_details,
+                        encrypted_details, provider, provider_payout_id, attempts, fail_reason,
+                        status, created_at, updated_at
+                 FROM {$this->table_name}
+                 WHERE id = %d",
+                $payout_id
+            ),
+            ARRAY_A
+        );
+
+        if (!$payout) {
+            echo '<div class="wrap"><div class="notice notice-error"><p>' .
+                esc_html__('Заявка на выплату не найдена.', 'cashback-plugin') .
+                '</p></div></div>';
+            return;
+        }
+
+        // Получаем данные пользователя
+        $user = get_userdata((int) $payout['user_id']);
+        $user_login = $user ? $user->user_login : __('Неизвестно', 'cashback-plugin');
+        $user_email = $user ? $user->user_email : '';
+        $user_display_name = $user ? $user->display_name : '';
+
+        // Получаем информацию о платежной системе и банке
+        $payout_method_info = $this->get_payout_method_info_by_slug($payout['payout_method'] ?? '');
+        $bank_info = $this->get_bank_info_by_code($payout['provider'] ?? '');
+
+        // Маскированный номер счета
+        $masked_account = $this->get_display_account($payout);
+
+        // Есть ли зашифрованные данные
+        $has_encrypted = !empty($payout['encrypted_details']) || !empty($payout['payout_account']);
+
+        // Допустимые переходы статусов
+        $allowed_transitions = [
+            'waiting'     => ['processing', 'paid', 'failed', 'declined', 'needs_retry'],
+            'processing'  => ['paid', 'failed', 'declined', 'needs_retry'],
+            'needs_retry' => ['processing', 'paid', 'failed', 'declined'],
+            'paid'        => [],
+            'failed'      => [],
+            'declined'    => [],
+        ];
+        $current_status = $payout['status'];
+        $available_statuses = $allowed_transitions[$current_status] ?? [];
+
+        // Аудит: просмотр детальной страницы
+        if (class_exists('Cashback_Encryption')) {
+            Cashback_Encryption::write_audit_log(
+                'payout_detail_viewed',
+                get_current_user_id(),
+                'payout_request',
+                $payout_id,
+                ['target_user_id' => (int) $payout['user_id']]
+            );
+        }
+
+        $back_url = admin_url('admin.php?page=cashback-payouts');
+        ?>
+        <div class="wrap payout-detail-wrap">
+            <h1 class="wp-heading-inline">
+                <?php echo esc_html(sprintf(__('Заявка на выплату #%d', 'cashback-plugin'), $payout_id)); ?>
+            </h1>
+            <a href="<?php echo esc_url($back_url); ?>" class="page-title-action">&larr; <?php echo esc_html__('Назад к списку', 'cashback-plugin'); ?></a>
+            <hr class="wp-header-end">
+
+            <div id="payout-detail-notices"></div>
+
+            <div id="poststuff">
+                <div id="post-body" class="metabox-holder columns-2">
+
+                    <!-- Левая колонка: информация -->
+                    <div id="post-body-content">
+
+                        <!-- Информация о пользователе -->
+                        <div class="postbox">
+                            <h2 class="hndle"><span><?php echo esc_html__('Информация о пользователе', 'cashback-plugin'); ?></span></h2>
+                            <div class="inside">
+                                <table class="form-table payout-detail-table">
+                                    <tr>
+                                        <th><?php echo esc_html__('ID пользователя', 'cashback-plugin'); ?></th>
+                                        <td>
+                                            <span class="detail-value" data-copy-value="<?php echo esc_attr($payout['user_id']); ?>"><?php echo esc_html($payout['user_id']); ?></span>
+                                            <button type="button" class="button button-small copy-btn" data-copy="<?php echo esc_attr($payout['user_id']); ?>" title="<?php echo esc_attr__('Скопировать', 'cashback-plugin'); ?>">&#128203;</button>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <th><?php echo esc_html__('Логин', 'cashback-plugin'); ?></th>
+                                        <td>
+                                            <span class="detail-value"><?php echo esc_html($user_login); ?></span>
+                                            <button type="button" class="button button-small copy-btn" data-copy="<?php echo esc_attr($user_login); ?>" title="<?php echo esc_attr__('Скопировать', 'cashback-plugin'); ?>">&#128203;</button>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <th><?php echo esc_html__('Email', 'cashback-plugin'); ?></th>
+                                        <td>
+                                            <span class="detail-value"><?php echo esc_html($user_email); ?></span>
+                                            <button type="button" class="button button-small copy-btn" data-copy="<?php echo esc_attr($user_email); ?>" title="<?php echo esc_attr__('Скопировать', 'cashback-plugin'); ?>">&#128203;</button>
+                                        </td>
+                                    </tr>
+                                    <?php if (!empty($user_display_name) && $user_display_name !== $user_login): ?>
+                                    <tr>
+                                        <th><?php echo esc_html__('Отображаемое имя', 'cashback-plugin'); ?></th>
+                                        <td>
+                                            <span class="detail-value"><?php echo esc_html($user_display_name); ?></span>
+                                            <button type="button" class="button button-small copy-btn" data-copy="<?php echo esc_attr($user_display_name); ?>" title="<?php echo esc_attr__('Скопировать', 'cashback-plugin'); ?>">&#128203;</button>
+                                        </td>
+                                    </tr>
+                                    <?php endif; ?>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- Данные заявки -->
+                        <div class="postbox">
+                            <h2 class="hndle"><span><?php echo esc_html__('Данные заявки', 'cashback-plugin'); ?></span></h2>
+                            <div class="inside">
+                                <table class="form-table payout-detail-table">
+                                    <tr>
+                                        <th><?php echo esc_html__('Сумма выплаты', 'cashback-plugin'); ?></th>
+                                        <td>
+                                            <strong class="detail-value payout-amount"><?php echo esc_html(number_format((float) $payout['total_amount'], 2, '.', ' ')); ?> &#8381;</strong>
+                                            <button type="button" class="button button-small copy-btn" data-copy="<?php echo esc_attr($payout['total_amount']); ?>" title="<?php echo esc_attr__('Скопировать', 'cashback-plugin'); ?>">&#128203;</button>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <th><?php echo esc_html__('Платежная система', 'cashback-plugin'); ?></th>
+                                        <td>
+                                            <span class="detail-value"><?php echo esc_html($payout_method_info['name']); ?></span>
+                                            <?php if (!$payout_method_info['is_active']): ?>
+                                                <span class="cashback-inactive-badge"><?php echo esc_html__('(неактивна)', 'cashback-plugin'); ?></span>
+                                            <?php endif; ?>
+                                            <button type="button" class="button button-small copy-btn" data-copy="<?php echo esc_attr($payout_method_info['name']); ?>" title="<?php echo esc_attr__('Скопировать', 'cashback-plugin'); ?>">&#128203;</button>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <th><?php echo esc_html__('Банк', 'cashback-plugin'); ?></th>
+                                        <td>
+                                            <span class="detail-value"><?php echo esc_html($bank_info['name']); ?></span>
+                                            <?php if (!$bank_info['is_active'] && !empty($bank_info['name'])): ?>
+                                                <span class="cashback-inactive-badge"><?php echo esc_html__('(неактивен)', 'cashback-plugin'); ?></span>
+                                            <?php endif; ?>
+                                            <?php if (!empty($bank_info['name'])): ?>
+                                                <button type="button" class="button button-small copy-btn" data-copy="<?php echo esc_attr($bank_info['name']); ?>" title="<?php echo esc_attr__('Скопировать', 'cashback-plugin'); ?>">&#128203;</button>
+                                            <?php endif; ?>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <th><?php echo esc_html__('Номер счета / телефона', 'cashback-plugin'); ?></th>
+                                        <td class="payout-account-detail-cell" data-payout-id="<?php echo esc_attr($payout_id); ?>">
+                                            <span class="masked-account"><?php echo esc_html($masked_account); ?></span>
+                                            <span class="decrypted-account" style="display:none;"></span>
+                                            <span class="decrypted-account-copy-btn" style="display:none;">
+                                                <button type="button" class="button button-small copy-btn" data-copy="" title="<?php echo esc_attr__('Скопировать', 'cashback-plugin'); ?>">&#128203;</button>
+                                            </span>
+                                            <?php if ($has_encrypted && $payout['status'] === 'processing'): ?>
+                                                <button type="button" class="button button-small decrypt-detail-btn" title="<?php echo esc_attr__('Показать реквизиты', 'cashback-plugin'); ?>">&#128065;</button>
+                                            <?php endif; ?>
+                                        </td>
+                                    </tr>
+                                    <tr class="full-name-row" style="display:none;">
+                                        <th><?php echo esc_html__('ФИО получателя', 'cashback-plugin'); ?></th>
+                                        <td>
+                                            <span class="decrypted-full-name"></span>
+                                            <button type="button" class="button button-small copy-btn full-name-copy-btn" data-copy="" title="<?php echo esc_attr__('Скопировать', 'cashback-plugin'); ?>" style="display:none;">&#128203;</button>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <th><?php echo esc_html__('Текущий статус', 'cashback-plugin'); ?></th>
+                                        <td>
+                                            <span class="detail-status-label" title="<?php echo esc_attr($this->get_admin_status_description($current_status)); ?>">
+                                                <strong><?php echo esc_html($this->get_admin_status_label($current_status)); ?></strong>
+                                            </span>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <th><?php echo esc_html__('Дата заявки', 'cashback-plugin'); ?></th>
+                                        <td><?php echo esc_html(date('d.m.Y H:i', strtotime($payout['created_at']))); ?></td>
+                                    </tr>
+                                    <?php if (!empty($payout['updated_at'])): ?>
+                                    <tr>
+                                        <th><?php echo esc_html__('Дата обновления', 'cashback-plugin'); ?></th>
+                                        <td><?php echo esc_html(date('d.m.Y H:i', strtotime($payout['updated_at']))); ?></td>
+                                    </tr>
+                                    <?php endif; ?>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Правая колонка: форма редактирования -->
+                    <div id="postbox-container-1" class="postbox-container">
+                        <div class="postbox">
+                            <h2 class="hndle"><span><?php echo esc_html__('Управление заявкой', 'cashback-plugin'); ?></span></h2>
+                            <div class="inside">
+                                <div class="payout-detail-form">
+                                    <?php if (!empty($available_statuses)): ?>
+                                    <p>
+                                        <label for="detail-status"><strong><?php echo esc_html__('Изменить статус', 'cashback-plugin'); ?></strong></label><br>
+                                        <select id="detail-status" class="widefat">
+                                            <option value="<?php echo esc_attr($current_status); ?>" selected>
+                                                <?php echo esc_html($this->get_admin_status_label($current_status)); ?> (<?php echo esc_html__('текущий', 'cashback-plugin'); ?>)
+                                            </option>
+                                            <?php foreach ($available_statuses as $avail_status): ?>
+                                                <option value="<?php echo esc_attr($avail_status); ?>">
+                                                    <?php echo esc_html($this->get_admin_status_label($avail_status)); ?>
+                                                </option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </p>
+                                    <?php else: ?>
+                                    <p>
+                                        <label><strong><?php echo esc_html__('Статус', 'cashback-plugin'); ?></strong></label><br>
+                                        <em><?php echo esc_html($this->get_admin_status_label($current_status)); ?> &mdash; <?php echo esc_html__('финальный статус, изменение невозможно', 'cashback-plugin'); ?></em>
+                                    </p>
+                                    <?php endif; ?>
+
+                                    <p>
+                                        <label for="detail-provider-payout-id"><strong><?php echo esc_html__('ID Транзакции', 'cashback-plugin'); ?></strong></label><br>
+                                        <input type="text" id="detail-provider-payout-id" class="widefat" value="<?php echo esc_attr($payout['provider_payout_id'] ?? ''); ?>">
+                                    </p>
+
+                                    <p>
+                                        <label for="detail-attempts"><strong><?php echo esc_html__('Количество попыток', 'cashback-plugin'); ?></strong></label><br>
+                                        <input type="number" id="detail-attempts" class="widefat" min="0" value="<?php echo esc_attr($payout['attempts']); ?>">
+                                    </p>
+
+                                    <p>
+                                        <label for="detail-fail-reason"><strong><?php echo esc_html__('Описание ошибки', 'cashback-plugin'); ?></strong></label><br>
+                                        <textarea id="detail-fail-reason" class="widefat" rows="4"><?php echo esc_textarea($payout['fail_reason'] ?? ''); ?></textarea>
+                                    </p>
+
+                                    <p>
+                                        <button type="button" id="save-detail-btn" class="button button-primary button-large widefat"
+                                                data-payout-id="<?php echo esc_attr($payout_id); ?>"
+                                                data-original-status="<?php echo esc_attr($current_status); ?>"
+                                                data-original-provider-payout-id="<?php echo esc_attr($payout['provider_payout_id'] ?? ''); ?>"
+                                                data-original-attempts="<?php echo esc_attr($payout['attempts']); ?>"
+                                                data-original-fail-reason="<?php echo esc_attr($payout['fail_reason'] ?? ''); ?>">
+                                            <?php echo esc_html__('Сохранить изменения', 'cashback-plugin'); ?>
+                                        </button>
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+        <?php
     }
 
     /**
@@ -563,6 +860,28 @@ class Cashback_Payouts_Admin
         // Фиксируем транзакцию, если она была начата
         if ($in_transaction) {
             $wpdb->query('COMMIT');
+        }
+
+        // Аудит-лог: записываем все изменения
+        if (class_exists('Cashback_Encryption')) {
+            $audit_details = ['changed_fields' => array_values(array_diff(array_keys($update_data), ['updated_at']))];
+            if (isset($update_data['status'])) {
+                $audit_details['old_status'] = $old_status ?? null;
+                $audit_details['new_status'] = $update_data['status'];
+            }
+            if (isset($update_data['provider_payout_id'])) {
+                $audit_details['provider_payout_id'] = $update_data['provider_payout_id'];
+            }
+            if (isset($update_data['attempts'])) {
+                $audit_details['attempts'] = $update_data['attempts'];
+            }
+            Cashback_Encryption::write_audit_log(
+                'payout_request_updated',
+                get_current_user_id(),
+                'payout_request',
+                $payout_id,
+                $audit_details
+            );
         }
 
         // Получаем обновленные данные из базы

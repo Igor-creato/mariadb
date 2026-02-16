@@ -360,6 +360,9 @@
     // Обновляем кнопку расшифровки в зависимости от статуса
     updateDecryptButton(row, payoutData);
 
+    // Обновляем кнопку "Просмотр" в зависимости от статуса
+    updateViewButton(row, payoutData);
+
     row.find('.edit-field').css('min-width', '');
   }
 
@@ -387,6 +390,28 @@
       payoutAccountCell.append(decryptBtn);
     } else if (!shouldShowButton && existingBtn.length > 0) {
       // Удаляем кнопку, если она не должна отображаться
+      existingBtn.remove();
+    }
+  }
+
+  /**
+   * Обновление кнопки "Просмотр"
+   *
+   * @param {jQuery} row - Строка таблицы
+   * @param {Object} payoutData - Данные выплаты
+   */
+  function updateViewButton(row, payoutData) {
+    const existingBtn = row.find('.view-btn');
+    const shouldShow = payoutData.status === 'processing';
+
+    if (shouldShow && existingBtn.length === 0) {
+      const payoutId = row.data('payout-id');
+      const viewBtn = $('<a>')
+        .addClass('button button-primary view-btn')
+        .attr('href', 'admin.php?page=cashback-payouts&action=view&payout_id=' + payoutId)
+        .text('Просмотр');
+      row.find('.edit-btn').before(viewBtn).before(' ');
+    } else if (!shouldShow && existingBtn.length > 0) {
       existingBtn.remove();
     }
   }
