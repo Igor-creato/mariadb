@@ -49,6 +49,7 @@ class Cashback_User_Support
         add_action('wp_ajax_support_user_reply', [$this, 'handle_user_reply']);
         add_action('wp_ajax_support_user_close_ticket', [$this, 'handle_close_ticket']);
         add_action('wp_ajax_support_load_ticket', [$this, 'handle_load_ticket']);
+        add_action('wp_ajax_support_download_file', [$this, 'handle_download_file']);
     }
 
     /**
@@ -119,6 +120,11 @@ class Cashback_User_Support
             'reply_nonce' => wp_create_nonce('support_user_reply_nonce'),
             'close_nonce' => wp_create_nonce('support_close_ticket_nonce'),
             'load_nonce' => wp_create_nonce('support_load_ticket_nonce'),
+            'download_nonce' => wp_create_nonce('support_download_file_nonce'),
+            'attachments_enabled' => Cashback_Support_DB::is_attachments_enabled() ? 1 : 0,
+            'max_file_size_kb' => Cashback_Support_DB::get_max_file_size(),
+            'max_files_per_message' => Cashback_Support_DB::get_max_files_per_message(),
+            'allowed_extensions' => implode(',', Cashback_Support_DB::get_allowed_extensions()),
         ]);
     }
 
@@ -275,7 +281,7 @@ class Cashback_User_Support
         ?>
         <div id="support-create-alert" style="display: none;"></div>
 
-        <form id="support-create-form" novalidate>
+        <form id="support-create-form" novalidate enctype="multipart/form-data">
             <div class="support-form-group">
                 <label for="support-subject">Тема</label>
                 <input type="text" id="support-subject" name="subject" maxlength="255" placeholder="Опишите тему обращения">
@@ -293,6 +299,19 @@ class Cashback_User_Support
                 <label for="support-message">Сообщение</label>
                 <textarea id="support-message" name="message" placeholder="Опишите вашу проблему или вопрос подробно..."></textarea>
             </div>
+            <?php if (Cashback_Support_DB::is_attachments_enabled()): ?>
+            <div class="support-form-group">
+                <label for="support-files">Прикрепить файлы</label>
+                <input type="file" id="support-files" name="support_files[]" multiple
+                       accept="<?php echo esc_attr('.' . implode(',.', Cashback_Support_DB::get_allowed_extensions())); ?>">
+                <div class="support-files-info">
+                    Макс. <?php echo absint(Cashback_Support_DB::get_max_files_per_message()); ?> файлов,
+                    до <?php echo esc_html(number_format_i18n(Cashback_Support_DB::get_max_file_size())); ?> КБ каждый.
+                    Допустимые форматы: <?php echo esc_html(implode(', ', Cashback_Support_DB::get_allowed_extensions())); ?>
+                </div>
+                <div id="support-files-list" class="support-files-preview"></div>
+            </div>
+            <?php endif; ?>
             <button type="submit" class="support-btn support-btn-primary" id="support-submit-btn">Отправить</button>
         </form>
         <?php
@@ -397,6 +416,43 @@ class Cashback_User_Support
             $wpdb->query('ROLLBACK');
             wp_send_json_error(['message' => 'Ошибка при отправке, попробуйте еще раз']);
             return;
+        }
+
+        $message_id = (int) $wpdb->insert_id;
+
+        // Обработка вложений
+        if (Cashback_Support_DB::is_attachments_enabled() && !empty($_FILES['support_files']['name'][0])) {
+            $files_count = count($_FILES['support_files']['name']);
+            $max_files = Cashback_Support_DB::get_max_files_per_message();
+
+            if ($files_count > $max_files) {
+                $wpdb->query('ROLLBACK');
+                Cashback_Support_DB::delete_ticket_files($ticket_id);
+                wp_send_json_error(['message' => sprintf('Максимум %d файлов.', $max_files)]);
+                return;
+            }
+
+            for ($i = 0; $i < $files_count; $i++) {
+                if ($_FILES['support_files']['error'][$i] === UPLOAD_ERR_NO_FILE) {
+                    continue;
+                }
+
+                $single_file = [
+                    'name'     => $_FILES['support_files']['name'][$i],
+                    'type'     => $_FILES['support_files']['type'][$i],
+                    'tmp_name' => $_FILES['support_files']['tmp_name'][$i],
+                    'error'    => $_FILES['support_files']['error'][$i],
+                    'size'     => $_FILES['support_files']['size'][$i],
+                ];
+
+                $result = Cashback_Support_DB::handle_file_upload($single_file, $ticket_id, $message_id, $user_id);
+                if (is_string($result)) {
+                    $wpdb->query('ROLLBACK');
+                    Cashback_Support_DB::delete_ticket_files($ticket_id);
+                    wp_send_json_error(['message' => $result]);
+                    return;
+                }
+            }
         }
 
         $wpdb->query('COMMIT');
@@ -520,6 +576,37 @@ class Cashback_User_Support
                 throw new Exception('Ошибка при вставке сообщения');
             }
 
+            $message_id = (int) $wpdb->insert_id;
+
+            // Обработка вложений
+            if (Cashback_Support_DB::is_attachments_enabled() && !empty($_FILES['support_files']['name'][0])) {
+                $files_count = count($_FILES['support_files']['name']);
+                $max_files = Cashback_Support_DB::get_max_files_per_message();
+
+                if ($files_count > $max_files) {
+                    throw new Exception(sprintf('Максимум %d файлов.', $max_files));
+                }
+
+                for ($i = 0; $i < $files_count; $i++) {
+                    if ($_FILES['support_files']['error'][$i] === UPLOAD_ERR_NO_FILE) {
+                        continue;
+                    }
+
+                    $single_file = [
+                        'name'     => $_FILES['support_files']['name'][$i],
+                        'type'     => $_FILES['support_files']['type'][$i],
+                        'tmp_name' => $_FILES['support_files']['tmp_name'][$i],
+                        'error'    => $_FILES['support_files']['error'][$i],
+                        'size'     => $_FILES['support_files']['size'][$i],
+                    ];
+
+                    $result = Cashback_Support_DB::handle_file_upload($single_file, (int) $ticket_id, $message_id, $user_id);
+                    if (is_string($result)) {
+                        throw new Exception($result);
+                    }
+                }
+            }
+
             // Обновляем статус тикета на "open"
             $ticket_updated = $wpdb->update(
                 $this->tickets_table,
@@ -551,8 +638,12 @@ class Cashback_User_Support
 
         $user = wp_get_current_user();
 
+        // Получаем вложения для нового сообщения
+        $msg_attachments = Cashback_Support_DB::get_attachments_for_messages([$message_id]);
+        $attachments = $msg_attachments[$message_id] ?? [];
+
         wp_send_json_success([
-            'html' => $this->render_message_html($message, $user->user_login, false, current_time('mysql')),
+            'html' => $this->render_message_html($message, $user->user_login, false, current_time('mysql'), $attachments),
         ]);
     }
 
@@ -678,6 +769,12 @@ class Cashback_User_Support
 
         $is_closed = ($ticket->status === 'closed');
 
+        // Batch-загрузка вложений для всех сообщений
+        $message_ids = array_map(function ($m) {
+            return (int) $m->id;
+        }, $messages);
+        $attachments_map = Cashback_Support_DB::get_attachments_for_messages($message_ids);
+
         // Генерируем HTML
         $html = '';
 
@@ -697,11 +794,13 @@ class Cashback_User_Support
         $html .= '<div id="support-messages-list">';
         foreach ($messages as $msg) {
             $is_admin = (int) $msg->is_admin === 1;
+            $msg_attachments = $attachments_map[(int) $msg->id] ?? [];
             $html .= $this->render_message_html(
                 $msg->message,
                 $is_admin ? 'Администратор' : ($msg->user_login ?? 'Вы'),
                 $is_admin,
-                $msg->created_at
+                $msg->created_at,
+                $msg_attachments
             );
         }
         $html .= '</div>';
@@ -711,6 +810,13 @@ class Cashback_User_Support
             $html .= '<div class="support-ticket-actions">';
             $html .= '<div style="flex: 1;">';
             $html .= '<textarea id="support-reply-message" rows="3" style="width: 100%; padding: 8px; border: 1px solid #ddd;" placeholder="Введите ваш ответ..."></textarea>';
+            if (Cashback_Support_DB::is_attachments_enabled()) {
+                $html .= '<div style="margin-top: 8px;">';
+                $html .= '<input type="file" id="support-reply-files" name="support_files[]" multiple accept=".' . esc_attr(implode(',.', Cashback_Support_DB::get_allowed_extensions())) . '">';
+                $html .= '<div class="support-files-info">Макс. ' . absint(Cashback_Support_DB::get_max_files_per_message()) . ' файлов, до ' . esc_html(number_format_i18n(Cashback_Support_DB::get_max_file_size())) . ' КБ каждый</div>';
+                $html .= '<div id="support-reply-files-list" class="support-files-preview"></div>';
+                $html .= '</div>';
+            }
             $html .= '<div style="margin-top: 10px;">';
             $html .= '<button type="button" class="support-btn support-btn-primary" id="support-reply-btn" data-ticket-id="' . (int) $ticket_id . '">Ответить</button> ';
             $html .= '<button type="button" class="support-btn support-btn-danger" id="support-close-btn" data-ticket-id="' . (int) $ticket_id . '">Закрыть тикет</button>';
@@ -742,11 +848,37 @@ class Cashback_User_Support
 
     /**
      * Генерация HTML одного сообщения
+     *
+     * @param object[] $attachments
      */
-    private function render_message_html(string $message, string $sender, bool $is_admin, string $date): string
+    private function render_message_html(string $message, string $sender, bool $is_admin, string $date, array $attachments = []): string
     {
         $css_class = $is_admin ? 'support-message-admin' : 'support-message-user';
         $formatted_date = date_i18n('d.m.Y H:i', strtotime($date));
+
+        $attachments_html = '';
+        if (!empty($attachments)) {
+            $attachments_html .= '<div class="support-attachments">';
+            foreach ($attachments as $att) {
+                $download_url = add_query_arg([
+                    'action' => 'support_download_file',
+                    'nonce'  => wp_create_nonce('support_download_file_nonce'),
+                    'id'     => (int) $att->id,
+                ], admin_url('admin-ajax.php'));
+
+                $icon = self::get_file_icon($att->file_name);
+                $size = size_format($att->file_size);
+
+                $attachments_html .= sprintf(
+                    '<a href="%s" class="support-attachment-link" target="_blank">%s %s <span class="support-attachment-size">(%s)</span></a>',
+                    esc_url($download_url),
+                    $icon,
+                    esc_html($att->file_name),
+                    esc_html($size)
+                );
+            }
+            $attachments_html .= '</div>';
+        }
 
         return sprintf(
             '<div class="support-message %s">
@@ -755,12 +887,54 @@ class Cashback_User_Support
                     <span class="date">%s</span>
                 </div>
                 <div>%s</div>
+                %s
             </div>',
             esc_attr($css_class),
             esc_html($sender),
             esc_html($formatted_date),
-            nl2br(esc_html($message))
+            nl2br(esc_html($message)),
+            $attachments_html
         );
+    }
+
+    /**
+     * Иконка по типу файла
+     */
+    private static function get_file_icon(string $filename): string
+    {
+        $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+        $icons = [
+            'pdf' => '&#128196;',
+            'doc' => '&#128196;',
+            'docx' => '&#128196;',
+            'jpg' => '&#128247;',
+            'jpeg' => '&#128247;',
+            'png' => '&#128247;',
+            'gif' => '&#128247;',
+            'txt' => '&#128196;',
+        ];
+        return $icons[$ext] ?? '&#128206;';
+    }
+
+    /**
+     * Скачивание файла вложения (пользователь)
+     */
+    public function handle_download_file(): void
+    {
+        if (!check_ajax_referer('support_download_file_nonce', 'nonce', false)) {
+            wp_die('Неверный токен безопасности.', 'Ошибка', ['response' => 403]);
+        }
+
+        if (!is_user_logged_in()) {
+            wp_die('Требуется авторизация.', 'Ошибка', ['response' => 403]);
+        }
+
+        $attachment_id = absint($_GET['id'] ?? 0);
+        if (!$attachment_id) {
+            wp_die('Не указан файл.', 'Ошибка', ['response' => 400]);
+        }
+
+        Cashback_Support_DB::serve_file($attachment_id, get_current_user_id(), false);
     }
 
     /**

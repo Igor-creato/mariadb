@@ -257,3 +257,53 @@
     border-color: #f44336 !important;
     box-shadow: 0 0 0 1px #f44336 !important;
 }
+
+/* === Вложения файлов === */
+.support-files-info {
+    margin-top: 5px;
+    font-size: 0.85em;
+    color: #666;
+}
+.support-files-preview {
+    margin-top: 8px;
+}
+.support-file-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    font-size: 0.9em;
+}
+.support-file-name {
+    color: #333;
+}
+.support-file-size {
+    color: #888;
+    font-size: 0.85em;
+}
+.support-attachments {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px dashed #ddd;
+}
+.support-attachment-link {
+    display: inline-block;
+    margin-right: 12px;
+    margin-bottom: 4px;
+    padding: 3px 8px;
+    background: #f5f5f5;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    font-size: 0.85em;
+    text-decoration: none;
+    color: #333;
+    transition: background 0.2s;
+}
+.support-attachment-link:hover {
+    background: #e8e8e8;
+    color: #333;
+}
+.support-attachment-size {
+    color: #888;
+    font-size: 0.9em;
+}

@@ -27,6 +27,8 @@ class Cashback_Support_Admin
         add_action('wp_ajax_support_admin_reply', [$this, 'handle_admin_reply']);
         add_action('wp_ajax_support_change_status', [$this, 'handle_change_status']);
         add_action('wp_ajax_support_admin_unread_count', [$this, 'handle_get_unread_count']);
+        add_action('wp_ajax_support_save_attachment_settings', [$this, 'handle_save_attachment_settings']);
+        add_action('wp_ajax_support_admin_download_file', [$this, 'handle_admin_download_file']);
 
         add_action('admin_footer', [$this, 'render_badge_updater_script']);
     }
@@ -94,6 +96,8 @@ class Cashback_Support_Admin
 
         if ($action === 'view' && $ticket_id > 0) {
             $this->render_ticket_view($ticket_id);
+        } elseif ($action === 'settings') {
+            $this->render_settings_page();
         } else {
             $this->render_ticket_list();
         }
@@ -269,6 +273,9 @@ class Cashback_Support_Admin
                     data-nonce="<?php echo esc_attr($nonce); ?>">
                 Отключить модуль
             </button>
+            <a href="<?php echo esc_url(admin_url('admin.php?page=cashback-support&action=settings')); ?>" class="button" style="margin-left: 10px;">
+                Настройки вложений
+            </a>
         </p>
 
         <div class="notice notice-info" style="margin: 15px 0;">
@@ -460,6 +467,12 @@ class Cashback_Support_Admin
             $ticket_id
         ));
 
+        // Batch-загрузка вложений
+        $message_ids = array_map(function ($m) {
+            return (int) $m->id;
+        }, $messages);
+        $attachments_map = Cashback_Support_DB::get_attachments_for_messages($message_ids);
+
         $is_closed = ($ticket->status === 'closed');
         $reply_nonce = wp_create_nonce('support_admin_reply_nonce');
         $status_nonce = wp_create_nonce('support_change_status_nonce');
@@ -522,7 +535,10 @@ class Cashback_Support_Admin
         <!-- Лента сообщений -->
         <div id="support-messages" style="max-width: 800px;">
             <?php foreach ($messages as $msg): ?>
-                <?php echo $this->render_message_html($msg); ?>
+                <?php
+                $msg_attachments = $attachments_map[(int) $msg->id] ?? [];
+                echo $this->render_message_html($msg, $msg_attachments);
+                ?>
             <?php endforeach; ?>
         </div>
 
@@ -531,6 +547,12 @@ class Cashback_Support_Admin
         <div id="support-reply-section" style="max-width: 800px; margin-top: 20px;">
             <h3>Ответить</h3>
             <textarea id="support-admin-message" rows="5" class="large-text" placeholder="Введите ваш ответ..."></textarea>
+            <?php if (Cashback_Support_DB::is_attachments_enabled()): ?>
+            <div style="margin-top: 10px;">
+                <input type="file" id="support-admin-files" name="support_files[]" multiple>
+                <p class="description">Макс. <?php echo absint(Cashback_Support_DB::get_max_files_per_message()); ?> файлов, до <?php echo esc_html(number_format_i18n(Cashback_Support_DB::get_max_file_size())); ?> КБ каждый</p>
+            </div>
+            <?php endif; ?>
             <p>
                 <button type="button" class="button button-primary" id="support-send-reply">Отправить ответ</button>
                 <button type="button" class="button" id="support-close-ticket" style="margin-left: 10px; color: #a00;">Закрыть тикет</button>
@@ -566,26 +588,43 @@ class Cashback_Support_Admin
                 var btn = $(this);
                 btn.prop('disabled', true).text('Отправка...');
 
-                $.post(ajaxurl, {
-                    action: 'support_admin_reply',
-                    ticket_id: ticketId,
-                    message: message,
-                    nonce: '<?php echo esc_js($reply_nonce); ?>'
-                }, function(response) {
-                    if (response.success) {
-                        $('#support-messages').append(response.data.html);
-                        $('#support-admin-message').val('').css({'border-color': '', 'box-shadow': ''});
-                        var $statusBadge = $('.form-table .support-admin-badge.status-open, .form-table .support-admin-badge.status-answered, .form-table .support-admin-badge.status-closed');
-                        $statusBadge.removeClass('status-open status-closed').addClass('status-answered').text('Отвечен');
-                        showAdminNotice('success', 'Сообщение отправлено');
-                        if (typeof updateSupportBadge === 'function') updateSupportBadge();
-                    } else {
-                        showAdminNotice('error', response.data.message || 'Ошибка при отправке');
+                var fd = new FormData();
+                fd.append('action', 'support_admin_reply');
+                fd.append('ticket_id', ticketId);
+                fd.append('message', message);
+                fd.append('nonce', '<?php echo esc_js($reply_nonce); ?>');
+
+                var fileInput = document.getElementById('support-admin-files');
+                if (fileInput && fileInput.files.length) {
+                    for (var i = 0; i < fileInput.files.length; i++) {
+                        fd.append('support_files[]', fileInput.files[i]);
                     }
-                    btn.prop('disabled', false).text('Отправить ответ');
-                }).fail(function() {
-                    showAdminNotice('error', 'Ошибка сервера');
-                    btn.prop('disabled', false).text('Отправить ответ');
+                }
+
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: fd,
+                    processData: false,
+                    contentType: false,
+                    success: function(response) {
+                        if (response.success) {
+                            $('#support-messages').append(response.data.html);
+                            $('#support-admin-message').val('').css({'border-color': '', 'box-shadow': ''});
+                            if (fileInput) fileInput.value = '';
+                            var $statusBadge = $('.form-table .support-admin-badge.status-open, .form-table .support-admin-badge.status-answered, .form-table .support-admin-badge.status-closed');
+                            $statusBadge.removeClass('status-open status-closed').addClass('status-answered').text('Отвечен');
+                            showAdminNotice('success', 'Сообщение отправлено');
+                            if (typeof updateSupportBadge === 'function') updateSupportBadge();
+                        } else {
+                            showAdminNotice('error', response.data.message || 'Ошибка при отправке');
+                        }
+                        btn.prop('disabled', false).text('Отправить ответ');
+                    },
+                    error: function() {
+                        showAdminNotice('error', 'Ошибка сервера');
+                        btn.prop('disabled', false).text('Отправить ответ');
+                    }
                 });
             });
 
@@ -627,13 +666,35 @@ class Cashback_Support_Admin
 
     /**
      * Генерация HTML одного сообщения
+     *
+     * @param object[] $attachments
      */
-    private function render_message_html(object $msg): string
+    private function render_message_html(object $msg, array $attachments = []): string
     {
         $is_admin = (int) $msg->is_admin === 1;
         $bg_color = $is_admin ? '#e8f4f8' : '#f9f9f9';
         $sender = $is_admin ? 'Администратор' : esc_html($msg->user_login ?? 'Пользователь');
         $date = date_i18n('d.m.Y H:i', strtotime($msg->created_at));
+
+        $attachments_html = '';
+        if (!empty($attachments)) {
+            $attachments_html .= '<div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #e0e0e0;">';
+            foreach ($attachments as $att) {
+                $download_url = add_query_arg([
+                    'action' => 'support_admin_download_file',
+                    'nonce'  => wp_create_nonce('support_admin_download_file_nonce'),
+                    'id'     => (int) $att->id,
+                ], admin_url('admin-ajax.php'));
+                $size = size_format($att->file_size);
+                $attachments_html .= sprintf(
+                    '<div><a href="%s" target="_blank">&#128206; %s</a> <small>(%s)</small></div>',
+                    esc_url($download_url),
+                    esc_html($att->file_name),
+                    esc_html($size)
+                );
+            }
+            $attachments_html .= '</div>';
+        }
 
         return sprintf(
             '<div style="background: %s; border: 1px solid #ddd; border-left: 4px solid %s; padding: 12px 16px; margin-bottom: 10px;">
@@ -642,12 +703,14 @@ class Cashback_Support_Admin
                     <span style="color: #888; float: right;">%s</span>
                 </div>
                 <div>%s</div>
+                %s
             </div>',
             esc_attr($bg_color),
             $is_admin ? '#0073aa' : '#999',
             $sender,
             esc_html($date),
-            nl2br(esc_html($msg->message))
+            nl2br(esc_html($msg->message)),
+            $attachments_html
         );
     }
 
@@ -749,6 +812,38 @@ class Cashback_Support_Admin
             return;
         }
 
+        $message_id = (int) $wpdb->insert_id;
+
+        // Обработка вложений
+        if (Cashback_Support_DB::is_attachments_enabled() && !empty($_FILES['support_files']['name'][0])) {
+            $files_count = count($_FILES['support_files']['name']);
+            $max_files = Cashback_Support_DB::get_max_files_per_message();
+
+            if ($files_count > $max_files) {
+                wp_send_json_error(['message' => sprintf('Максимум %d файлов.', $max_files)]);
+                return;
+            }
+
+            for ($i = 0; $i < $files_count; $i++) {
+                if ($_FILES['support_files']['error'][$i] === UPLOAD_ERR_NO_FILE) {
+                    continue;
+                }
+
+                $single_file = [
+                    'name'     => $_FILES['support_files']['name'][$i],
+                    'type'     => $_FILES['support_files']['type'][$i],
+                    'tmp_name' => $_FILES['support_files']['tmp_name'][$i],
+                    'error'    => $_FILES['support_files']['error'][$i],
+                    'size'     => $_FILES['support_files']['size'][$i],
+                ];
+
+                $result = Cashback_Support_DB::handle_file_upload($single_file, $ticket_id, $message_id, get_current_user_id());
+                if (is_string($result)) {
+                    error_log('[Cashback Support] Admin file upload error: ' . $result);
+                }
+            }
+        }
+
         // Обновляем статус тикета
         $wpdb->update(
             $this->tickets_table,
@@ -772,7 +867,11 @@ class Cashback_Support_Admin
             'created_at' => current_time('mysql'),
         ];
 
-        wp_send_json_success(['html' => $this->render_message_html($msg)]);
+        // Получаем вложения для нового сообщения
+        $msg_attachments_map = Cashback_Support_DB::get_attachments_for_messages([$message_id]);
+        $msg_attachments = $msg_attachments_map[$message_id] ?? [];
+
+        wp_send_json_success(['html' => $this->render_message_html($msg, $msg_attachments)]);
     }
 
     /**
@@ -887,6 +986,137 @@ class Cashback_Support_Admin
                 });
             };
         })(jQuery);
+        </script>
+        <?php
+    }
+
+    /**
+     * Сохранение настроек вложений
+     */
+    public function handle_save_attachment_settings(): void
+    {
+        if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'support_save_attachment_settings_nonce')) {
+            wp_send_json_error(['message' => 'Неверный токен безопасности.']);
+            return;
+        }
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Недостаточно прав.']);
+            return;
+        }
+
+        Cashback_Support_DB::save_attachment_settings([
+            'enabled'               => absint($_POST['enabled'] ?? 0),
+            'max_file_size'         => absint($_POST['max_file_size'] ?? 5120),
+            'max_files_per_message' => absint($_POST['max_files_per_message'] ?? 3),
+            'allowed_extensions'    => sanitize_text_field(wp_unslash($_POST['allowed_extensions'] ?? '')),
+        ]);
+
+        wp_send_json_success();
+    }
+
+    /**
+     * Скачивание файла вложения (админ)
+     */
+    public function handle_admin_download_file(): void
+    {
+        if (!isset($_GET['nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_GET['nonce'])), 'support_admin_download_file_nonce')) {
+            wp_die('Неверный токен безопасности.', 'Ошибка', ['response' => 403]);
+        }
+
+        if (!current_user_can('manage_options')) {
+            wp_die('Недостаточно прав.', 'Ошибка', ['response' => 403]);
+        }
+
+        $attachment_id = absint($_GET['id'] ?? 0);
+        if (!$attachment_id) {
+            wp_die('Не указан файл.', 'Ошибка', ['response' => 400]);
+        }
+
+        Cashback_Support_DB::serve_file($attachment_id, get_current_user_id(), true);
+    }
+
+    /**
+     * Страница настроек вложений
+     */
+    private function render_settings_page(): void
+    {
+        $nonce = wp_create_nonce('support_save_attachment_settings_nonce');
+        $enabled = Cashback_Support_DB::is_attachments_enabled();
+        $max_size = Cashback_Support_DB::get_max_file_size();
+        $max_files = Cashback_Support_DB::get_max_files_per_message();
+        $extensions = implode(',', Cashback_Support_DB::get_allowed_extensions());
+
+        ?>
+        <h1 class="wp-heading-inline">
+            <a href="<?php echo esc_url(admin_url('admin.php?page=cashback-support')); ?>">&larr; Назад к тикетам</a>
+            &nbsp;|&nbsp; Настройки вложений
+        </h1>
+        <hr class="wp-header-end">
+
+        <?php $this->render_admin_notice_container(); ?>
+
+        <table class="form-table" id="attachment-settings-form">
+            <tr>
+                <th>Вложения включены</th>
+                <td>
+                    <label>
+                        <input type="checkbox" id="att-enabled" <?php checked($enabled); ?>>
+                        Разрешить прикреплять файлы к тикетам
+                    </label>
+                </td>
+            </tr>
+            <tr>
+                <th>Макс. размер файла (КБ)</th>
+                <td>
+                    <input type="number" id="att-max-size" value="<?php echo absint($max_size); ?>" min="1" max="51200" class="small-text">
+                    <p class="description">Текущий лимит PHP upload_max_filesize: <?php echo esc_html(ini_get('upload_max_filesize') ?: 'не определен'); ?></p>
+                </td>
+            </tr>
+            <tr>
+                <th>Макс. файлов на сообщение</th>
+                <td>
+                    <input type="number" id="att-max-files" value="<?php echo absint($max_files); ?>" min="1" max="10" class="small-text">
+                </td>
+            </tr>
+            <tr>
+                <th>Допустимые расширения</th>
+                <td>
+                    <input type="text" id="att-extensions" value="<?php echo esc_attr($extensions); ?>" class="regular-text">
+                    <p class="description">Через запятую, без точки. Пример: jpg,png,pdf,txt</p>
+                </td>
+            </tr>
+        </table>
+        <p>
+            <button type="button" class="button button-primary" id="save-attachment-settings">Сохранить настройки</button>
+        </p>
+
+        <script>
+        jQuery(document).ready(function($) {
+            $('#save-attachment-settings').on('click', function() {
+                var btn = $(this);
+                btn.prop('disabled', true).text('Сохранение...');
+
+                $.post(ajaxurl, {
+                    action: 'support_save_attachment_settings',
+                    nonce: '<?php echo esc_js($nonce); ?>',
+                    enabled: $('#att-enabled').is(':checked') ? 1 : 0,
+                    max_file_size: $('#att-max-size').val(),
+                    max_files_per_message: $('#att-max-files').val(),
+                    allowed_extensions: $('#att-extensions').val()
+                }, function(response) {
+                    if (response.success) {
+                        showAdminNotice('success', 'Настройки сохранены');
+                    } else {
+                        showAdminNotice('error', response.data.message || 'Ошибка сохранения');
+                    }
+                    btn.prop('disabled', false).text('Сохранить настройки');
+                }).fail(function() {
+                    showAdminNotice('error', 'Ошибка сервера');
+                    btn.prop('disabled', false).text('Сохранить настройки');
+                });
+            });
+        });
         </script>
         <?php
     }

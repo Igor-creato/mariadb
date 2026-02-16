@@ -19,6 +19,41 @@
             $('#support-ticket-detail').hide();
         });
 
+        // ========= Валидация файлов (client-side) =========
+        function validateFiles(fileInput, alertContainerId) {
+            if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+                return true;
+            }
+
+            var settings = cashback_support;
+            var files = fileInput.files;
+
+            if (files.length > parseInt(settings.max_files_per_message)) {
+                showAlert(alertContainerId, 'error', 'Максимум ' + settings.max_files_per_message + ' файлов');
+                return false;
+            }
+
+            var allowedExts = settings.allowed_extensions.split(',');
+            var maxSizeBytes = parseInt(settings.max_file_size_kb) * 1024;
+
+            for (var i = 0; i < files.length; i++) {
+                var f = files[i];
+                var ext = f.name.split('.').pop().toLowerCase();
+
+                if (allowedExts.indexOf(ext) === -1) {
+                    showAlert(alertContainerId, 'error', 'Файл с неразрешённым расширением, выберите другой');
+                    return false;
+                }
+
+                if (f.size > maxSizeBytes) {
+                    showAlert(alertContainerId, 'error', 'Файл большого размера, выберите другой');
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
         // ========= Создание тикета =========
         $('#support-create-form').on('submit', function(e) {
             e.preventDefault();
@@ -46,45 +81,67 @@
                 return;
             }
 
+            // Валидация файлов
+            var fileInput = document.getElementById('support-files');
+            if (!validateFiles(fileInput, 'support-create-alert')) {
+                return;
+            }
+
             var btn = $('#support-submit-btn');
             btn.prop('disabled', true).text('Отправка...');
 
-            $.post(cashback_support.ajax_url, {
-                action: 'support_create_ticket',
-                nonce: cashback_support.create_nonce,
-                subject: subject,
-                priority: priority,
-                message: message
-            }, function(response) {
-                if (response.success) {
-                    showAlert('support-create-alert', 'success', response.data.message);
-                    $('#support-create-form')[0].reset();
-                    // Через 2 секунды переключаемся на вкладку истории и добавляем тикет
-                    setTimeout(function() {
-                        $('.cashback-support-tab[data-tab="history"]').click();
-                        if (response.data.ticket_html) {
-                            var $history = $('#tab-history');
-                            // Убираем сообщение "У вас пока нет тикетов"
-                            $history.find('p').filter(function() {
-                                return $(this).text().indexOf('У вас пока нет тикетов') !== -1;
-                            }).remove();
-                            var $list = $('#support-tickets-list');
-                            if ($list.length) {
-                                $list.prepend(response.data.ticket_html);
-                            } else {
-                                $history.append('<div id="support-tickets-list">' + response.data.ticket_html + '</div><div id="support-pagination"></div>');
+            var fd = new FormData();
+            fd.append('action', 'support_create_ticket');
+            fd.append('nonce', cashback_support.create_nonce);
+            fd.append('subject', subject);
+            fd.append('priority', priority);
+            fd.append('message', message);
+
+            if (fileInput && fileInput.files.length > 0) {
+                for (var i = 0; i < fileInput.files.length; i++) {
+                    fd.append('support_files[]', fileInput.files[i]);
+                }
+            }
+
+            $.ajax({
+                url: cashback_support.ajax_url,
+                type: 'POST',
+                data: fd,
+                processData: false,
+                contentType: false,
+                success: function(response) {
+                    if (response.success) {
+                        showAlert('support-create-alert', 'success', response.data.message);
+                        $('#support-create-form')[0].reset();
+                        $('#support-files-list').empty();
+                        // Через 2 секунды переключаемся на вкладку истории и добавляем тикет
+                        setTimeout(function() {
+                            $('.cashback-support-tab[data-tab="history"]').click();
+                            if (response.data.ticket_html) {
+                                var $history = $('#tab-history');
+                                // Убираем сообщение "У вас пока нет тикетов"
+                                $history.find('p').filter(function() {
+                                    return $(this).text().indexOf('У вас пока нет тикетов') !== -1;
+                                }).remove();
+                                var $list = $('#support-tickets-list');
+                                if ($list.length) {
+                                    $list.prepend(response.data.ticket_html);
+                                } else {
+                                    $history.append('<div id="support-tickets-list">' + response.data.ticket_html + '</div><div id="support-pagination"></div>');
+                                }
+                                initPagination();
                             }
-                            initPagination();
-                        }
+                            btn.prop('disabled', false).text('Отправить');
+                        }, 2000);
+                    } else {
+                        showAlert('support-create-alert', 'error', response.data.message || 'Ошибка при отправке, попробуйте еще раз');
                         btn.prop('disabled', false).text('Отправить');
-                    }, 2000);
-                } else {
-                    showAlert('support-create-alert', 'error', response.data.message || 'Ошибка при отправке, попробуйте еще раз');
+                    }
+                },
+                error: function() {
+                    showAlert('support-create-alert', 'error', 'Ошибка при отправке, попробуйте еще раз');
                     btn.prop('disabled', false).text('Отправить');
                 }
-            }).fail(function() {
-                showAlert('support-create-alert', 'error', 'Ошибка при отправке, попробуйте еще раз');
-                btn.prop('disabled', false).text('Отправить');
             });
         });
 
@@ -117,26 +174,51 @@
                 return;
             }
 
+            // Валидация файлов
+            var fileInput = document.getElementById('support-reply-files');
+            if (!validateFiles(fileInput, 'support-detail-alert')) {
+                return;
+            }
+
             var btn = $(this);
             btn.prop('disabled', true).text('Отправка...');
 
-            $.post(cashback_support.ajax_url, {
-                action: 'support_user_reply',
-                nonce: cashback_support.reply_nonce,
-                ticket_id: ticketId,
-                message: message
-            }, function(response) {
-                if (response.success) {
-                    $('#support-messages-list').append(response.data.html);
-                    $('#support-reply-message').val('');
-                    showAlert('support-detail-alert', 'success', 'Сообщение отправлено');
-                } else {
-                    showAlert('support-detail-alert', 'error', response.data.message || 'Ошибка при отправке, попробуйте еще раз');
+            var fd = new FormData();
+            fd.append('action', 'support_user_reply');
+            fd.append('nonce', cashback_support.reply_nonce);
+            fd.append('ticket_id', ticketId);
+            fd.append('message', message);
+
+            if (fileInput && fileInput.files.length > 0) {
+                for (var i = 0; i < fileInput.files.length; i++) {
+                    fd.append('support_files[]', fileInput.files[i]);
                 }
-                btn.prop('disabled', false).text('Ответить');
-            }).fail(function() {
-                showAlert('support-detail-alert', 'error', 'Ошибка при отправке, попробуйте еще раз');
-                btn.prop('disabled', false).text('Ответить');
+            }
+
+            $.ajax({
+                url: cashback_support.ajax_url,
+                type: 'POST',
+                data: fd,
+                processData: false,
+                contentType: false,
+                success: function(response) {
+                    if (response.success) {
+                        $('#support-messages-list').append(response.data.html);
+                        $('#support-reply-message').val('');
+                        if (fileInput) {
+                            fileInput.value = '';
+                        }
+                        $('#support-reply-files-list').empty();
+                        showAlert('support-detail-alert', 'success', 'Сообщение отправлено');
+                    } else {
+                        showAlert('support-detail-alert', 'error', response.data.message || 'Ошибка при отправке, попробуйте еще раз');
+                    }
+                    btn.prop('disabled', false).text('Ответить');
+                },
+                error: function() {
+                    showAlert('support-detail-alert', 'error', 'Ошибка при отправке, попробуйте еще раз');
+                    btn.prop('disabled', false).text('Ответить');
+                }
             });
         });
 
@@ -172,6 +254,29 @@
                 btn.prop('disabled', false).text('Закрыть тикет');
             });
         });
+
+        // ========= Превью выбранных файлов =========
+        function initFilePreview(inputId, listId) {
+            $(document).on('change', '#' + inputId, function() {
+                var $list = $('#' + listId);
+                $list.empty();
+                var files = this.files;
+                for (var i = 0; i < files.length; i++) {
+                    var sizeKB = Math.round(files[i].size / 1024);
+                    $list.append(
+                        '<div class="support-file-item">' +
+                        '<span class="support-file-name">' + escapeHtml(files[i].name) + '</span> ' +
+                        '<span class="support-file-size">(' + sizeKB + ' КБ)</span>' +
+                        '</div>'
+                    );
+                }
+            });
+        }
+
+        if (parseInt(cashback_support.attachments_enabled)) {
+            initFilePreview('support-files', 'support-files-list');
+            initFilePreview('support-reply-files', 'support-reply-files-list');
+        }
 
         // ========= Пагинация истории тикетов =========
         var TICKETS_PER_PAGE = 10;

@@ -51,6 +51,7 @@ function cashback_plugin_uninstall(): void
         "{$prefix}cashback_user_profile",
         "{$prefix}cashback_payout_methods",
         "{$prefix}cashback_banks",
+        "{$prefix}cashback_support_attachments",
         "{$prefix}cashback_support_tickets",
         "{$prefix}cashback_support_messages",
         "{$prefix}cashback_audit_log",
@@ -88,6 +89,24 @@ function cashback_plugin_uninstall(): void
         $wpdb->query($wpdb->prepare("DROP EVENT IF EXISTS `%i`", $event));
     }
 
+    // Удаление файлов вложений поддержки
+    $upload_dir = wp_upload_dir();
+    $support_dir = $upload_dir['basedir'] . '/cashback-support';
+    if (is_dir($support_dir)) {
+        $iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($support_dir, RecursiveDirectoryIterator::SKIP_DOTS),
+            RecursiveIteratorIterator::CHILD_FIRST
+        );
+        foreach ($iterator as $file) {
+            if ($file->isDir()) {
+                @rmdir($file->getRealPath());
+            } else {
+                @unlink($file->getRealPath());
+            }
+        }
+        @rmdir($support_dir);
+    }
+
     // Drop tables (in reverse order to respect foreign keys)
     foreach (array_reverse($tables) as $table) {
         $wpdb->query($wpdb->prepare("DROP TABLE IF EXISTS `%i`", $table));
@@ -96,6 +115,10 @@ function cashback_plugin_uninstall(): void
     // Delete plugin options
     $options = [
         'cashback_support_module_enabled',
+        'cashback_support_attachments_enabled',
+        'cashback_support_max_file_size',
+        'cashback_support_max_files_per_message',
+        'cashback_support_allowed_extensions',
         'cashback_plugin_version',
         'cashback_plugin_db_version',
         'cashback_encryption_migrated',
