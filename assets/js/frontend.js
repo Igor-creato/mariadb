@@ -175,6 +175,15 @@
 
 // Frontend JavaScript for the cashback withdrawal functionality
 jQuery(document).ready(function ($) {
+  // Переключение вкладок
+  $(document).on('click', '.cashback-tab', function () {
+    $('.cashback-tab').removeClass('active cashback-tab--error');
+    $(this).addClass('active');
+    var target = $(this).data('tab');
+    $('.cashback-tab-content').removeClass('active');
+    $('#' + target).addClass('active');
+  });
+
   // Сброс подсветки ошибки при вводе суммы
   $('#withdrawal-amount').on('input', function () {
     $(this).removeClass('input--error');
@@ -257,6 +266,14 @@ jQuery(document).ready(function ($) {
             response.data.show_form;
 
           if (isFormError) {
+            // Подсвечиваем вкладку настроек красным
+            $('.cashback-tab[data-tab="tab-settings"]').addClass('cashback-tab--error');
+            // Переключаемся на вкладку настроек
+            $('.cashback-tab').removeClass('active');
+            $('.cashback-tab[data-tab="tab-settings"]').addClass('active');
+            $('.cashback-tab-content').removeClass('active');
+            $('#tab-settings').addClass('active');
+            // Показываем форму редактирования
             $('#payout_settings_display').hide();
             $('#payout_settings_form').removeClass('payout-settings-form-hidden').show();
           } else {
@@ -300,8 +317,10 @@ function updateBalanceDisplay() {
     },
     success: function (response) {
       if (response.success) {
-        // Обновляем отображение баланса на странице
+        // Обновляем отображение всех трёх балансов
         jQuery('#cashback-balance-amount').html(response.data.formatted_balance);
+        jQuery('#cashback-pending-amount').html(response.data.formatted_pending);
+        jQuery('#cashback-paid-amount').html(response.data.formatted_paid);
 
         // Обновляем максимальное значение для поля ввода
         jQuery('#withdrawal-amount').attr('max', response.data.balance);

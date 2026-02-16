@@ -125,6 +125,44 @@ class CashbackWithdrawal
     }
 
     /**
+     * Get user's pending balance
+     *
+     * @param int $user_id
+     * @return float
+     */
+    private function get_pending_balance(int $user_id): float
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'cashback_user_balance';
+        $balance = $wpdb->get_var($wpdb->prepare(
+            "SELECT pending_balance FROM {$table_name} WHERE user_id = %d",
+            $user_id
+        ));
+
+        return (float) ($balance ?: 0.0);
+    }
+
+    /**
+     * Get user's paid balance
+     *
+     * @param int $user_id
+     * @return float
+     */
+    private function get_paid_balance(int $user_id): float
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'cashback_user_balance';
+        $balance = $wpdb->get_var($wpdb->prepare(
+            "SELECT paid_balance FROM {$table_name} WHERE user_id = %d",
+            $user_id
+        ));
+
+        return (float) ($balance ?: 0.0);
+    }
+
+    /**
      * Get all active payout methods
      *
      * @return array
@@ -503,6 +541,8 @@ class CashbackWithdrawal
         }
 
         $balance = $this->get_available_balance($user_id);
+        $pending_balance = $this->get_pending_balance($user_id);
+        $paid_balance = $this->get_paid_balance($user_id);
         $min_payout_amount = $this->get_min_payout_amount($user_id);
 
         // Получаем информацию о способе вывода и номере счета
@@ -534,12 +574,58 @@ class CashbackWithdrawal
 
         echo '<div class="cashback-withdrawal-container">';
         echo '<h2>' . __('Вывод кэшбэка', 'cashback-plugin') . '</h2>';
-        echo '<div class="balance-display">';
-        echo '<p>' . __('Доступный баланс:', 'cashback-plugin') . ' <span id="cashback-balance-amount" class="balance-amount ' . ($balance > 0 ? 'balance-green' : 'balance-gray') . '">' . wc_price($balance) . '</span></p>';
+
+        // Навигация вкладок
+        echo '<div class="cashback-tabs">';
+        echo '<button type="button" class="cashback-tab active" data-tab="tab-withdrawal">' . __('Вывод кэшбэка', 'cashback-plugin') . '</button>';
+        echo '<button type="button" class="cashback-tab" data-tab="tab-settings">' . __('Настройки вывода', 'cashback-plugin') . '</button>';
         echo '</div>';
+
+        // === ВКЛАДКА 1: Вывод кэшбэка ===
+        echo '<div class="cashback-tab-content active" id="tab-withdrawal">';
+
+        // Три карточки баланса
+        echo '<div class="balance-info-grid">';
+
+        echo '<div class="balance-info-card">';
+        echo '<span class="balance-info-label">' . __('Доступный баланс', 'cashback-plugin') . '</span>';
+        echo '<span id="cashback-balance-amount" class="balance-info-value ' . ($balance > 0 ? 'balance-green' : 'balance-gray') . '">' . wc_price($balance) . '</span>';
+        echo '</div>';
+
+        echo '<div class="balance-info-card">';
+        echo '<span class="balance-info-label">' . __('В обработке', 'cashback-plugin') . '</span>';
+        echo '<span id="cashback-pending-amount" class="balance-info-value ' . ($pending_balance > 0 ? 'balance-pending' : 'balance-gray') . '">' . wc_price($pending_balance) . '</span>';
+        echo '</div>';
+
+        echo '<div class="balance-info-card">';
+        echo '<span class="balance-info-label">' . __('Заработано', 'cashback-plugin') . '</span>';
+        echo '<span id="cashback-paid-amount" class="balance-info-value ' . ($paid_balance > 0 ? 'balance-paid' : 'balance-gray') . '">' . wc_price($paid_balance) . '</span>';
+        echo '</div>';
+
+        echo '</div>'; // .balance-info-grid
+
         echo '<p>' . __('Минимальная сумма выплаты:', 'cashback-plugin') . ' <span class="min-payout-amount">' . wc_price($min_payout_amount) . '</span></p>';
 
-        // Отображаем настройки вывода
+        // Форма вывода кэшбэка
+        echo '<div class="cashback-withdrawal-form">';
+        echo '<form id="withdrawal-form">';
+        echo '<p class="form-row">';
+        echo '<label for="withdrawal-amount">' . __('Сумма вывода', 'cashback-plugin') . ' <span class="required">*</span></label>';
+        echo '<input type="number" class="input-text" name="withdrawal_amount" id="withdrawal-amount" placeholder="' . __('Введите сумму', 'cashback-plugin') . '" value="" step="0.01" />';
+        echo '</p>';
+        echo '<p class="form-row">';
+        echo '<button type="submit" class="woocommerce-Button button" id="withdrawal-submit" name="withdrawal_submit" value="' . esc_attr__('Вывести', 'cashback-plugin') . '">' . __('Вывести', 'cashback-plugin') . '</button>';
+        echo '</p>';
+        echo '<div id="withdrawal-messages"></div>';
+        wp_nonce_field('cashback_withdrawal_nonce', 'withdrawal_nonce');
+        echo '</form>';
+        echo '</div>';
+
+        echo '</div>'; // #tab-withdrawal
+
+        // === ВКЛАДКА 2: Настройки вывода ===
+        echo '<div class="cashback-tab-content" id="tab-settings">';
+
         echo '<div class="payout-settings-section woocommerce-EditAccountForm edit-account">';
         echo '<h3>' . __('Настройки вывода кэшбэка', 'cashback-plugin') . '</h3>';
         echo '<div id="payout_settings_message"></div>';
@@ -626,23 +712,11 @@ class CashbackWithdrawal
         echo '</p>';
 
         echo '</form>';
-        echo '</div>';
-        echo '</div>';
+        echo '</div>'; // .payout-settings-form
+        echo '</div>'; // .payout-settings-section
 
-        // Добавляем форму вывода кэшбэка
-        echo '<div class="cashback-withdrawal-form">';
-        echo '<form id="withdrawal-form">';
-        echo '<p class="form-row">';
-        echo '<label for="withdrawal-amount">' . __('Сумма вывода', 'cashback-plugin') . ' <span class="required">*</span></label>';
-        echo '<input type="number" class="input-text" name="withdrawal_amount" id="withdrawal-amount" placeholder="' . __('Введите сумму', 'cashback-plugin') . '" value="" step="0.01" />';
-        echo '</p>';
-        echo '<p class="form-row">';
-        echo '<button type="submit" class="woocommerce-Button button" id="withdrawal-submit" name="withdrawal_submit" value="' . esc_attr__('Вывести', 'cashback-plugin') . '">' . __('Вывести', 'cashback-plugin') . '</button>';
-        echo '</p>';
-        echo '<div id="withdrawal-messages"></div>';
-        wp_nonce_field('cashback_withdrawal_nonce', 'withdrawal_nonce');
-        echo '</form>';
-        echo '</div>';
+        echo '</div>'; // #tab-settings
+        echo '</div>'; // .cashback-withdrawal-container
     }
 
     /**
@@ -703,7 +777,10 @@ class CashbackWithdrawal
 
         if (empty($payout_method) || empty($payout_account)) {
             $wpdb->query($wpdb->prepare("SELECT RELEASE_LOCK(%s)", $lock_name)); // Снимаем блокировку
-            wp_send_json_error(__('Для вывода средств пожалуйста, заполните способ вывода и номер счета в вашем профиле.', 'cashback-plugin'));
+            wp_send_json_error(array(
+                'message' => __('Для вывода средств пожалуйста, заполните способ вывода и номер счета в вашем профиле.', 'cashback-plugin'),
+                'show_form' => true
+            ));
             return;
         }
 
@@ -938,7 +1015,7 @@ class CashbackWithdrawal
                 'cashback-withdrawal-styles',
                 plugins_url('assets/css/frontend.css', __FILE__),
                 array(),
-                '1.2.0'
+                '1.3.0'
             );
 
             // Подключаем скрипты для обработки формы вывода
@@ -946,7 +1023,7 @@ class CashbackWithdrawal
                 'cashback-withdrawal-js',
                 plugins_url('assets/js/frontend.js', __FILE__),
                 array('jquery'),
-                '1.2.0',
+                '1.3.0',
                 true
             );
 
@@ -1325,10 +1402,16 @@ class CashbackWithdrawal
 
         $user_id = get_current_user_id();
         $balance = $this->get_available_balance($user_id);
+        $pending = $this->get_pending_balance($user_id);
+        $paid = $this->get_paid_balance($user_id);
 
         wp_send_json_success(array(
             'balance' => $balance,
-            'formatted_balance' => wc_price($balance)
+            'formatted_balance' => wc_price($balance),
+            'pending_balance' => $pending,
+            'formatted_pending' => wc_price($pending),
+            'paid_balance' => $paid,
+            'formatted_paid' => wc_price($paid),
         ));
     }
 }
