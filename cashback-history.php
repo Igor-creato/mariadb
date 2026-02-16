@@ -315,7 +315,7 @@ class CashbackHistory
                 'cashback-history-ajax',
                 plugin_dir_url(__FILE__) . 'assets/js/cashback-history.js',
                 array('jquery'),
-                '1.0.2',
+                '1.0.3',
                 true
             );
 

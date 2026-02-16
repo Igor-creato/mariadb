@@ -253,7 +253,7 @@ class HistoryPayout
                 'history-payout-ajax',
                 plugin_dir_url(__FILE__) . 'assets/js/history-payout.js',
                 array('jquery'),
-                '1.0.0',
+                '1.0.1',
                 true
             );
             wp_localize_script('history-payout-ajax', 'payout_ajax', array(

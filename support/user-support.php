@@ -281,7 +281,7 @@ class Cashback_User_Support
         ?>
         <div id="support-create-alert" style="display: none;"></div>
 
-        <form id="support-create-form" novalidate enctype="multipart/form-data">
+        <form id="support-create-form" method="post" novalidate enctype="multipart/form-data">
             <div class="support-form-group">
                 <label for="support-subject">Тема</label>
                 <input type="text" id="support-subject" name="subject" maxlength="255" placeholder="Опишите тему обращения">
