@@ -191,3 +191,130 @@
         padding-top: 0;
     }
 }
+
+/* === Антифрод-модуль === */
+
+/* Severity badges */
+.cashback-severity-critical {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #fff;
+    background: #d63638;
+}
+
+.cashback-severity-high {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #fff;
+    background: #dba617;
+}
+
+.cashback-severity-medium {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #1d2327;
+    background: #f0c33c;
+}
+
+.cashback-severity-low {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #1d2327;
+    background: #c3c4c7;
+}
+
+/* Alert actions */
+.cashback-actions {
+    white-space: nowrap;
+}
+
+.cashback-actions .button-small {
+    margin-bottom: 2px;
+}
+
+/* Modal */
+.cashback-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    z-index: 100050;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 40px;
+    overflow-y: auto;
+}
+
+.cashback-modal-content {
+    background: #fff;
+    border-radius: 4px;
+    padding: 20px 25px 25px;
+    max-width: 800px;
+    width: 90%;
+    position: relative;
+    box-shadow: 0 3px 20px rgba(0, 0, 0, 0.3);
+    margin-bottom: 40px;
+}
+
+.cashback-modal-close {
+    position: absolute;
+    top: 10px;
+    right: 15px;
+    font-size: 24px;
+    cursor: pointer;
+    color: #666;
+    line-height: 1;
+}
+
+.cashback-modal-close:hover {
+    color: #d63638;
+}
+
+.cashback-modal-content h2 {
+    margin-top: 0;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #c3c4c7;
+}
+
+.cashback-modal-content h3 {
+    margin-top: 18px;
+    margin-bottom: 8px;
+}
+
+/* Filters row */
+.cashback-filters select {
+    vertical-align: middle;
+    margin-right: 4px;
+}
+
+.cashback-filters .button {
+    vertical-align: middle;
+}
+
+/* Settings form spacing */
+#fraud-settings-form .form-table th {
+    width: 280px;
+}
+
+#fraud-settings-form .small-text {
+    width: 80px;
+}
+
+#fraud-settings-message {
+    margin-top: 10px;
+}

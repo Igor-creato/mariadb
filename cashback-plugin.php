@@ -187,6 +187,22 @@ class CashbackPlugin
             wp_schedule_event(time(), 'daily', 'cashback_health_check_cron');
         }
 
+        // Создание таблиц антифрод-модуля
+        $this->require_file('antifraud/class-fraud-db.php');
+        if (class_exists('Cashback_Fraud_DB')) {
+            Cashback_Fraud_DB::create_tables();
+        }
+
+        // Планируем cron для антифрод-детекции (ежечасно)
+        if (!wp_next_scheduled('cashback_fraud_detection_cron')) {
+            wp_schedule_event(time(), 'hourly', 'cashback_fraud_detection_cron');
+        }
+
+        // Планируем cron для очистки старых fingerprints (ежедневно)
+        if (!wp_next_scheduled('cashback_fraud_cleanup_cron')) {
+            wp_schedule_event(time(), 'daily', 'cashback_fraud_cleanup_cron');
+        }
+
         // Сбрасываем переписывание URL
         flush_rewrite_rules();
     }
@@ -196,14 +212,18 @@ class CashbackPlugin
      */
     public function deactivate()
     {
-        $timestamp = wp_next_scheduled('cashback_support_auto_delete_cron');
-        if ($timestamp) {
-            wp_unschedule_event($timestamp, 'cashback_support_auto_delete_cron');
-        }
+        $cron_hooks = [
+            'cashback_support_auto_delete_cron',
+            'cashback_health_check_cron',
+            'cashback_fraud_detection_cron',
+            'cashback_fraud_cleanup_cron',
+        ];
 
-        $timestamp = wp_next_scheduled('cashback_health_check_cron');
-        if ($timestamp) {
-            wp_unschedule_event($timestamp, 'cashback_health_check_cron');
+        foreach ($cron_hooks as $hook) {
+            $timestamp = wp_next_scheduled($hook);
+            if ($timestamp) {
+                wp_unschedule_event($timestamp, $hook);
+            }
         }
     }
 
@@ -257,6 +277,13 @@ class CashbackPlugin
         $this->require_file('support/support-db.php');
         $this->require_file('support/admin-support.php');
         $this->require_file('support/user-support.php');
+
+        // Антифрод модуль
+        $this->require_file('antifraud/class-fraud-db.php');
+        $this->require_file('antifraud/class-fraud-settings.php');
+        $this->require_file('antifraud/class-fraud-collector.php');
+        $this->require_file('antifraud/class-fraud-detector.php');
+        $this->require_file('antifraud/class-fraud-admin.php');
     }
 
     /**
@@ -307,6 +334,11 @@ class CashbackPlugin
         // Инициализация модуля поддержки (кабинет пользователя)
         if (class_exists('Cashback_User_Support')) {
             Cashback_User_Support::get_instance();
+        }
+
+        // Инициализация антифрод-коллектора
+        if (class_exists('Cashback_Fraud_Collector')) {
+            Cashback_Fraud_Collector::get_instance();
         }
     }
 

@@ -29,9 +29,17 @@ function cashback_plugin_uninstall(): void
     global $wpdb;
 
     // Remove scheduled cron events
-    $timestamp = wp_next_scheduled('cashback_support_auto_delete_cron');
-    if ($timestamp) {
-        wp_unschedule_event($timestamp, 'cashback_support_auto_delete_cron');
+    $cron_hooks = [
+        'cashback_support_auto_delete_cron',
+        'cashback_health_check_cron',
+        'cashback_fraud_detection_cron',
+        'cashback_fraud_cleanup_cron',
+    ];
+    foreach ($cron_hooks as $hook) {
+        $timestamp = wp_next_scheduled($hook);
+        if ($timestamp) {
+            wp_unschedule_event($timestamp, $hook);
+        }
     }
 
     // Validate table prefix for security
@@ -43,6 +51,9 @@ function cashback_plugin_uninstall(): void
 
     // List of tables to drop
     $tables = [
+        "{$prefix}cashback_fraud_signals",
+        "{$prefix}cashback_fraud_alerts",
+        "{$prefix}cashback_user_fingerprints",
         "{$prefix}cashback_payout_requests",
         "{$prefix}cashback_transactions",
         "{$prefix}cashback_unregistered_transactions",
@@ -122,6 +133,22 @@ function cashback_plugin_uninstall(): void
         'cashback_plugin_version',
         'cashback_plugin_db_version',
         'cashback_encryption_migrated',
+        // Antifraud settings
+        'cashback_fraud_enabled',
+        'cashback_fraud_max_users_per_ip',
+        'cashback_fraud_max_users_per_fingerprint',
+        'cashback_fraud_max_withdrawals_per_day',
+        'cashback_fraud_max_withdrawals_per_week',
+        'cashback_fraud_cancellation_rate_threshold',
+        'cashback_fraud_cancellation_min_transactions',
+        'cashback_fraud_amount_anomaly_multiplier',
+        'cashback_fraud_new_account_cooling_days',
+        'cashback_fraud_auto_hold_amount',
+        'cashback_fraud_max_accounts_per_details_hash',
+        'cashback_fraud_fingerprint_retention_days',
+        'cashback_fraud_auto_flag_threshold',
+        'cashback_fraud_email_notification_enabled',
+        'cashback_fraud_last_run',
     ];
 
     foreach ($options as $option) {

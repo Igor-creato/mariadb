@@ -751,6 +751,31 @@ class CashbackWithdrawal
             return;
         }
 
+        // === 1.5. Antifraud checks ===
+        if (class_exists('Cashback_Fraud_Collector')) {
+            Cashback_Fraud_Collector::record_withdrawal_event($user_id);
+        }
+
+        if (class_exists('Cashback_Fraud_Settings') && Cashback_Fraud_Settings::is_enabled()) {
+            $cooling_days = Cashback_Fraud_Settings::get_new_account_cooling_days();
+            if ($cooling_days > 0) {
+                $user_data = get_userdata($user_id);
+                if ($user_data) {
+                    $days_since = (time() - strtotime($user_data->user_registered)) / DAY_IN_SECONDS;
+                    if ($days_since < $cooling_days) {
+                        $remaining = (int) ceil($cooling_days - $days_since);
+                        wp_send_json_error([
+                            'message' => sprintf(
+                                __('Вывод средств будет доступен через %d дн. после регистрации.', 'cashback-plugin'),
+                                $remaining
+                            ),
+                        ]);
+                        return;
+                    }
+                }
+            }
+        }
+
         // === 2. Защита от повторных запросов через GET_LOCK ===
         global $wpdb;
         $lock_name = "user_withdrawal_{$user_id}";
