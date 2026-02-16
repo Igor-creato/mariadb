@@ -171,10 +171,11 @@ class CashbackPlugin
                 array('back_link' => true)
             );
         }
-        // Создание таблиц поддержки
+        // Создание таблиц поддержки и директории для вложений
         $this->require_file('support/support-db.php');
         if (class_exists('Cashback_Support_DB')) {
             Cashback_Support_DB::create_tables();
+            Cashback_Support_DB::ensure_upload_dir();
         }
 
         // Планируем cron для автоудаления закрытых тикетов (через 1 месяц)

@@ -273,6 +273,22 @@ class Cashback_Support_DB
     }
 
     /**
+     * Создать базовую директорию для вложений и защитить её.
+     * Вызывается при активации плагина.
+     */
+    public static function ensure_upload_dir(): void
+    {
+        $upload_dir = wp_upload_dir();
+        $base_dir   = $upload_dir['basedir'] . '/cashback-support';
+
+        if (!is_dir($base_dir)) {
+            wp_mkdir_p($base_dir);
+        }
+
+        self::write_protection_files($base_dir);
+    }
+
+    /**
      * Удалить файлы тикета с диска
      */
     public static function delete_ticket_files(int $ticket_id): void
