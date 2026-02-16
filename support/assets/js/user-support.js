@@ -80,6 +80,11 @@
                 $('#support-message').addClass('support-field-error').focus();
                 return;
             }
+            if (message.length > 5000) {
+                showAlert('support-create-alert', 'error', 'Сообщение слишком длинное (максимум 5000 символов).');
+                $('#support-message').addClass('support-field-error').focus();
+                return;
+            }
 
             // Валидация файлов
             var fileInput = document.getElementById('support-files');
@@ -170,6 +175,11 @@
 
             if (!message) {
                 showAlert('support-detail-alert', 'error', 'Введите сообщение пожалуйста');
+                $('#support-reply-message').addClass('support-field-error').focus();
+                return;
+            }
+            if (message.length > 5000) {
+                showAlert('support-detail-alert', 'error', 'Сообщение слишком длинное (максимум 5000 символов).');
                 $('#support-reply-message').addClass('support-field-error').focus();
                 return;
             }

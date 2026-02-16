@@ -297,7 +297,7 @@ class Cashback_User_Support
             </div>
             <div class="support-form-group">
                 <label for="support-message">Сообщение</label>
-                <textarea id="support-message" name="message" placeholder="Опишите вашу проблему или вопрос подробно..."></textarea>
+                <textarea id="support-message" name="message" maxlength="5000" placeholder="Опишите вашу проблему или вопрос подробно..."></textarea>
             </div>
             <?php if (Cashback_Support_DB::is_attachments_enabled()): ?>
             <div class="support-form-group">
@@ -809,7 +809,7 @@ class Cashback_User_Support
         if (!$is_closed) {
             $html .= '<div class="support-ticket-actions">';
             $html .= '<div style="flex: 1;">';
-            $html .= '<textarea id="support-reply-message" rows="3" style="width: 100%; padding: 8px; border: 1px solid #ddd;" placeholder="Введите ваш ответ..."></textarea>';
+            $html .= '<textarea id="support-reply-message" rows="3" maxlength="5000" style="width: 100%; padding: 8px; border: 1px solid #ddd;" placeholder="Введите ваш ответ..."></textarea>';
             if (Cashback_Support_DB::is_attachments_enabled()) {
                 $html .= '<div style="margin-top: 8px;">';
                 $html .= '<input type="file" id="support-reply-files" name="support_files[]" multiple accept=".' . esc_attr(implode(',.', Cashback_Support_DB::get_allowed_extensions())) . '">';
