@@ -174,7 +174,7 @@ class CashbackWithdrawal
         $table_name = $wpdb->prefix . 'cashback_payout_methods';
         $methods = $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT id, name FROM {$table_name} WHERE is_active = %d ORDER BY sort_order ASC, name ASC",
+                "SELECT id, name, slug FROM {$table_name} WHERE is_active = %d ORDER BY sort_order ASC, name ASC",
                 1
             ),
             ARRAY_A
@@ -674,7 +674,7 @@ class CashbackWithdrawal
         echo '<option value="">' . __('Выберите платежную систему', 'cashback-plugin') . '</option>';
         foreach ($payout_methods as $method) {
             $selected = ($payout_method_id === intval($method['id'])) ? 'selected' : '';
-            echo '<option value="' . esc_attr($method['id']) . '" ' . $selected . '>' . esc_html($method['name']) . '</option>';
+            echo '<option value="' . esc_attr($method['id']) . '" data-slug="' . esc_attr($method['slug']) . '" ' . $selected . '>' . esc_html($method['name']) . '</option>';
         }
         echo '</select>';
         echo '</p>';
@@ -1015,7 +1015,7 @@ class CashbackWithdrawal
                 'cashback-withdrawal-styles',
                 plugins_url('assets/css/frontend.css', __FILE__),
                 array(),
-                '1.3.0'
+                '1.4.0'
             );
 
             // Подключаем скрипты для обработки формы вывода
@@ -1023,7 +1023,7 @@ class CashbackWithdrawal
                 'cashback-withdrawal-js',
                 plugins_url('assets/js/frontend.js', __FILE__),
                 array('jquery'),
-                '1.3.0',
+                '1.4.0',
                 true
             );
 
@@ -1105,6 +1105,16 @@ class CashbackWithdrawal
         if (!$valid_bank) {
             wp_send_json_error(array('message' => __('Недопустимый банк.', 'cashback-plugin')));
             return;
+        }
+
+        // Валидация формата номера счёта в зависимости от типа способа выплаты
+        $method_slug = $this->get_payout_method_slug_by_id($payout_method_id);
+        if ($method_slug) {
+            $format_error = $this->validate_payout_account_format($method_slug, $payout_account);
+            if (!empty($format_error)) {
+                wp_send_json_error(array('message' => $format_error));
+                return;
+            }
         }
 
         // Шифрование реквизитов
@@ -1193,6 +1203,137 @@ class CashbackWithdrawal
         );
 
         return !empty($bank);
+    }
+
+    /**
+     * Get the slug of a payout method by its ID
+     *
+     * @param int $method_id
+     * @return string|null
+     */
+    private function get_payout_method_slug_by_id(int $method_id): ?string
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'cashback_payout_methods';
+        $slug = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT slug FROM {$table_name} WHERE id = %d AND is_active = %d",
+                $method_id,
+                1
+            )
+        );
+
+        return $slug ?: null;
+    }
+
+    /**
+     * Validate the payout account format based on the payout method slug.
+     *
+     * @param string $slug
+     * @param string $payout_account
+     * @return string Error message if invalid, empty string if valid
+     */
+    private function validate_payout_account_format(string $slug, string $payout_account): string
+    {
+        switch ($slug) {
+            case 'sbp':
+                return $this->validate_phone_number($payout_account);
+
+            case 'mir':
+                return $this->validate_mir_card($payout_account);
+
+            default:
+                return '';
+        }
+    }
+
+    /**
+     * Validate phone number for SBP payout method.
+     * Must start with +, followed by 10-15 digits (E.164 standard).
+     *
+     * @param string $phone
+     * @return string Error message if invalid, empty string if valid
+     */
+    private function validate_phone_number(string $phone): string
+    {
+        $cleaned = preg_replace('/[\s\-\(\)]/', '', $phone);
+
+        if (empty($cleaned) || $cleaned[0] !== '+') {
+            return __('Номер телефона должен начинаться с кода страны (например, +79001234567).', 'cashback-plugin');
+        }
+
+        $digits = substr($cleaned, 1);
+
+        if (!ctype_digit($digits)) {
+            return __('Номер телефона содержит недопустимые символы. Допускаются только цифры после знака +.', 'cashback-plugin');
+        }
+
+        $digit_count = strlen($digits);
+        if ($digit_count < 10 || $digit_count > 15) {
+            return __('Введите полный номер телефона с кодом страны (10-15 цифр после +).', 'cashback-plugin');
+        }
+
+        return '';
+    }
+
+    /**
+     * Validate MIR card number.
+     * Must be 16 digits, BIN starts with 2200-2204, passes Luhn check.
+     *
+     * @param string $card
+     * @return string Error message if invalid, empty string if valid
+     */
+    private function validate_mir_card(string $card): string
+    {
+        $cleaned = preg_replace('/[\s\-]/', '', $card);
+
+        if (!ctype_digit($cleaned)) {
+            return __('Номер карты должен содержать только цифры.', 'cashback-plugin');
+        }
+
+        if (strlen($cleaned) !== 16) {
+            return __('Номер карты МИР должен содержать 16 цифр.', 'cashback-plugin');
+        }
+
+        $bin_prefix = (int) substr($cleaned, 0, 4);
+        if ($bin_prefix < 2200 || $bin_prefix > 2204) {
+            return __('Номер карты МИР должен начинаться с 2200-2204.', 'cashback-plugin');
+        }
+
+        if (!$this->luhn_check($cleaned)) {
+            return __('Некорректный номер карты (не прошёл проверку контрольной суммы).', 'cashback-plugin');
+        }
+
+        return '';
+    }
+
+    /**
+     * Luhn algorithm for card number validation.
+     *
+     * @param string $number Digits-only string
+     * @return bool
+     */
+    private function luhn_check(string $number): bool
+    {
+        $sum = 0;
+        $length = strlen($number);
+        $parity = $length % 2;
+
+        for ($i = 0; $i < $length; $i++) {
+            $digit = (int) $number[$i];
+
+            if ($i % 2 === $parity) {
+                $digit *= 2;
+                if ($digit > 9) {
+                    $digit -= 9;
+                }
+            }
+
+            $sum += $digit;
+        }
+
+        return ($sum % 10) === 0;
     }
 
     /**

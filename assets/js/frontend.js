@@ -344,14 +344,151 @@ jQuery(document).ready(function ($) {
 
   console.log('Payout settings handler loaded', cashback_ajax);
 
-  // Сброс подсветки ошибок при взаимодействии с полями
+  /**
+   * Валидация номера телефона для СБП.
+   * Должен начинаться с +, далее 10-15 цифр (E.164).
+   * @param {string} phone
+   * @returns {string} Сообщение об ошибке или пустая строка
+   */
+  function validatePhoneNumber(phone) {
+    var cleaned = phone.replace(/[\s\-\(\)]/g, '');
+
+    if (!cleaned || cleaned.charAt(0) !== '+') {
+      return 'Номер телефона должен начинаться с кода страны (например, +79001234567).';
+    }
+
+    var digits = cleaned.substring(1);
+
+    if (!/^\d+$/.test(digits)) {
+      return 'Номер телефона содержит недопустимые символы.';
+    }
+
+    if (digits.length < 10 || digits.length > 15) {
+      return 'Введите полный номер телефона с кодом страны (10-15 цифр после +).';
+    }
+
+    return '';
+  }
+
+  /**
+   * Валидация номера карты МИР.
+   * 16 цифр, BIN 2200-2204, проверка Luhn.
+   * @param {string} card
+   * @returns {string} Сообщение об ошибке или пустая строка
+   */
+  function validateMirCard(card) {
+    var cleaned = card.replace(/[\s\-]/g, '');
+
+    if (!/^\d+$/.test(cleaned)) {
+      return 'Номер карты должен содержать только цифры.';
+    }
+
+    if (cleaned.length !== 16) {
+      return 'Номер карты МИР должен содержать 16 цифр.';
+    }
+
+    var binPrefix = parseInt(cleaned.substring(0, 4), 10);
+    if (binPrefix < 2200 || binPrefix > 2204) {
+      return 'Номер карты МИР должен начинаться с 2200-2204.';
+    }
+
+    if (!luhnCheck(cleaned)) {
+      return 'Некорректный номер карты (не прошёл проверку контрольной суммы).';
+    }
+
+    return '';
+  }
+
+  /**
+   * Алгоритм Луна для проверки номера карты.
+   * @param {string} number Строка только из цифр
+   * @returns {boolean}
+   */
+  function luhnCheck(number) {
+    var sum = 0;
+    var parity = number.length % 2;
+
+    for (var i = 0; i < number.length; i++) {
+      var digit = parseInt(number.charAt(i), 10);
+
+      if (i % 2 === parity) {
+        digit *= 2;
+        if (digit > 9) {
+          digit -= 9;
+        }
+      }
+
+      sum += digit;
+    }
+
+    return sum % 10 === 0;
+  }
+
+  // Сброс подсветки ошибок и обновление label/placeholder при смене способа вывода
   $(document).on('change', '#payout_method_id', function () {
     $(this).removeClass('input--error');
+
+    var selectedOption = $(this).find('option:selected');
+    var methodSlug = selectedOption.data('slug') || '';
+    var $label = $('label[for="payout_account"]');
+    var $input = $('#payout_account');
+
+    switch (methodSlug) {
+      case 'sbp':
+        $label.html('Номер телефона <span class="required">*</span>');
+        $input.attr('placeholder', '+79001234567');
+        $input.attr('type', 'tel');
+        $input.attr('inputmode', 'tel');
+        $input.attr('maxlength', '20');
+        break;
+      case 'mir':
+        $label.html('Номер карты МИР <span class="required">*</span>');
+        $input.attr('placeholder', '2200 XXXX XXXX XXXX');
+        $input.attr('type', 'text');
+        $input.attr('inputmode', 'numeric');
+        $input.attr('maxlength', '19');
+        break;
+      default:
+        $label.html('Номер счета или телефона <span class="required">*</span>');
+        $input.attr('placeholder', '');
+        $input.attr('type', 'text');
+        $input.removeAttr('inputmode');
+        $input.attr('maxlength', '50');
+        break;
+    }
+
+    $input.removeClass('input--error');
+    $('#payout_settings_message').text('').removeClass('success error');
   });
 
+  // Сброс ошибки и авто-форматирование при вводе номера счёта/карты
   $(document).on('input', '#payout_account', function () {
     $(this).removeClass('input--error');
+
+    var selectedOption = $('#payout_method_id option:selected');
+    var methodSlug = selectedOption.data('slug') || '';
+
+    if (methodSlug === 'mir') {
+      var cursorPos = this.selectionStart;
+      var rawValue = $(this).val().replace(/\D/g, '');
+      rawValue = rawValue.substring(0, 16);
+
+      var formatted = rawValue.replace(/(\d{4})(?=\d)/g, '$1 ');
+
+      var oldVal = $(this).val();
+      $(this).val(formatted);
+
+      var spacesBeforeOld = (oldVal.substring(0, cursorPos).match(/ /g) || []).length;
+      var spacesBeforeNew = (formatted.substring(0, cursorPos + (formatted.length - oldVal.length)).match(/ /g) || []).length;
+      var newPos = cursorPos + (spacesBeforeNew - spacesBeforeOld);
+      this.setSelectionRange(newPos, newPos);
+    }
   });
+
+  // При загрузке страницы — обновить label/placeholder для уже выбранного метода
+  if ($('#payout_method_id').val()) {
+    $('#payout_method_id').trigger('change');
+  }
 
   // ============================================================
   // Компонент поиска банков с AJAX, клавиатурной навигацией и a11y
@@ -708,6 +845,32 @@ jQuery(document).ready(function ($) {
 
     if (hasErrors) {
       return;
+    }
+
+    // Валидация формата номера счёта в зависимости от выбранного способа вывода
+    var selectedOption = $('#payout_method_id option:selected');
+    var methodSlug = selectedOption.data('slug') || '';
+
+    if (methodSlug === 'sbp') {
+      var phoneError = validatePhoneNumber(payoutAccount);
+      if (phoneError) {
+        $('#payout_account').addClass('input--error');
+        $('#payout_settings_message')
+          .removeClass('success')
+          .addClass('error')
+          .text(phoneError);
+        return;
+      }
+    } else if (methodSlug === 'mir') {
+      var cardError = validateMirCard(payoutAccount);
+      if (cardError) {
+        $('#payout_account').addClass('input--error');
+        $('#payout_settings_message')
+          .removeClass('success')
+          .addClass('error')
+          .text(cardError);
+        return;
+      }
     }
 
     // Очищаем предыдущие сообщения
