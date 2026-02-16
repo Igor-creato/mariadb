@@ -898,6 +898,3 @@ class Cashback_Fraud_Admin
         ];
     }
 }
-
-// Instantiate (same pattern as Cashback_Payouts_Admin)
-new Cashback_Fraud_Admin();
