@@ -829,37 +829,51 @@ class Cashback_Payouts_Admin
                     }
                 }
 
-            } catch (Exception $e) {
-                $wpdb->query('ROLLBACK');
-                wp_send_json_error(['message' => $e->getMessage()]);
+                // Добавляем дату обновления (ВНУТРИ транзакции для атомарности)
+                $update_data['updated_at'] = current_time('mysql');
+                $update_formats[] = '%s';
+
+                // Обновляем запись (ВНУТРИ try/catch для гарантии ROLLBACK)
+                $result = $wpdb->update(
+                    $this->table_name,
+                    $update_data,
+                    ['id' => $payout_id],
+                    $update_formats,
+                    ['%d']
+                );
+
+                if ($result === false) {
+                    throw new Exception(__('Ошибка при обновлении запроса выплаты в базе данных.', 'cashback-plugin'));
+                }
+
+                $wpdb->query('COMMIT');
+                $in_transaction = false;
+
+            } catch (\Throwable $e) {
+                if ($in_transaction) {
+                    $wpdb->query('ROLLBACK');
+                }
+                error_log('[Cashback Payouts] Error updating payout #' . $payout_id . ': ' . $e->getMessage());
+                wp_send_json_error(['message' => __('Ошибка при обновлении запроса выплаты.', 'cashback-plugin')]);
                 return;
             }
-        }
+        } else {
+            // Обновление без транзакции (нет смены статуса с обновлением баланса)
+            $update_data['updated_at'] = current_time('mysql');
+            $update_formats[] = '%s';
 
-        // Добавляем дату обновления
-        $update_data['updated_at'] = current_time('mysql');
-        $update_formats[] = '%s';
+            $result = $wpdb->update(
+                $this->table_name,
+                $update_data,
+                ['id' => $payout_id],
+                $update_formats,
+                ['%d']
+            );
 
-        // Обновляем только те поля, которые были изменены
-        $result = $wpdb->update(
-            $this->table_name,
-            $update_data,
-            ['id' => $payout_id],
-            $update_formats,
-            ['%d']  // Формат условия
-        );
-
-        if ($result === false) {
-            if ($in_transaction) {
-                $wpdb->query('ROLLBACK');
+            if ($result === false) {
+                wp_send_json_error(['message' => __('Ошибка при обновлении запроса выплаты в базе данных.', 'cashback-plugin')]);
+                return;
             }
-            wp_send_json_error(['message' => __('Ошибка при обновлении запроса выплаты в базе данных.', 'cashback-plugin')]);
-            return;
-        }
-
-        // Фиксируем транзакцию, если она была начата
-        if ($in_transaction) {
-            $wpdb->query('COMMIT');
         }
 
         // Аудит-лог: записываем все изменения
@@ -1286,8 +1300,11 @@ class Cashback_Payouts_Admin
             return;
         }
 
-        // Добавляем информацию о наличии зашифрованных данных
+        // Добавляем информацию о наличии зашифрованных данных (до удаления шифротекста)
         $payout_data['has_encrypted_data'] = !empty($payout_data['encrypted_details']) || !empty($payout_data['payout_account']);
+
+        // Убираем шифротекст из ответа — не нужно отправлять в браузер
+        unset($payout_data['encrypted_details']);
 
         // Возвращаем данные
         wp_send_json_success($payout_data);

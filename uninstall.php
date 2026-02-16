@@ -81,6 +81,9 @@ function cashback_plugin_uninstall(): void
         "{$prefix}tr_prevent_delete_failed_payout",
         "{$prefix}tr_prevent_update_failed_payout",
         "{$prefix}tr_banned_user_update_banned_at",
+        "{$prefix}tr_freeze_balance_on_ban",
+        "{$prefix}tr_clear_ban_on_unban",
+        "{$prefix}tr_unfreeze_balance_on_unban",
     ];
 
     // Drop events

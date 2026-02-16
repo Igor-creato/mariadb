@@ -617,9 +617,14 @@ class Cashback_Fraud_Detector
         global $wpdb;
         $table = $wpdb->prefix . 'cashback_fraud_alerts';
 
+        // Дедупликация: проверяем open/reviewing + confirmed/dismissed за последние 30 дней
         return (bool) $wpdb->get_var($wpdb->prepare(
             "SELECT COUNT(*) FROM `{$table}`
-             WHERE user_id = %d AND alert_type = %s AND status IN ('open', 'reviewing')",
+             WHERE user_id = %d AND alert_type = %s
+             AND (
+                 status IN ('open', 'reviewing')
+                 OR (status IN ('confirmed', 'dismissed') AND updated_at > DATE_SUB(NOW(), INTERVAL 30 DAY))
+             )",
             $user_id,
             $alert_type
         ));

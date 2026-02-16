@@ -87,6 +87,9 @@
             body: data,
         }).then(function () {
             sessionStorage.setItem('cb_fp_sent', '1');
+        }).catch(function () {
+            // Ставим флаг даже при ошибке, чтобы не спамить повторными запросами
+            sessionStorage.setItem('cb_fp_sent', '1');
         });
     });
 })();

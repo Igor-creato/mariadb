@@ -18,6 +18,7 @@ class Cashback_Fraud_Admin
     use AdminPaginationTrait;
 
     private const PER_PAGE = 20;
+    private const MAX_ALLOWED_PAGES = 1000;
 
     public function __construct()
     {
@@ -52,16 +53,21 @@ class Cashback_Fraud_Admin
      */
     private function get_menu_title(): string
     {
-        global $wpdb;
-        $table = $wpdb->prefix . 'cashback_fraud_alerts';
-
-        $count = (int) $wpdb->get_var(
-            "SELECT COUNT(*) FROM `{$table}` WHERE status = 'open'"
-        );
+        // Кеширование COUNT чтобы не запрашивать на каждой admin-странице
+        $count = wp_cache_get('cashback_fraud_open_count', 'cashback');
+        if ($count === false) {
+            global $wpdb;
+            $table = $wpdb->prefix . 'cashback_fraud_alerts';
+            $count = (int) $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM `{$table}` WHERE status = %s",
+                'open'
+            ));
+            wp_cache_set('cashback_fraud_open_count', $count, 'cashback', 300);
+        }
 
         $title = __('Защита', 'cashback-plugin');
         if ($count > 0) {
-            $title .= sprintf(' <span class="awaiting-mod">%d</span>', $count);
+            $title .= sprintf(' <span class="awaiting-mod">%d</span>', (int) $count);
         }
 
         return $title;
@@ -78,8 +84,7 @@ class Cashback_Fraud_Admin
             'admin_page_cashback-antifraud',
         ];
 
-        $is_page = in_array($hook, $allowed_hooks, true) ||
-            (isset($_GET['page']) && sanitize_text_field(wp_unslash($_GET['page'])) === 'cashback-antifraud');
+        $is_page = in_array($hook, $allowed_hooks, true);
 
         if (!$is_page) {
             return;
@@ -173,7 +178,7 @@ class Cashback_Fraud_Admin
         $filter_status = isset($_GET['status']) ? sanitize_text_field(wp_unslash($_GET['status'])) : '';
         $filter_severity = isset($_GET['severity']) ? sanitize_text_field(wp_unslash($_GET['severity'])) : '';
         $filter_type = isset($_GET['alert_type']) ? sanitize_text_field(wp_unslash($_GET['alert_type'])) : '';
-        $current_page = isset($_GET['paged']) ? max(1, absint($_GET['paged'])) : 1;
+        $current_page = min(isset($_GET['paged']) ? max(1, absint($_GET['paged'])) : 1, self::MAX_ALLOWED_PAGES);
         $offset = ($current_page - 1) * self::PER_PAGE;
 
         $where = ['1=1'];
@@ -331,14 +336,17 @@ class Cashback_Fraud_Admin
         $alerts_table = $wpdb->prefix . 'cashback_fraud_alerts';
         $profile_table = $wpdb->prefix . 'cashback_user_profile';
 
-        $current_page = isset($_GET['paged']) ? max(1, absint($_GET['paged'])) : 1;
+        $current_page = min(isset($_GET['paged']) ? max(1, absint($_GET['paged'])) : 1, self::MAX_ALLOWED_PAGES);
         $offset = ($current_page - 1) * self::PER_PAGE;
 
         // Users with open/reviewing alerts, sorted by risk score
-        $count_query = "SELECT COUNT(DISTINCT a.user_id)
-                       FROM `{$alerts_table}` a
-                       WHERE a.status IN ('open', 'reviewing')";
-        $total_items = (int) $wpdb->get_var($count_query);
+        $total_items = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(DISTINCT a.user_id)
+             FROM `{$alerts_table}` a
+             WHERE a.status IN (%s, %s)",
+            'open',
+            'reviewing'
+        ));
         $total_pages = (int) ceil($total_items / self::PER_PAGE);
 
         $users = $wpdb->get_results($wpdb->prepare(

@@ -116,20 +116,20 @@
             // Alert info
             html += '<table class="widefat fixed" style="margin-bottom:15px;">';
             html += '<tbody>';
-            html += row('Пользователь', escHtml(alert.user_login || 'ID:' + alert.user_id) + ' (' + escHtml(alert.user_email || '') + ')');
-            html += row('Зарегистрирован', escHtml(alert.user_registered || 'N/A'));
-            html += row('Тип', escHtml(alert.alert_type));
-            html += row('Уровень', '<span class="cashback-severity-' + escHtml(alert.severity) + '">' + escHtml(alert.severity.toUpperCase()) + '</span>');
-            html += row('Риск-скор', escHtml(parseFloat(alert.risk_score).toFixed(0)));
-            html += row('Статус', escHtml(alert.status));
-            html += row('Описание', escHtml(alert.summary));
-            html += row('Создан', escHtml(alert.created_at));
+            html += rowHtml('Пользователь', escHtml(alert.user_login || 'ID:' + alert.user_id) + ' (' + escHtml(alert.user_email || '') + ')');
+            html += row('Зарегистрирован', alert.user_registered || 'N/A');
+            html += row('Тип', alert.alert_type);
+            html += rowHtml('Уровень', '<span class="cashback-severity-' + escHtml(alert.severity) + '">' + escHtml(alert.severity.toUpperCase()) + '</span>');
+            html += row('Риск-скор', parseFloat(alert.risk_score).toFixed(0));
+            html += row('Статус', alert.status);
+            html += row('Описание', alert.summary);
+            html += row('Создан', alert.created_at);
 
             if (alert.reviewed_by) {
-                html += row('Проверил', 'ID:' + escHtml(alert.reviewed_by) + ' от ' + escHtml(alert.reviewed_at || ''));
+                html += rowHtml('Проверил', 'ID:' + escHtml(alert.reviewed_by) + ' от ' + escHtml(alert.reviewed_at || ''));
             }
             if (alert.review_note) {
-                html += row('Комментарий', escHtml(alert.review_note));
+                html += row('Комментарий', alert.review_note);
             }
             html += '</tbody></table>';
 
@@ -138,10 +138,10 @@
                 html += '<h3>Баланс пользователя</h3>';
                 html += '<table class="widefat fixed" style="margin-bottom:15px;">';
                 html += '<tbody>';
-                html += row('Доступно', escHtml(balance.available_balance));
-                html += row('В обработке', escHtml(balance.pending_balance));
-                html += row('Выплачено', escHtml(balance.paid_balance));
-                html += row('Заморожено', escHtml(balance.frozen_balance));
+                html += row('Доступно', balance.available_balance);
+                html += row('В обработке', balance.pending_balance);
+                html += row('Выплачено', balance.paid_balance);
+                html += row('Заморожено', balance.frozen_balance);
                 html += '</tbody></table>';
             }
 
@@ -169,7 +169,7 @@
                     html += '<tr>';
                     html += '<td>' + escHtml(s.signal_type) + '</td>';
                     html += '<td>' + escHtml(parseFloat(s.weight).toFixed(0)) + '</td>';
-                    html += '<td>' + (evidenceStr || '—') + '</td>';
+                    html += '<td>' + (evidenceStr || escHtml('—')) + '</td>';
                     html += '</tr>';
                 }
                 html += '</tbody></table>';
@@ -265,6 +265,9 @@
         if (!reason.trim()) {
             reason = 'Заблокирован антифрод-системой';
         }
+        if (reason.length > 500) {
+            reason = reason.substring(0, 500);
+        }
 
         if (!confirm('Забанить пользователя ID ' + userId + '?\n\nПричина: ' + reason + '\n\nБаланс будет заморожен, активные заявки отклонены.')) {
             return;
@@ -305,7 +308,11 @@
     }
 
     function row(label, value) {
-        return '<tr><th style="width:180px;">' + escHtml(label) + '</th><td>' + value + '</td></tr>';
+        return '<tr><th style="width:180px;">' + escHtml(label) + '</th><td>' + escHtml(value) + '</td></tr>';
+    }
+
+    function rowHtml(label, safeHtml) {
+        return '<tr><th style="width:180px;">' + escHtml(label) + '</th><td>' + safeHtml + '</td></tr>';
     }
 
 })(jQuery);

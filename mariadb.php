@@ -226,7 +226,7 @@ class Mariadb_Plugin
             `opt_out` tinyint(1) NOT NULL DEFAULT 0,
             `status` enum('active','noactive','banned','deleted') NOT NULL DEFAULT 'active' COMMENT 'Статус профиля',
             `banned_at` datetime DEFAULT NULL COMMENT 'Дата и время блокировки',
-            `ban_reason` varchar(25) DEFAULT NULL COMMENT 'Причина блокировки',
+            `ban_reason` text DEFAULT NULL COMMENT 'Причина блокировки',
             `last_active_at` datetime DEFAULT NULL COMMENT 'Дата и времени последней активности',
             `created_at` datetime DEFAULT current_timestamp(),
             `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp(),
@@ -297,6 +297,9 @@ class Mariadb_Plugin
         // Миграция существующих данных в зашифрованный формат
         $this->migrate_encrypt_existing_data();
 
+        // Миграция: увеличение ban_reason с varchar(25) до text
+        $this->migrate_ban_reason_column();
+
         error_log('Mariadb Plugin: Tables created successfully');
     }
 
@@ -311,7 +314,7 @@ class Mariadb_Plugin
         $table = $wpdb->prefix . 'cashback_payout_methods';
 
         // Проверяем, есть ли уже записи
-        $count = $wpdb->get_var("SELECT COUNT(*) FROM {$table}");
+        $count = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM `{$table}` WHERE %d = %d", 1, 1));
         if ($count > 0) {
             error_log('Mariadb Plugin: Payout methods already exist, skipping initialization');
             return;
@@ -343,7 +346,7 @@ class Mariadb_Plugin
         $table = $wpdb->prefix . 'cashback_banks';
 
         // Проверяем, есть ли уже записи
-        $count = $wpdb->get_var("SELECT COUNT(*) FROM {$table}");
+        $count = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM `{$table}` WHERE %d = %d", 1, 1));
         if ($count > 0) {
             error_log('Mariadb Plugin: Banks already exist, skipping initialization');
             return;
@@ -612,6 +615,26 @@ class Mariadb_Plugin
             $column
         ));
         return (int) $result > 0;
+    }
+
+    /**
+     * Миграция: увеличение ban_reason с varchar(25) до text
+     */
+    private function migrate_ban_reason_column(): void
+    {
+        global $wpdb;
+        $table = $wpdb->prefix . 'cashback_user_profile';
+
+        $column = $wpdb->get_row($wpdb->prepare(
+            "SELECT DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s AND COLUMN_NAME = 'ban_reason'",
+            DB_NAME,
+            $table
+        ));
+
+        if ($column && strtolower($column->DATA_TYPE) !== 'text') {
+            $wpdb->query("ALTER TABLE `{$table}` MODIFY `ban_reason` text DEFAULT NULL COMMENT 'Причина блокировки'");
+            error_log('Mariadb Plugin: Migrated ban_reason column to TEXT');
+        }
     }
 
     /**

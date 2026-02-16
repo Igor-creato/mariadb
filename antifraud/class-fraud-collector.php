@@ -138,9 +138,18 @@ class Cashback_Fraud_Collector
             return;
         }
 
+        // Rate-limit: максимум 1 fingerprint за 10 минут на пользователя
+        $uid = get_current_user_id();
+        $rate_key = 'cb_fp_rate_' . $uid;
+        if (get_transient($rate_key)) {
+            wp_send_json_success(); // Тихо принимаем, не перегружая БД
+            return;
+        }
+        set_transient($rate_key, 1, 600);
+
         $fp_hash = isset($_POST['fp']) ? sanitize_text_field(wp_unslash($_POST['fp'])) : '';
 
-        if (empty($fp_hash) || strlen($fp_hash) !== 64) {
+        if (empty($fp_hash) || strlen($fp_hash) !== 64 || !preg_match('/^[a-f0-9]{64}$/', $fp_hash)) {
             wp_send_json_error('Invalid fingerprint');
             return;
         }
@@ -202,31 +211,27 @@ class Cashback_Fraud_Collector
      */
     private static function get_client_ip(): string
     {
-        if (class_exists('Cashback_Encryption') && method_exists('Cashback_Encryption', 'get_client_ip')) {
-            return Cashback_Encryption::get_client_ip();
-        }
+        $remote_addr = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '0.0.0.0';
 
-        $headers = [
-            'HTTP_CF_CONNECTING_IP',
-            'HTTP_X_FORWARDED_FOR',
-            'HTTP_X_REAL_IP',
-            'REMOTE_ADDR',
-        ];
+        // Доверять прокси-заголовкам только если REMOTE_ADDR — доверенный прокси
+        $trusted_proxies = defined('CASHBACK_TRUSTED_PROXIES') ? (array) CASHBACK_TRUSTED_PROXIES : [];
 
-        foreach ($headers as $header) {
-            if (!empty($_SERVER[$header])) {
-                $ip = sanitize_text_field(wp_unslash($_SERVER[$header]));
-                // X-Forwarded-For может содержать цепочку: client, proxy1, proxy2
-                if (strpos($ip, ',') !== false) {
-                    $ip = trim(explode(',', $ip)[0]);
-                }
-                if (filter_var($ip, FILTER_VALIDATE_IP)) {
-                    return $ip;
+        if (!empty($trusted_proxies) && in_array($remote_addr, $trusted_proxies, true)) {
+            $proxy_headers = ['HTTP_CF_CONNECTING_IP', 'HTTP_X_FORWARDED_FOR', 'HTTP_X_REAL_IP'];
+            foreach ($proxy_headers as $header) {
+                if (!empty($_SERVER[$header])) {
+                    $ip = sanitize_text_field(wp_unslash($_SERVER[$header]));
+                    if (strpos($ip, ',') !== false) {
+                        $ip = trim(explode(',', $ip)[0]);
+                    }
+                    if (filter_var($ip, FILTER_VALIDATE_IP)) {
+                        return $ip;
+                    }
                 }
             }
         }
 
-        return '0.0.0.0';
+        return filter_var($remote_addr, FILTER_VALIDATE_IP) ? $remote_addr : '0.0.0.0';
     }
 
     /**

@@ -729,6 +729,7 @@ class CashbackWithdrawal
         // === 1. Security: nonce and authentication ===
         if (!wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'] ?? '')), 'cashback_withdrawal_nonce')) {
             wp_send_json_error(__('Ошибка безопасности.', 'cashback-plugin'));
+            return;
         }
 
         if (!is_user_logged_in()) {
@@ -751,19 +752,15 @@ class CashbackWithdrawal
             return;
         }
 
-        // === 1.5. Antifraud checks ===
-        if (class_exists('Cashback_Fraud_Collector')) {
-            Cashback_Fraud_Collector::record_withdrawal_event($user_id);
-        }
-
+        // === 1.5. Antifraud: cooling period check (идемпотентно, до lock) ===
         if (class_exists('Cashback_Fraud_Settings') && Cashback_Fraud_Settings::is_enabled()) {
             $cooling_days = Cashback_Fraud_Settings::get_new_account_cooling_days();
             if ($cooling_days > 0) {
                 $user_data = get_userdata($user_id);
                 if ($user_data) {
-                    $days_since = (time() - strtotime($user_data->user_registered)) / DAY_IN_SECONDS;
-                    if ($days_since < $cooling_days) {
-                        $remaining = (int) ceil($cooling_days - $days_since);
+                    $seconds_since = time() - strtotime($user_data->user_registered);
+                    if ($seconds_since < ($cooling_days * DAY_IN_SECONDS)) {
+                        $remaining = (int) ceil(($cooling_days * DAY_IN_SECONDS - $seconds_since) / DAY_IN_SECONDS);
                         wp_send_json_error([
                             'message' => sprintf(
                                 __('Вывод средств будет доступен через %d дн. после регистрации.', 'cashback-plugin'),
@@ -787,6 +784,11 @@ class CashbackWithdrawal
         if (!$lock_acquired) {
             wp_send_json_error(__('Предыдущий запрос еще обрабатывается. Пожалуйста, подождите.', 'cashback-plugin'));
             return;
+        }
+
+        // === 2.1. Antifraud: record withdrawal event (ПОСЛЕ lock, чтобы избежать inflate при race condition) ===
+        if (class_exists('Cashback_Fraud_Collector')) {
+            Cashback_Fraud_Collector::record_withdrawal_event($user_id);
         }
 
         $withdrawal_amount = sanitize_text_field(wp_unslash($_POST['withdrawal_amount'] ?? '0'));
@@ -984,22 +986,18 @@ class CashbackWithdrawal
             $wpdb->query('COMMIT');
 
             // Логирование успешной операции с идемпотентным ключом
+            $new_balance = bcsub((string) $user_balance->available_balance, (string) $withdrawal_amount, 2);
             wc_get_logger()->info(sprintf(
-                'User %d withdrew %f. New balance: %f. Payout ID: %d. Idempotency: %s',
+                'User %d withdrew %s. New balance: %s. Payout ID: %d. Idempotency: %s',
                 $user_id,
                 $withdrawal_amount,
-                $user_balance->available_balance - $withdrawal_amount,
+                $new_balance,
                 $payout_id,
-                substr($idempotency_key, 0, 16) . '...' // Логируем только первые 16 символов
+                substr($idempotency_key, 0, 16) . '...'
             ));
 
             // Освобождаем блокировку MariaDB
-            $wpdb->query($wpdb->prepare(
-                "SELECT RELEASE_LOCK('user_withdrawal_%d')",
-                $user_id
-            ));
-
-            $wpdb->query($wpdb->prepare("SELECT RELEASE_LOCK(%s)", $lock_name)); // Снимаем блокировку
+            $wpdb->query($wpdb->prepare("SELECT RELEASE_LOCK(%s)", $lock_name));
 
             wp_send_json_success(sprintf(
                 __('Заявка на вывод кэшбэка на сумму %s руб. успешно добавлена', 'cashback-plugin'),

@@ -336,9 +336,13 @@ class CashbackPlugin
             Cashback_User_Support::get_instance();
         }
 
-        // Инициализация антифрод-коллектора
+        // Инициализация антифрод-модуля
         if (class_exists('Cashback_Fraud_Collector')) {
             Cashback_Fraud_Collector::get_instance();
+        }
+
+        if (is_admin() && class_exists('Cashback_Fraud_Admin')) {
+            new Cashback_Fraud_Admin();
         }
     }
 

@@ -161,11 +161,12 @@ class Cashback_Fraud_DB
         ));
 
         // Удаление dismissed-алертов старше 90 дней
-        $deleted_alerts = $wpdb->query(
+        $deleted_alerts = $wpdb->query($wpdb->prepare(
             "DELETE FROM `{$wpdb->prefix}cashback_fraud_alerts`
              WHERE status = 'dismissed'
-             AND updated_at < DATE_SUB(NOW(), INTERVAL 90 DAY)"
-        );
+             AND updated_at < DATE_SUB(NOW(), INTERVAL %d DAY)",
+            90
+        ));
 
         error_log(sprintf(
             'Cashback Fraud DB: Cleanup completed — %d fingerprints, %d dismissed alerts removed',
