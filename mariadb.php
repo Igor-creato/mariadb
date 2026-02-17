@@ -280,6 +280,34 @@ class Mariadb_Plugin
                 REFERENCES `{$wpdb->prefix}cashback_affiliate_networks`(`id`) ON DELETE CASCADE
         ) ENGINE=InnoDB {$charset_collate} COMMENT='Параметры партнерских сетей';";
 
+        // Таблица логирования кликов по партнерским ссылкам
+        $table_click_log = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_click_log` (
+            `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            `click_id` char(36) NOT NULL COMMENT 'UUID клика, передаётся в CPA как subID, ключ для диспута',
+            `user_id` bigint(20) unsigned DEFAULT NULL COMMENT 'WP user ID (NULL для гостей)',
+            `session_id` varchar(128) DEFAULT NULL COMMENT 'Идентификатор сессии для незалогиненных',
+            `product_id` bigint(20) unsigned NOT NULL COMMENT 'ID товара WooCommerce',
+            `cpa_network` varchar(100) DEFAULT NULL COMMENT 'Название CPA-сети',
+            `offer_id` varchar(255) DEFAULT NULL COMMENT 'ID оффера в сети',
+            `affiliate_url` text NOT NULL COMMENT 'Полный URL с подставленными параметрами',
+            `ip_address` varchar(45) NOT NULL COMMENT 'IPv4/IPv6 адрес',
+            `user_agent` text DEFAULT NULL COMMENT 'User-Agent браузера',
+            `referer` text DEFAULT NULL COMMENT 'Внутренний referer (страница клика)',
+            `utm_source` varchar(255) DEFAULT NULL COMMENT 'UTM source',
+            `utm_medium` varchar(255) DEFAULT NULL COMMENT 'UTM medium',
+            `utm_campaign` varchar(255) DEFAULT NULL COMMENT 'UTM campaign',
+            `country` varchar(2) DEFAULT NULL COMMENT 'Код страны GeoIP (ISO 3166-1 alpha-2)',
+            `created_at` datetime(6) NOT NULL DEFAULT current_timestamp(6) COMMENT 'Время клика',
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uk_click_id` (`click_id`),
+            KEY `idx_user_id` (`user_id`),
+            KEY `idx_product_id` (`product_id`),
+            KEY `idx_cpa_network` (`cpa_network`),
+            KEY `idx_created_at` (`created_at`),
+            KEY `idx_ip_address` (`ip_address`),
+            KEY `idx_session_id` (`session_id`)
+        ) ENGINE=InnoDB {$charset_collate} COMMENT='Лог кликов по партнерским ссылкам';";
+
         // Таблица банков
         $table8 = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_banks` (
             `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -307,6 +335,7 @@ class Mariadb_Plugin
         dbDelta($table_affiliate_networks); // Создаем affiliate_networks
         dbDelta($table_affiliate_network_params); // Создаем affiliate_network_params (FK на affiliate_networks)
         dbDelta($table6); // Создаем user_profile после payout_methods и banks
+        dbDelta($table_click_log); // Создаем click_log
 
         // Инициализация начальных данных в справочные таблицы
         $this->insert_default_payout_methods();

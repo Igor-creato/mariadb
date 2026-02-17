@@ -68,6 +68,7 @@ function cashback_plugin_uninstall(): void
         "{$prefix}cashback_support_tickets",
         "{$prefix}cashback_support_messages",
         "{$prefix}cashback_audit_log",
+        "{$prefix}cashback_click_log",
     ];
 
     // Drop triggers
