@@ -252,6 +252,34 @@ class Mariadb_Plugin
             UNIQUE KEY `uniq_slug` (`slug`)
         ) ENGINE=InnoDB {$charset_collate} COMMENT='Способы выплат пользователей';";
 
+        // Таблица партнерских сетей
+        $table_affiliate_networks = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_affiliate_networks` (
+            `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            `name` varchar(255) NOT NULL COMMENT 'Название партнера',
+            `slug` varchar(100) NOT NULL COMMENT 'Уникальный идентификатор',
+            `notes` text DEFAULT NULL COMMENT 'Примечание',
+            `sort_order` int(11) NOT NULL DEFAULT 0 COMMENT 'Порядок сортировки',
+            `is_active` tinyint(1) NOT NULL DEFAULT 1 COMMENT '1 = активен',
+            `created_at` datetime DEFAULT current_timestamp(),
+            `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uniq_slug` (`slug`),
+            KEY `idx_active_sort` (`is_active`,`sort_order`,`name`)
+        ) ENGINE=InnoDB {$charset_collate} COMMENT='Партнерские сети';";
+
+        // Таблица параметров партнерских сетей
+        $table_affiliate_network_params = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_affiliate_network_params` (
+            `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            `network_id` bigint(20) unsigned NOT NULL COMMENT 'ID партнерской сети',
+            `param_name` varchar(100) NOT NULL COMMENT 'Название параметра',
+            `param_type` varchar(100) DEFAULT NULL COMMENT 'Значение параметра',
+            `default_value` varchar(255) DEFAULT NULL COMMENT 'Значение по умолчанию',
+            PRIMARY KEY (`id`),
+            KEY `idx_network_id` (`network_id`),
+            CONSTRAINT `fk_network_params` FOREIGN KEY (`network_id`)
+                REFERENCES `{$wpdb->prefix}cashback_affiliate_networks`(`id`) ON DELETE CASCADE
+        ) ENGINE=InnoDB {$charset_collate} COMMENT='Параметры партнерских сетей';";
+
         // Таблица банков
         $table8 = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_banks` (
             `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -276,6 +304,8 @@ class Mariadb_Plugin
         dbDelta($table5);
         dbDelta($table7); // Создаем payout_methods ПЕРЕД user_profile
         dbDelta($table8); // Создаем banks ПЕРЕД user_profile
+        dbDelta($table_affiliate_networks); // Создаем affiliate_networks
+        dbDelta($table_affiliate_network_params); // Создаем affiliate_network_params (FK на affiliate_networks)
         dbDelta($table6); // Создаем user_profile после payout_methods и banks
 
         // Инициализация начальных данных в справочные таблицы

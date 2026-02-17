@@ -61,6 +61,8 @@ function cashback_plugin_uninstall(): void
         "{$prefix}cashback_webhooks",
         "{$prefix}cashback_user_profile",
         "{$prefix}cashback_payout_methods",
+        "{$prefix}cashback_affiliate_network_params",
+        "{$prefix}cashback_affiliate_networks",
         "{$prefix}cashback_banks",
         "{$prefix}cashback_support_attachments",
         "{$prefix}cashback_support_tickets",
