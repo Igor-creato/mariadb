@@ -10,28 +10,30 @@ if (!defined('ABSPATH')) {
  * WC Affiliate URL Params
  *
  * Управление партнерскими параметрами URL для внешних товаров WooCommerce.
+ * Параметры берутся из таблицы cashback_affiliate_network_params
+ * на основе выбранной партнерской сети для товара.
  *
- * @since 1.0.0
+ * @since 2.0.0
  */
 class WC_Affiliate_URL_Params
 {
-    private const PARAM_COUNT = 3;
     private const CACHE_GROUP = 'wc_affiliate_url_params';
-    private const CACHE_EXPIRATION = 3600; // 1 час
+    private const CACHE_EXPIRATION = 3600;
     private const LOGGER_SOURCE = 'wc-affiliate-url-params';
 
     /**
      * Конструктор класса.
      *
-     * Регистрирует все необходимые хуки WordPress и WooCommerce.
-     *
-     * @since 1.0.0
+     * @since 2.0.0
      */
     public function __construct()
     {
         // Хуки для добавления полей в админке
         add_action('woocommerce_product_options_general_product_data', [$this, 'add_custom_fields']);
         add_action('woocommerce_process_product_meta', [$this, 'save_custom_fields']);
+
+        // Админ-уведомления (ошибки валидации при сохранении)
+        add_action('admin_notices', [$this, 'show_admin_notices']);
 
         // Хуки для модификации URL на фронтенде
         add_filter('woocommerce_product_add_to_cart_url', [$this, 'modify_external_url'], 10, 2);
@@ -52,69 +54,163 @@ class WC_Affiliate_URL_Params
     /**
      * Добавление полей в Product Data метабокс.
      *
-     * Отображает поля для настройки партнерских параметров URL
+     * Отображает выпадающий список партнерских сетей и таблицу параметров
      * только для внешних товаров WooCommerce.
      *
-     * @since 1.0.0
+     * @since 2.0.0
      *
      * @return void
      */
     public function add_custom_fields(): void
     {
-        global $post;
+        global $post, $wpdb;
 
         $product = wc_get_product($post->ID);
 
-        // Показываем только для внешних товаров
         if (!$product || $product->get_type() !== 'external') {
             return;
         }
 
+        $networks_table = $wpdb->prefix . 'cashback_affiliate_networks';
+        $params_table = $wpdb->prefix . 'cashback_affiliate_network_params';
+
+        // Получаем все сети
+        $networks = $wpdb->get_results(
+            "SELECT id, name, is_active FROM {$networks_table} ORDER BY sort_order ASC, name ASC",
+            ARRAY_A
+        );
+
+        // Текущая выбранная сеть
+        $selected_network_id = (int) get_post_meta($post->ID, '_affiliate_network_id', true);
+
+        // Проверяем активность выбранной сети
+        $selected_network_active = true;
+        if ($selected_network_id > 0) {
+            foreach ($networks as $network) {
+                if ((int) $network['id'] === $selected_network_id) {
+                    $selected_network_active = (bool) $network['is_active'];
+                    break;
+                }
+            }
+        }
+
+        // Параметры выбранной сети (для начальной отрисовки)
+        $network_params = [];
+        if ($selected_network_id > 0) {
+            $network_params = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT id, param_name, param_type FROM {$params_table} WHERE network_id = %d ORDER BY id ASC",
+                    $selected_network_id
+                ),
+                ARRAY_A
+            ) ?: [];
+        }
+
         echo '<div class="options_group show_if_external">';
-        echo '<h4 style="padding: 10px 12px; margin: 0; border-bottom: 1px solid #ddd;">' .
-            esc_html__('Параметры URL партнерской ссылки', 'wc-affiliate-url-params') . '</h4>';
+        echo '<h4 style="padding: 10px 12px; margin: 0; border-bottom: 1px solid #ddd;">'
+            . esc_html__('Партнерская сеть', 'wc-affiliate-url-params') . '</h4>';
 
-        for ($i = 1; $i <= self::PARAM_COUNT; $i++) {
-            $param_key = get_post_meta($post->ID, "_affiliate_param_{$i}_key", true);
-            $param_value = get_post_meta($post->ID, "_affiliate_param_{$i}_value", true);
+        // Выпадающий список сетей
+        echo '<p class="form-field _affiliate_network_id_field" style="padding: 5px 12px;">';
+        echo '<label for="_affiliate_network_id">' . esc_html__('Партнерская сеть', 'wc-affiliate-url-params') . '</label>';
+        echo '<select id="_affiliate_network_id" name="_affiliate_network_id" class="select short">';
+        echo '<option value="">' . esc_html__('Выберите сеть', 'wc-affiliate-url-params') . '</option>';
 
-            echo '<div class="affiliate-url-param-group" style="padding: 12px; border-bottom: 1px solid #f0f0f0;">';
-            echo '<p style="margin: 0 8px;"><strong>' .
-                sprintf(esc_html__('Параметр %d', 'wc-affiliate-url-params'), $i) . '</strong></p>';
+        foreach ($networks as $network) {
+            $network_id = (int) $network['id'];
+            $is_active = (bool) $network['is_active'];
+            $is_selected = ($network_id === $selected_network_id);
 
-            woocommerce_wp_text_input([
-                'id' => "_affiliate_param_{$i}_key",
-                'label' => __('Параметр', 'wc-affiliate-url-params'),
-                'placeholder' => 'subid' . $i,
-                'value' => $param_key,
-                'desc_tip' => true,
-                'description' => __('Имя параметра URL (например: subid1)', 'wc-affiliate-url-params'),
-                'wrapper_class' => 'form-field-wide'
-            ]);
+            // Неактивные сети: показываем только если они уже выбраны у товара
+            if (!$is_active && !$is_selected) {
+                continue;
+            }
 
-            woocommerce_wp_text_input([
-                'id' => "_affiliate_param_{$i}_value",
-                'label' => __('Значение', 'wc-affiliate-url-params'),
-                'placeholder' => 'user или Admitad',
-                'value' => $param_value,
-                'desc_tip' => true,
-                'description' => __('Значение параметра. Используйте "user" для подстановки ID пользователя', 'wc-affiliate-url-params'),
-                'wrapper_class' => 'form-field-wide'
-            ]);
+            $label = esc_html($network['name']);
+            if (!$is_active) {
+                $label .= ' (' . esc_html__('неактивна', 'wc-affiliate-url-params') . ')';
+            }
 
+            printf(
+                '<option value="%d"%s>%s</option>',
+                $network_id,
+                selected($selected_network_id, $network_id, false),
+                $label
+            );
+        }
+
+        echo '</select>';
+        echo '</p>';
+
+        // Предупреждение если сеть отключена
+        if ($selected_network_id > 0 && !$selected_network_active) {
+            echo '<div class="affiliate-network-warning" style="padding: 8px 12px; margin: 5px 12px; background: #fff3cd; border-left: 4px solid #d63638; color: #856404;">';
+            echo esc_html__('Сеть отключена. Товар будет переведен в статус "На утверждении".', 'wc-affiliate-url-params');
             echo '</div>';
         }
+
+        // Контейнер для параметров сети
+        echo '<div id="affiliate-network-params-container">';
+        if (!empty($network_params)) {
+            $this->render_network_params_table($network_params);
+        }
+        echo '</div>';
 
         echo '</div>';
     }
 
     /**
-     * Сохранение данных полей партнерских параметров.
+     * Отрисовка таблицы параметров сети.
      *
-     * Выполняет проверки безопасности (autosave, nonce, права доступа)
-     * и сохраняет данные партнерских параметров в post meta.
+     * @since 2.0.0
      *
-     * @since 1.0.0
+     * @param array $params Массив параметров из cashback_affiliate_network_params.
+     *
+     * @return void
+     */
+    private function render_network_params_table(array $params): void
+    {
+        if (empty($params)) {
+            echo '<p style="padding: 5px 12px; color: #666; font-style: italic;">'
+                . esc_html__('У этой сети нет настроенных параметров.', 'wc-affiliate-url-params') . '</p>';
+            return;
+        }
+
+        echo '<table class="affiliate-network-params-table widefat" style="margin: 10px 12px; width: calc(100% - 24px);">';
+        echo '<thead><tr>';
+        echo '<th>' . esc_html__('Параметр', 'wc-affiliate-url-params') . '</th>';
+        echo '<th>' . esc_html__('Значение', 'wc-affiliate-url-params') . '</th>';
+        echo '<th style="width: 220px;">' . esc_html__('Действия', 'wc-affiliate-url-params') . '</th>';
+        echo '</tr></thead><tbody>';
+
+        foreach ($params as $param) {
+            printf(
+                '<tr data-param-id="%d">'
+                . '<td class="param-cell" data-field="param_name">%s</td>'
+                . '<td class="param-cell" data-field="param_type">%s</td>'
+                . '<td>'
+                . '<button type="button" class="button button-small affiliate-param-edit-btn">%s</button> '
+                . '<button type="button" class="button button-small affiliate-param-save-btn" style="display:none;">%s</button> '
+                . '<button type="button" class="button button-small affiliate-param-cancel-btn" style="display:none;">%s</button> '
+                . '<button type="button" class="button button-small affiliate-param-delete-btn" style="color:#a00;">%s</button>'
+                . '</td></tr>',
+                (int) $param['id'],
+                esc_html($param['param_name']),
+                esc_html($param['param_type'] ?? ''),
+                esc_html__('Редактировать', 'wc-affiliate-url-params'),
+                esc_html__('Сохранить', 'wc-affiliate-url-params'),
+                esc_html__('Отмена', 'wc-affiliate-url-params'),
+                esc_html__('Удалить', 'wc-affiliate-url-params')
+            );
+        }
+
+        echo '</tbody></table>';
+    }
+
+    /**
+     * Сохранение выбранной партнерской сети для товара.
+     *
+     * @since 2.0.0
      *
      * @param int $post_id ID товара.
      *
@@ -122,17 +218,14 @@ class WC_Affiliate_URL_Params
      */
     public function save_custom_fields(int $post_id): void
     {
-        // Проверка autosave
         if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) {
             return;
         }
 
-        // Проверка прав пользователя
         if (!current_user_can('edit_product', $post_id)) {
             return;
         }
 
-        // Проверка nonce
         if (!isset($_POST['_wpnonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_wpnonce'])), 'update-post_' . $post_id)) {
             return;
         }
@@ -143,31 +236,95 @@ class WC_Affiliate_URL_Params
             return;
         }
 
-        for ($i = 1; $i <= self::PARAM_COUNT; $i++) {
-            $param_key = isset($_POST["_affiliate_param_{$i}_key"])
-                ? sanitize_text_field(wp_unslash($_POST["_affiliate_param_{$i}_key"]))
-                : '';
+        $network_id = isset($_POST['_affiliate_network_id'])
+            ? absint($_POST['_affiliate_network_id'])
+            : 0;
 
-            $param_value = isset($_POST["_affiliate_param_{$i}_value"])
-                ? sanitize_text_field(wp_unslash($_POST["_affiliate_param_{$i}_value"]))
-                : '';
+        // Валидация: сеть обязательна для внешних товаров
+        if ($network_id === 0) {
+            set_transient(
+                'cashback_affiliate_network_error_' . get_current_user_id(),
+                __('Выберите партнерскую сеть', 'wc-affiliate-url-params'),
+                30
+            );
+            return;
+        }
 
-            update_post_meta($post_id, "_affiliate_param_{$i}_key", $param_key);
-            update_post_meta($post_id, "_affiliate_param_{$i}_value", $param_value);
+        // Сохраняем ID сети
+        update_post_meta($post_id, '_affiliate_network_id', $network_id);
 
-            // Очищаем кэш при сохранении
-            wp_cache_delete('affiliate_params_' . $post_id, self::CACHE_GROUP);
+        // Очищаем кэш
+        wp_cache_delete('affiliate_params_' . $post_id, self::CACHE_GROUP);
+
+        // Проверяем активность выбранной сети
+        global $wpdb;
+        $networks_table = $wpdb->prefix . 'cashback_affiliate_networks';
+        $is_active = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT is_active FROM {$networks_table} WHERE id = %d",
+            $network_id
+        ));
+
+        if ($is_active === 0) {
+            // Переводим товар в статус "На утверждении"
+            wp_update_post([
+                'ID' => $post_id,
+                'post_status' => 'pending',
+            ]);
+
+            set_transient(
+                'cashback_affiliate_network_warning_' . get_current_user_id(),
+                __('Сеть отключена. Товар переведен в статус "На утверждении".', 'wc-affiliate-url-params'),
+                30
+            );
+        }
+
+        // Удаляем старые мета-ключи (миграция со старого формата)
+        for ($i = 1; $i <= 3; $i++) {
+            delete_post_meta($post_id, "_affiliate_param_{$i}_key");
+            delete_post_meta($post_id, "_affiliate_param_{$i}_value");
+        }
+    }
+
+    /**
+     * Отображение админ-уведомлений (ошибки валидации, предупреждения).
+     *
+     * @since 2.0.0
+     *
+     * @return void
+     */
+    public function show_admin_notices(): void
+    {
+        $user_id = get_current_user_id();
+
+        // Ошибка: сеть не выбрана
+        $error = get_transient('cashback_affiliate_network_error_' . $user_id);
+        if ($error) {
+            printf(
+                '<div class="notice notice-error is-dismissible"><p>%s</p></div>',
+                esc_html($error)
+            );
+            delete_transient('cashback_affiliate_network_error_' . $user_id);
+        }
+
+        // Предупреждение: сеть отключена
+        $warning = get_transient('cashback_affiliate_network_warning_' . $user_id);
+        if ($warning) {
+            printf(
+                '<div class="notice notice-warning is-dismissible"><p>%s</p></div>',
+                esc_html($warning)
+            );
+            delete_transient('cashback_affiliate_network_warning_' . $user_id);
         }
     }
 
     /**
      * Модификация URL внешнего товара с добавлением партнерских параметров.
      *
-     * Добавляет настроенные партнерские параметры к URL внешнего товара.
-     * Поддерживает динамическую подстановку ID пользователя через ключевое слово "user".
-     * Использует кэширование для оптимизации производительности.
+     * Параметры берутся из cashback_affiliate_network_params для выбранной сети.
+     * param_name становится ключом URL-параметра, param_type — значением.
+     * Специальное значение "user" подставляет ID текущего пользователя.
      *
-     * @since 1.0.0
+     * @since 2.0.0
      *
      * @param string     $url     Исходный URL товара.
      * @param WC_Product $product Объект товара WooCommerce.
@@ -203,7 +360,6 @@ class WC_Affiliate_URL_Params
         }
 
         $params = [];
-        $has_user_param = false;
 
         foreach ($cached_params as $i => $param) {
             if (empty($param['key']) || empty($param['value'])) {
@@ -215,10 +371,10 @@ class WC_Affiliate_URL_Params
                 ['source' => self::LOGGER_SOURCE]
             );
 
-            // Проверка на ключевое слово "user"
-            if (strtolower(trim($param['value'])) === 'user') {
-                $has_user_param = true;
+            $param_type = strtolower(trim($param['value']));
 
+            if ($param_type === 'user') {
+                // Подстановка ID пользователя
                 if (is_user_logged_in()) {
                     $params[$param['key']] = get_current_user_id();
                     $logger->debug(
@@ -226,19 +382,26 @@ class WC_Affiliate_URL_Params
                         ['source' => self::LOGGER_SOURCE]
                     );
                 } else {
-                    // Для неавторизованных пользователей добавим placeholder
                     $params[$param['key']] = 'USER_PLACEHOLDER_' . $i;
                     $logger->debug(
                         sprintf('User not logged in, using placeholder: USER_PLACEHOLDER_%d', $i),
                         ['source' => self::LOGGER_SOURCE]
                     );
                 }
+            } elseif ($param_type === 'uuid') {
+                // UUID генерируется на клиенте при каждом клике
+                $params[$param['key']] = 'UUID_PLACEHOLDER_' . $i;
+                $logger->debug(
+                    sprintf('UUID param, using placeholder: UUID_PLACEHOLDER_%d', $i),
+                    ['source' => self::LOGGER_SOURCE]
+                );
             } else {
+                // Статическое значение — подставляется как есть
                 $params[$param['key']] = $param['value'];
             }
         }
 
-        // Добавляем параметры в URL
+        // Добавляем параметры в URL (add_query_arg обрабатывает ? и & автоматически)
         $url = add_query_arg($params, $url);
         $logger->debug(sprintf('Final URL: %s', $url), ['source' => self::LOGGER_SOURCE]);
 
@@ -246,25 +409,49 @@ class WC_Affiliate_URL_Params
     }
 
     /**
-     * Получение партнерских параметров из метаданных товара.
+     * Получение партнерских параметров из БД для товара.
      *
-     * @since 1.0.0
+     * @since 2.0.0
      *
      * @param int $product_id ID товара.
      *
-     * @return array Массив партнерских параметров.
+     * @return array Массив партнерских параметров [ i => ['key' => param_name, 'value' => param_type] ].
      */
     private function get_affiliate_params(int $product_id): array
     {
+        global $wpdb;
+
+        $network_id = (int) get_post_meta($product_id, '_affiliate_network_id', true);
+        if ($network_id <= 0) {
+            return [];
+        }
+
+        // Проверяем активность сети
+        $networks_table = $wpdb->prefix . 'cashback_affiliate_networks';
+        $is_active = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT is_active FROM {$networks_table} WHERE id = %d",
+            $network_id
+        ));
+
+        if ($is_active === 0) {
+            return [];
+        }
+
+        $params_table = $wpdb->prefix . 'cashback_affiliate_network_params';
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT param_name, param_type FROM {$params_table} WHERE network_id = %d ORDER BY id ASC",
+            $network_id
+        ), ARRAY_A);
+
+        if (empty($rows)) {
+            return [];
+        }
+
         $params = [];
-
-        for ($i = 1; $i <= self::PARAM_COUNT; $i++) {
-            $param_key = get_post_meta($product_id, "_affiliate_param_{$i}_key", true);
-            $param_value = get_post_meta($product_id, "_affiliate_param_{$i}_value", true);
-
+        foreach ($rows as $i => $row) {
             $params[$i] = [
-                'key' => $param_key,
-                'value' => $param_value,
+                'key'   => $row['param_name'],
+                'value' => $row['param_type'],
             ];
         }
 
@@ -273,9 +460,6 @@ class WC_Affiliate_URL_Params
 
     /**
      * Добавление data-product-id к ссылкам внешних товаров.
-     *
-     * Добавляет атрибут data-product-id для обработки JavaScript
-     * и target="_blank" для открытия в новой вкладке.
      *
      * @since 1.0.0
      *
@@ -295,9 +479,6 @@ class WC_Affiliate_URL_Params
     /**
      * Модификация кнопки внешнего товара на странице товара.
      *
-     * Выводит кастомную кнопку с партнерскими параметрами
-     * и data-атрибутом для JavaScript обработки.
-     *
      * @since 1.0.0
      *
      * @return void
@@ -310,26 +491,19 @@ class WC_Affiliate_URL_Params
             return;
         }
 
-        // Получаем базовый URL и применяем модификацию
         $base_url = $product->get_product_url();
         $product_url = $this->modify_external_url($base_url, $product);
         $button_text = $product->single_add_to_cart_text();
 
-        // Выводим кнопку с data-product-id
         echo '<p class="cart">';
         echo '<a href="' . esc_url($product_url) . '" class="single_add_to_cart_button button alt" data-product-id="' . esc_attr((string) $product->get_id()) . '" target="_blank">';
         echo esc_html($button_text);
         echo '</a>';
         echo '</p>';
     }
-    // Этот метод больше не нужен, так как мы используем data-атрибуты
-    // public function modify_external_url_button_text(string $text, WC_Product $product): string ...
 
     /**
      * Подключение скриптов и стилей для фронтенда.
-     *
-     * Загружает JavaScript для обработки кликов по партнерским ссылкам
-     * и CSS для модального окна авторизации.
      *
      * @since 1.0.0
      *
@@ -337,7 +511,6 @@ class WC_Affiliate_URL_Params
      */
     public function enqueue_frontend_scripts(): void
     {
-        // Загружаем скрипты на всех страницах, где может быть WooCommerce контент
         if (!is_admin()) {
             wp_enqueue_script(
                 'wc-affiliate-url-params',
@@ -368,12 +541,9 @@ class WC_Affiliate_URL_Params
     }
 
     /**
-     * Подключение стилей для админки.
+     * Подключение стилей и скриптов для админки.
      *
-     * Загружает CSS для стилизации полей партнерских параметров
-     * в админ-панели редактирования товара.
-     *
-     * @since 1.0.0
+     * @since 2.0.0
      *
      * @param string $hook Текущая страница админки.
      *
@@ -395,8 +565,23 @@ class WC_Affiliate_URL_Params
             'wc-affiliate-url-params-admin',
             plugins_url('assets/css/admin.css', __FILE__),
             [],
-            '1.0.0'
+            '1.1.0'
         );
+
+        wp_enqueue_script(
+            'wc-affiliate-network-admin',
+            plugins_url('assets/js/admin-affiliate-network.js', __FILE__),
+            ['jquery'],
+            '1.0.0',
+            true
+        );
+
+        wp_localize_script('wc-affiliate-network-admin', 'wcAffiliateNetworkData', [
+            'ajaxUrl'          => admin_url('admin-ajax.php'),
+            'getParamsNonce'   => wp_create_nonce('get_network_params_nonce'),
+            'updateParamNonce' => wp_create_nonce('update_network_param_nonce'),
+            'deleteParamNonce' => wp_create_nonce('delete_network_param_nonce'),
+        ]);
     }
 }
 

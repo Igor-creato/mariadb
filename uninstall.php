@@ -160,6 +160,13 @@ function cashback_plugin_uninstall(): void
         delete_option($option);
     }
 
+    // Delete affiliate network post_meta from all products
+    $wpdb->query("DELETE FROM {$wpdb->postmeta} WHERE meta_key = '_affiliate_network_id'");
+    // Clean up old affiliate param meta (if any remain from pre-2.0)
+    $wpdb->query(
+        "DELETE FROM {$wpdb->postmeta} WHERE meta_key LIKE '_affiliate_param_%_key' OR meta_key LIKE '_affiliate_param_%_value'"
+    );
+
     // Delete transients
     delete_transient('cashback_support_flush_rules');
 

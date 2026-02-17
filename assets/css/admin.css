@@ -1,27 +1,30 @@
 /* Стили для админки */
-.affiliate-url-param-group {
-    background: #f9f9f9;
-    margin: 0 !important;
+
+/* Таблица параметров партнерской сети в метабоксе товара */
+.affiliate-network-params-table {
+    border-collapse: collapse;
 }
 
-.affiliate-url-param-group:last-child {
-    border-bottom: none !important;
+.affiliate-network-params-table th,
+.affiliate-network-params-table td {
+    padding: 6px 8px;
+    vertical-align: middle;
 }
 
-.affiliate-url-param-group .form-field-wide {
-    margin-bottom: 0;
+.affiliate-network-params-table .param-inline-input {
+    width: 100%;
+    box-sizing: border-box;
 }
 
-.affiliate-url-param-group p._affiliate_param_1_key_field,
-.affiliate-url-param-group p._affiliate_param_2_key_field,
-.affiliate-url-param-group p._affiliate_param_3_key_field {
-    margin-bottom: 8px !important;
+/* Предупреждение об отключенной сети */
+.affiliate-network-warning {
+    font-size: 13px;
 }
 
-.affiliate-url-param-group p._affiliate_param_1_value_field,
-.affiliate-url-param-group p._affiliate_param_2_value_field,
-.affiliate-url-param-group p._affiliate_param_3_value_field {
-    margin-bottom: 0 !important;
+/* Подсветка ошибки для выпадающего списка сети */
+#_affiliate_network_id.select-error {
+    border-color: #d63638 !important;
+    box-shadow: 0 0 0 1px #d63638 !important;
 }
 
 /* Стили для неактивных платежных систем и банков в таблице выплат */

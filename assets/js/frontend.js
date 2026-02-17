@@ -20,7 +20,7 @@
           if ($form.length) {
             href =
               $form.find('input[name="product_url"]').val() ||
-              $form.find('a[href*="USER_PLACEHOLDER_"]').attr('href') ||
+              $form.find('a[href*="USER_PLACEHOLDER_"], a[href*="UUID_PLACEHOLDER_"]').attr('href') ||
               $form.data('product-url');
           }
 
@@ -30,13 +30,13 @@
               .closest(
                 '.product, .wd-quick-view, .quick-view-modal, .wd-popup, .single-product, .products, .product-grid, .wc-block-grid__products, .products-list',
               )
-              .find('a[href*="USER_PLACEHOLDER_"]')
+              .find('a[href*="USER_PLACEHOLDER_"], a[href*="UUID_PLACEHOLDER_"]')
               .attr('href');
           }
 
           // Последний вариант - глобальный поиск
           if (!href) {
-            href = $('a[href*="USER_PLACEHOLDER_"]').first().attr('href');
+            href = $('a[href*="USER_PLACEHOLDER_"], a[href*="UUID_PLACEHOLDER_"]').first().attr('href');
           }
         }
 
@@ -47,35 +47,51 @@
 
         console.log('WC Affiliate: Found purchase button with href:', href);
 
-        // ПРОВЕРКА: содержит ли href USER_PLACEHOLDER_
-        if (!href.includes('USER_PLACEHOLDER_')) {
+        var hasUserPlaceholder = href.includes('USER_PLACEHOLDER_');
+        var hasUuidPlaceholder = href.includes('UUID_PLACEHOLDER_');
+
+        // ПРОВЕРКА: содержит ли href какие-либо placeholder
+        if (!hasUserPlaceholder && !hasUuidPlaceholder) {
           console.log(
-            'WC Affiliate: Href does not contain USER_PLACEHOLDER_, skipping purchase button',
+            'WC Affiliate: Href does not contain any placeholders, skipping purchase button',
           );
           return; // Не наш элемент
         }
 
+        // Перехватываем клик — браузер не должен перейти по старому URL с плейсхолдерами
+        e.preventDefault();
+        e.stopImmediatePropagation();
+
         console.log(
-          'WC Affiliate: Intercepted purchase button with USER_PLACEHOLDER_:',
+          'WC Affiliate: Intercepted purchase button with placeholders:',
           href,
           $button,
         );
 
-        // Проверяем авторизацию
-        if (!wcAffiliateParams.isLoggedIn) {
-          console.log('WC Affiliate: User not logged in, showing warning for purchase button');
+        var processedUrl = href;
 
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          showAuthWarning($button, href);
-          return false;
-        } else {
-          console.log('WC Affiliate: User logged in, replacing placeholder in purchase button');
-          // Если пользователь авторизован, заменяем плейсхолдер на ID
-          const finalUrl = replaceUserPlaceholders(href, wcAffiliateParams.userId);
-          $button.attr('href', finalUrl);
-          // Продолжаем стандартное поведение
+        // Обработка USER_PLACEHOLDER — проверяем авторизацию
+        if (hasUserPlaceholder) {
+          if (!wcAffiliateParams.isLoggedIn) {
+            console.log('WC Affiliate: User not logged in, showing warning for purchase button');
+            // Передаём URL с плейсхолдерами — UUID генерируется при клике на "Продолжить"
+            showAuthWarning($button, processedUrl);
+            return false;
+          } else {
+            console.log('WC Affiliate: User logged in, replacing user placeholder');
+            processedUrl = replaceUserPlaceholders(processedUrl, wcAffiliateParams.userId);
+          }
         }
+
+        // Заменяем UUID placeholder уникальным UUID при каждом клике
+        if (hasUuidPlaceholder) {
+          processedUrl = replaceUuidPlaceholders(processedUrl);
+        }
+
+        // Открываем URL с подставленными значениями в новой вкладке
+        console.log('WC Affiliate: Opening processed URL:', processedUrl);
+        window.open(processedUrl, '_blank');
+        return false;
       },
     );
   });
@@ -87,7 +103,7 @@
     // Удаляем существующее модальное окно, если есть
     $('#wc-affiliate-warning-modal').remove();
 
-    // Создаем модальное окно
+    // Создаем модальное окно (кнопка "Продолжить" без href — URL формируется при клике)
     const modal = `
             <div id="wc-affiliate-warning-modal" class="wc-affiliate-modal">
                 <div class="wc-affiliate-modal-content">
@@ -96,9 +112,9 @@
                     <h3 class="wc-affiliate-modal-title">Внимание</h3>
                     <p class="wc-affiliate-modal-message">${wcAffiliateParams.warningMessage}</p>
                     <div class="wc-affiliate-modal-actions">
-                        <a href="${replaceUserPlaceholdersWithUnregistered(originalUrl)}"
+                        <a href="#"
                            class="wc-affiliate-btn wc-affiliate-btn-primary"
-                           id="wc-affiliate-continue" target="_blank">
+                           id="wc-affiliate-continue">
                             Продолжить без авторизации
                         </a>
                         <a href="${
@@ -117,6 +133,16 @@
     setTimeout(() => {
       $('#wc-affiliate-warning-modal').addClass('show');
     }, 10);
+
+    // Клик на "Продолжить" — генерируем свежий UUID при каждом клике
+    $('#wc-affiliate-continue').on('click', function (e) {
+      e.preventDefault();
+      var url = replaceUserPlaceholdersWithUnregistered(originalUrl);
+      url = replaceUuidPlaceholders(url);
+      console.log('WC Affiliate: Continue without auth, URL:', url);
+      window.open(url, '_blank');
+      closeModal();
+    });
 
     // Обработчики закрытия
     $('#wc-affiliate-warning-modal').on('click', '.wc-affiliate-modal-close', function () {
@@ -147,6 +173,30 @@
    */
   function replaceUserPlaceholders(url, userId) {
     return url.replace(/USER_PLACEHOLDER_\d+/g, userId);
+  }
+
+  /**
+   * Замена UUID_PLACEHOLDER_ на уникальный UUID при каждом клике
+   */
+  function replaceUuidPlaceholders(url) {
+    return url.replace(/UUID_PLACEHOLDER_\d+/g, function () {
+      return generateUuid();
+    });
+  }
+
+  /**
+   * Генерация UUID v4
+   */
+  function generateUuid() {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+      return crypto.randomUUID();
+    }
+    // Fallback для старых браузеров
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+      var r = (Math.random() * 16) | 0;
+      var v = c === 'x' ? r : (r & 0x3) | 0x8;
+      return v.toString(16);
+    });
   }
 
   /**
