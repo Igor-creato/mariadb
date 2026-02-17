@@ -67,10 +67,6 @@ class WC_Affiliate_URL_Params
 
         $product = wc_get_product($post->ID);
 
-        if (!$product || $product->get_type() !== 'external') {
-            return;
-        }
-
         $networks_table = $wpdb->prefix . 'cashback_affiliate_networks';
         $params_table = $wpdb->prefix . 'cashback_affiliate_network_params';
 
