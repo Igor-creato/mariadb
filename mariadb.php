@@ -117,7 +117,7 @@ class Mariadb_Plugin
             KEY `idx_refunded` (`refunded_at`),
             KEY `idx_payout_method_slug` (`payout_method`),
             KEY `idx_user_created` (`user_id`,`created_at` DESC),
-            CONSTRAINT `fk_payout_user` FOREIGN KEY (`user_id`) REFERENCES `{$wpdb->prefix}users` (`ID`) ON DELETE CASCADE,
+            CONSTRAINT `fk_payout_user` FOREIGN KEY (`user_id`) REFERENCES `{$wpdb->prefix}users` (`ID`) ON DELETE RESTRICT,
             CHECK (total_amount > 0)
         ) ENGINE=InnoDB {$charset_collate} COMMENT='Заявки на выплаты с защитой от дублирования';";
 
@@ -151,7 +151,7 @@ class Mariadb_Plugin
             CONSTRAINT `fk_transactions_user`
             FOREIGN KEY (`user_id`)
             REFERENCES `{$wpdb->prefix}users` (`ID`)
-            ON DELETE CASCADE,
+            ON DELETE RESTRICT,
             CONSTRAINT `chk_applied_cashback_rate_range`
             CHECK (`applied_cashback_rate` BETWEEN 0.00 AND 100.00),
             CONSTRAINT `chk_cashback_positive`
@@ -194,7 +194,7 @@ class Mariadb_Plugin
             CONSTRAINT `fk_balance_user`
             FOREIGN KEY (`user_id`)
             REFERENCES `{$wpdb->prefix}users` (`ID`)
-            ON DELETE CASCADE,
+            ON DELETE RESTRICT,
             CHECK (available_balance >= 0),
             CHECK (pending_balance >= 0),
             CHECK (paid_balance >= 0),
@@ -329,6 +329,9 @@ class Mariadb_Plugin
 
         // Миграция: увеличение ban_reason с varchar(25) до text
         $this->migrate_ban_reason_column();
+
+        // Миграция: замена ON DELETE CASCADE на ON DELETE RESTRICT для финансовых таблиц
+        $this->migrate_financial_fk_to_restrict();
 
         error_log('Mariadb Plugin: Tables created successfully');
     }
@@ -664,6 +667,83 @@ class Mariadb_Plugin
         if ($column && strtolower($column->DATA_TYPE) !== 'text') {
             $wpdb->query("ALTER TABLE `{$table}` MODIFY `ban_reason` text DEFAULT NULL COMMENT 'Причина блокировки'");
             error_log('Mariadb Plugin: Migrated ban_reason column to TEXT');
+        }
+    }
+
+    /**
+     * Миграция: замена ON DELETE CASCADE на ON DELETE RESTRICT для финансовых таблиц
+     *
+     * Защита от каскадного удаления финансовых данных при удалении пользователя из wp_users.
+     * Затрагивает: cashback_user_balance, cashback_transactions, cashback_payout_requests.
+     *
+     * @return void
+     */
+    private function migrate_financial_fk_to_restrict(): void
+    {
+        global $wpdb;
+
+        $fk_migrations = [
+            [
+                'table' => $wpdb->prefix . 'cashback_user_balance',
+                'constraint' => 'fk_balance_user',
+                'column' => 'user_id',
+                'ref_table' => $wpdb->prefix . 'users',
+                'ref_column' => 'ID',
+            ],
+            [
+                'table' => $wpdb->prefix . 'cashback_transactions',
+                'constraint' => 'fk_transactions_user',
+                'column' => 'user_id',
+                'ref_table' => $wpdb->prefix . 'users',
+                'ref_column' => 'ID',
+            ],
+            [
+                'table' => $wpdb->prefix . 'cashback_payout_requests',
+                'constraint' => 'fk_payout_user',
+                'column' => 'user_id',
+                'ref_table' => $wpdb->prefix . 'users',
+                'ref_column' => 'ID',
+            ],
+        ];
+
+        foreach ($fk_migrations as $fk) {
+            // Проверяем текущее правило DELETE_RULE для FK
+            $delete_rule = $wpdb->get_var($wpdb->prepare(
+                "SELECT DELETE_RULE
+                 FROM information_schema.REFERENTIAL_CONSTRAINTS
+                 WHERE CONSTRAINT_SCHEMA = DATABASE()
+                   AND TABLE_NAME = %s
+                   AND CONSTRAINT_NAME = %s",
+                $fk['table'],
+                $fk['constraint']
+            ));
+
+            // Если FK не существует или уже RESTRICT — пропускаем
+            if ($delete_rule === null || $delete_rule === 'RESTRICT') {
+                continue;
+            }
+
+            // Пересоздаём FK с ON DELETE RESTRICT
+            $wpdb->query("ALTER TABLE `{$fk['table']}` DROP FOREIGN KEY `{$fk['constraint']}`");
+
+            if ($wpdb->last_error) {
+                error_log("Mariadb Plugin Error: Failed to drop FK {$fk['constraint']}: " . $wpdb->last_error);
+                continue;
+            }
+
+            $result = $wpdb->query(
+                "ALTER TABLE `{$fk['table']}`
+                 ADD CONSTRAINT `{$fk['constraint']}`
+                 FOREIGN KEY (`{$fk['column']}`)
+                 REFERENCES `{$fk['ref_table']}` (`{$fk['ref_column']}`)
+                 ON DELETE RESTRICT"
+            );
+
+            if ($result === false) {
+                error_log("Mariadb Plugin Error: Failed to recreate FK {$fk['constraint']} with RESTRICT: " . $wpdb->last_error);
+            } else {
+                error_log("Mariadb Plugin: Migrated FK {$fk['constraint']} from CASCADE to RESTRICT");
+            }
         }
     }
 
