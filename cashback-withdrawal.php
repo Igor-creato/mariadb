@@ -1038,7 +1038,7 @@ class CashbackWithdrawal
                 'cashback-withdrawal-styles',
                 plugins_url('assets/css/frontend.css', __FILE__),
                 array(),
-                '1.4.0'
+                '1.5.0'
             );
 
             // Подключаем скрипты для обработки формы вывода
@@ -1046,7 +1046,7 @@ class CashbackWithdrawal
                 'cashback-withdrawal-js',
                 plugins_url('assets/js/frontend.js', __FILE__),
                 array('jquery'),
-                '1.4.0',
+                '1.5.0',
                 true
             );
 

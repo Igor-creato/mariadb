@@ -2,32 +2,36 @@
 
 .cashback-support-tabs {
     display: flex;
-    gap: 8px;
-    margin-bottom: 20px;
+    gap: 4px;
+    margin-bottom: 0;
+    background: transparent;
+    border-bottom: 2px solid var(--btn-accented-bgcolor, #0073aa);
 }
-.cashback-support-tab {
-    padding: 10px 24px;
-    border: 1px solid #ddd;
-    background: #f5f5f5;
-    color: #666;
+.cashback-support-tabs button.cashback-support-tab {
+    border: none !important;
+    border-radius: 10px 10px 0 0 !important;
+    padding: 12px 24px !important;
     cursor: pointer;
-    font-size: 14px;
-    font-weight: 500;
-    border-radius: 8px;
-    transition: all 0.2s ease;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-}
-.cashback-support-tab:hover {
-    background: #eaeaea;
-    color: #333;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.1);
-}
-.cashback-support-tab.active {
-    background: #333;
-    color: #fff;
-    border-color: #333;
+    font-size: 15px;
     font-weight: 600;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    color: #555 !important;
+    background-color: #e0e0e0 !important;
+    transition: background-color 0.2s, color 0.2s, box-shadow 0.2s;
+    position: relative;
+    box-shadow: 0 -2px 6px rgba(0, 0, 0, 0.08) !important;
+}
+.cashback-support-tabs button.cashback-support-tab:hover {
+    background-color: #c8c8c8 !important;
+    color: #333 !important;
+}
+.cashback-support-tabs button.cashback-support-tab.active {
+    background-color: var(--btn-accented-bgcolor, #0073aa) !important;
+    color: var(--btn-accented-color, #fff) !important;
+    box-shadow: 0 -3px 8px rgba(0, 0, 0, 0.12) !important;
+}
+.cashback-support-tabs button.cashback-support-tab.active:hover {
+    background-color: var(--btn-accented-bgcolor, #0073aa) !important;
+    color: var(--btn-accented-color, #fff) !important;
 }
 .support-tab-badge {
     display: inline-block;
@@ -45,7 +49,7 @@
     vertical-align: middle;
 }
 .cashback-support-tab-content {
-    padding: 10px 0;
+    padding: 20px 0 10px;
 }
 .support-ticket-row {
     display: flex;

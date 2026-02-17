@@ -103,7 +103,7 @@ class Cashback_User_Support
             'cashback-user-support-css',
             plugins_url('assets/css/user-support.css', __FILE__),
             [],
-            '1.0.0'
+            '1.1.0'
         );
 
         wp_enqueue_script(
