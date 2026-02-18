@@ -1022,7 +1022,7 @@ class CashbackWithdrawal
             }
 
             if ($error_message === 'Insufficient available balance after lock') {
-                wp_send_json_error(__('Недостаточно средств для вывода. Пожалуйста, обновите страницу и попробуйте снова.', 'cashback-plugin'));
+                wp_send_json_error(__('Недостаточно средств для вывода.', 'cashback-plugin'));
             } elseif ($error_message === 'balance_below_min') {
                 $min_amt = $this->get_min_payout_amount($user_id);
                 wp_send_json_error(sprintf(__('Ваш баланс меньше минимально допустимой суммы для вывода %s', 'cashback-plugin'), wc_price($min_amt)));
@@ -1051,7 +1051,7 @@ class CashbackWithdrawal
             // Подключаем скрипты для обработки формы вывода
             wp_enqueue_script(
                 'cashback-withdrawal-js',
-                plugins_url('assets/js/frontend.js', __FILE__),
+                plugins_url('assets/js/cashback-withdrawal.js', __FILE__),
                 array('jquery'),
                 '1.5.0',
                 true

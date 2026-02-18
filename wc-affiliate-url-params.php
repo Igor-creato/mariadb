@@ -1108,7 +1108,7 @@ class WC_Affiliate_URL_Params
         if (!is_admin()) {
             wp_enqueue_script(
                 'wc-affiliate-url-params',
-                plugins_url('assets/js/frontend.js', __FILE__),
+                plugins_url('assets/js/affiliate-guest-warning.js', __FILE__),
                 ['jquery'],
                 '4.0.0',
                 true
