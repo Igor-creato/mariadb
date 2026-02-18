@@ -22,14 +22,33 @@ class WC_Affiliate_URL_Params
     private const LOGGER_SOURCE = 'wc-affiliate-url-params';
 
     /**
-     * Rate limiting: 3 уровня за RATE_LIMIT_WINDOW_SECONDS (60 сек).
+     * Rate limiting: двухуровневые ключи (без User-Agent).
      *
-     * <= SPAM_THRESHOLD:  Норма — redirect + лог (spam_click=0).
-     * > SPAM_THRESHOLD и < BLOCK_THRESHOLD: Redirect + лог (spam_click=1). Кэшбэк только после ручной проверки.
-     * >= BLOCK_THRESHOLD: Redirect НЕТ. Защита от DDoS и бана CPA.
+     * PER_PRODUCT — счётчик по IP + product_id.
+     *   Ловит накрутку конкретного оффера.
+     *
+     * GLOBAL — счётчик по IP (без product_id).
+     *   Ловит массовое кликание по разным товарам.
+     *   Пороги выше из-за CGNAT (один IP = много пользователей).
+     *
+     * UA НЕ используется в ключах rate limit:
+     *   - Боты меняют UA на каждый запрос → обход лимита.
+     *   - CGNAT: разные UA с одного IP = разные ключи = фрагментация.
+     * Bot detection через is_bot_user_agent() — отдельный слой.
+     *
+     * Три статуса: normal → spam (лог + флаг) → blocked (429, без лога).
+     *
+     * Для production рекомендуется Redis/Memcached object cache.
      */
-    private const RATE_LIMIT_SPAM_THRESHOLD = 5;
-    private const RATE_LIMIT_BLOCK_THRESHOLD = 100;
+
+    // --- Per-product лимиты (IP + product_id) ---
+    private const RATE_PER_PRODUCT_SPAM  = 3;   // >3 кликов на один товар за 60с → spam
+    private const RATE_PER_PRODUCT_BLOCK = 10;  // >=10 → blocked
+
+    // --- Глобальные лимиты (IP, любые товары) ---
+    private const RATE_GLOBAL_SPAM  = 10;  // >10 кликов суммарно за 60с → spam
+    private const RATE_GLOBAL_BLOCK = 60;  // >=60 → blocked (CGNAT-safe)
+
     private const RATE_LIMIT_WINDOW_SECONDS = 60;
 
     /**
@@ -251,14 +270,14 @@ class WC_Affiliate_URL_Params
         foreach ($params as $param) {
             printf(
                 '<tr data-param-id="%d">'
-                . '<td class="param-cell" data-field="param_name">%s</td>'
-                . '<td class="param-cell" data-field="param_type">%s</td>'
-                . '<td>'
-                . '<button type="button" class="button button-small affiliate-param-edit-btn">%s</button> '
-                . '<button type="button" class="button button-small affiliate-param-save-btn" style="display:none;">%s</button> '
-                . '<button type="button" class="button button-small affiliate-param-cancel-btn" style="display:none;">%s</button> '
-                . '<button type="button" class="button button-small affiliate-param-delete-btn" style="color:#a00;">%s</button>'
-                . '</td></tr>',
+                    . '<td class="param-cell" data-field="param_name">%s</td>'
+                    . '<td class="param-cell" data-field="param_type">%s</td>'
+                    . '<td>'
+                    . '<button type="button" class="button button-small affiliate-param-edit-btn">%s</button> '
+                    . '<button type="button" class="button button-small affiliate-param-save-btn" style="display:none;">%s</button> '
+                    . '<button type="button" class="button button-small affiliate-param-cancel-btn" style="display:none;">%s</button> '
+                    . '<button type="button" class="button button-small affiliate-param-delete-btn" style="color:#a00;">%s</button>'
+                    . '</td></tr>',
                 (int) $param['id'],
                 esc_html($param['param_name']),
                 esc_html($param['param_type'] ?? ''),
@@ -594,10 +613,35 @@ class WC_Affiliate_URL_Params
                 ? esc_url_raw(wp_unslash($_SERVER['HTTP_REFERER']))
                 : null;
 
-            // Rate Limiting: 3 уровня (normal / spam / blocked)
-            $rate_status = $this->get_click_rate_status($ip_address, $product_id, $user_agent ?? '');
+            // ─── BOT DETECTION (мягкий режим) ───
+            // Redirect проходит, но клик помечается spam в БД.
+            // Для жёсткого режима (403) — замени на блок ниже.
+            $force_spam = $this->is_bot_user_agent($user_agent ?? '');
 
-            // 100+ кликов/мин → блокировка (защита от DDoS и бана CPA)
+            // Жёсткий режим (403, бот не получает redirect):
+            // if ($this->is_bot_user_agent($user_agent ?? '')) {
+            //     if (defined('WP_DEBUG') && WP_DEBUG) {
+            //         error_log(sprintf(
+            //             '[wc-affiliate-url-params] Bot detected: IP=%s UA=%s product=%d',
+            //             $ip_address,
+            //             $user_agent ?? 'empty',
+            //             $product_id
+            //         ));
+            //     }
+            //     status_header(403);
+            //     nocache_headers();
+            //     exit;
+            // }
+
+            // ─── Rate Limiting: 2 уровня по IP (без UA) ───
+            $rate_status = $this->get_click_rate_status($ip_address, $product_id);
+
+            // Bot detection повышает статус до spam (но не до blocked)
+            if ($force_spam && $rate_status === 'normal') {
+                $rate_status = 'spam';
+            }
+
+            // blocked → 429, защита от DDoS и бана CPA (без записи в БД)
             if ($rate_status === 'blocked') {
                 status_header(429);
                 nocache_headers();
@@ -742,35 +786,137 @@ class WC_Affiliate_URL_Params
     }
 
     /**
-     * Трёхуровневый rate limit по IP + User Agent + product_id.
+     * Проверяет User-Agent на известные бот-сигнатуры.
      *
-     * Использует WordPress transients (wp_options без Redis, RAM с Redis).
-     * Счётчик инкрементируется при каждом вызове (включая spam).
+     * Не блокирует поисковых ботов (они не кликают по affiliate ссылкам,
+     * но если дойдут до ?cashback_click — это уже подозрительно).
      *
-     * @since 4.1.0
+     * @since 4.2.0
+     *
+     * @param string $user_agent Raw User-Agent строка.
+     *
+     * @return bool true если UA похож на бота/скрипт.
+     */
+    private function is_bot_user_agent(string $user_agent): bool
+    {
+        // Пустой UA — однозначно не браузер
+        if (trim($user_agent) === '') {
+            return true;
+        }
+
+        // Слишком короткий UA (нормальный браузер > 40 символов)
+        if (strlen($user_agent) < 20) {
+            return true;
+        }
+
+        // Известные бот/скрипт сигнатуры (lowercase для сравнения)
+        $bot_signatures = [
+            'curl/',
+            'wget/',
+            'python-requests',
+            'python-urllib',
+            'python/',
+            'httpie/',
+            'java/',
+            'apache-httpclient',
+            'go-http-client',
+            'node-fetch',
+            'axios/',
+            'undici/',
+            'scrapy',
+            'mechanize',
+            'libwww-perl',
+            'lwp-trivial',
+            'php/',
+            'guzzlehttp',
+            'okhttp',
+            'headlesschrome',
+            'phantomjs',
+            'selenium',
+            'puppeteer',
+            'playwright',
+        ];
+
+        $ua_lower = strtolower($user_agent);
+
+        foreach ($bot_signatures as $sig) {
+            if (str_contains($ua_lower, $sig)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Двухуровневый rate limit без User-Agent.
+     *
+     * Ключи:
+     *   1. per_product: md5(IP + product_id) — ловит накрутку оффера
+     *   2. global:      md5(IP)              — ловит массовый фрод / DDoS
+     *
+     * UA не используется в ключах:
+     *   - Боты меняют UA на каждый запрос → обход.
+     *   - CGNAT: разные UA = разные ключи = один пользователь исчерпает лимит соты.
+     *
+     * Логика:
+     *   - Если ЛЮБОЙ ключ >= BLOCK → 'blocked'
+     *   - Если ЛЮБОЙ ключ > SPAM → 'spam'
+     *   - Иначе → 'normal'
+     *
+     * Оптимизация: если статус уже 'blocked', счётчик НЕ перезаписывается
+     * (экономим запись в wp_options / object cache).
+     *
+     * @since 4.3.0
      *
      * @param string $ip_address IP адрес клиента.
      * @param int    $product_id ID товара.
-     * @param string $user_agent User-Agent браузера.
      *
      * @return string 'normal' | 'spam' | 'blocked'
      */
-    private function get_click_rate_status(string $ip_address, int $product_id, string $user_agent): string
+    private function get_click_rate_status(string $ip_address, int $product_id): string
     {
-        $raw_key = $ip_address . '|' . $user_agent . '|' . $product_id;
-        $hash = substr(md5($raw_key), 0, 12);
-        $transient_key = 'cb_clk_' . $hash;
+        $window = self::RATE_LIMIT_WINDOW_SECONDS;
 
-        $count = (int) get_transient($transient_key);
-        $new_count = $count + 1;
+        // --- Ключ 1: per-product (IP + product_id, без UA) ---
+        $pp_hash = substr(md5($ip_address . '|' . $product_id), 0, 12);
+        $pp_key  = 'cb_pp_' . $pp_hash;
 
-        set_transient($transient_key, $new_count, self::RATE_LIMIT_WINDOW_SECONDS);
+        // --- Ключ 2: global (IP only, без UA и product_id) ---
+        $gl_hash = substr(md5($ip_address), 0, 12);
+        $gl_key  = 'cb_gl_' . $gl_hash;
 
-        if ($new_count >= self::RATE_LIMIT_BLOCK_THRESHOLD) {
+        // Читаем текущие счётчики
+        $pp_count = (int) get_transient($pp_key);
+        $gl_count = (int) get_transient($gl_key);
+
+        // Проверяем блокировку ДО инкремента (не тратим write на заблокированных)
+        if (
+            $pp_count >= self::RATE_PER_PRODUCT_BLOCK ||
+            $gl_count >= self::RATE_GLOBAL_BLOCK
+        ) {
             return 'blocked';
         }
 
-        if ($new_count > self::RATE_LIMIT_SPAM_THRESHOLD) {
+        // Инкрементируем
+        $pp_new = $pp_count + 1;
+        $gl_new = $gl_count + 1;
+
+        set_transient($pp_key, $pp_new, $window);
+        set_transient($gl_key, $gl_new, $window);
+
+        // Проверяем после инкремента
+        if (
+            $pp_new >= self::RATE_PER_PRODUCT_BLOCK ||
+            $gl_new >= self::RATE_GLOBAL_BLOCK
+        ) {
+            return 'blocked';
+        }
+
+        if (
+            $pp_new > self::RATE_PER_PRODUCT_SPAM ||
+            $gl_new > self::RATE_GLOBAL_SPAM
+        ) {
             return 'spam';
         }
 
@@ -778,12 +924,13 @@ class WC_Affiliate_URL_Params
     }
 
     /**
-     * Запись клика в cashback_click_log с транзакцией.
+     * Запись клика в cashback_click_log.
      *
+     * Без транзакции — одиночный INSERT не требует START TRANSACTION.
      * Ошибка записи логируется, но не блокирует редирект пользователя.
      * user_id = 0 для гостей (не NULL), чтобы использовать единый %d плейсхолдер.
      *
-     * @since 3.0.0
+     * @since 4.2.0
      *
      * @param array $data Данные клика (user_id: int, 0 для гостей).
      *
@@ -798,47 +945,98 @@ class WC_Affiliate_URL_Params
         // Время в UTC с микросекундами
         $created_at = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Y-m-d H:i:s.u');
 
-        try {
-            $wpdb->query('START TRANSACTION');
+        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $table is a safe prefixed table name
+        $result = $wpdb->query($wpdb->prepare(
+            "INSERT INTO `{$table}` (click_id, user_id, session_id, product_id, cpa_network, affiliate_url, ip_address, user_agent, referer, spam_click, created_at)
+             VALUES (%s, %d, %s, %d, %s, %s, %s, %s, %s, %d, %s)",
+            $data['click_id'],
+            absint($data['user_id']),
+            $data['session_id'],
+            $data['product_id'],
+            $data['cpa_network'],
+            $data['affiliate_url'],
+            $data['ip_address'],
+            $data['user_agent'],
+            $data['referer'],
+            absint($data['spam_click'] ?? 0),
+            $created_at
+        ));
 
-            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $table is a safe prefixed table name
-            $result = $wpdb->query($wpdb->prepare(
-                "INSERT INTO `{$table}` (click_id, user_id, session_id, product_id, cpa_network, affiliate_url, ip_address, user_agent, referer, spam_click, created_at)
-                 VALUES (%s, %d, %s, %d, %s, %s, %s, %s, %s, %d, %s)",
-                $data['click_id'],
-                absint($data['user_id']),
-                $data['session_id'],
-                $data['product_id'],
-                $data['cpa_network'],
-                $data['affiliate_url'],
-                $data['ip_address'],
-                $data['user_agent'],
-                $data['referer'],
-                absint($data['spam_click'] ?? 0),
-                $created_at
-            ));
-
-            if ($result === false) {
-                $wpdb->query('ROLLBACK');
-                $logger = wc_get_logger();
-                $logger->error(
-                    sprintf('Ошибка записи клика для товара %d: %s', $data['product_id'], $wpdb->last_error),
-                    ['source' => self::LOGGER_SOURCE]
-                );
-                return false;
-            }
-
-            $wpdb->query('COMMIT');
-            return true;
-        } catch (\Exception $e) {
-            $wpdb->query('ROLLBACK');
+        if ($result === false) {
             $logger = wc_get_logger();
             $logger->error(
-                sprintf('Исключение при записи клика: %s', $e->getMessage()),
+                sprintf('Ошибка записи клика для товара %d: %s', $data['product_id'], $wpdb->last_error),
                 ['source' => self::LOGGER_SOURCE]
             );
             return false;
         }
+
+        return true;
+    }
+
+    /**
+     * Получение статистики подозрительных кликов за последние N часов.
+     *
+     * Для ручного анализа: вызывай из WP-CLI или admin-страницы.
+     * Пример: WC_Affiliate_URL_Params::get_spam_stats(24)
+     *
+     * @since 4.2.0
+     *
+     * @param int $hours За сколько часов смотреть (по умолчанию 24).
+     *
+     * @return array Массив с агрегированной статистикой.
+     */
+    public static function get_spam_stats(int $hours = 24): array
+    {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'cashback_click_log';
+
+        // Топ IP по спам-кликам
+        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        $top_ips = $wpdb->get_results($wpdb->prepare(
+            "SELECT ip_address, COUNT(*) as total, SUM(spam_click) as spam_count
+             FROM `{$table}`
+             WHERE created_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL %d HOUR)
+             GROUP BY ip_address
+             HAVING spam_count > 0
+             ORDER BY spam_count DESC
+             LIMIT 20",
+            $hours
+        ), ARRAY_A);
+
+        // Топ товаров по спам-кликам
+        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        $top_products = $wpdb->get_results($wpdb->prepare(
+            "SELECT product_id, COUNT(*) as total, SUM(spam_click) as spam_count
+             FROM `{$table}`
+             WHERE created_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL %d HOUR)
+             GROUP BY product_id
+             HAVING spam_count > 0
+             ORDER BY spam_count DESC
+             LIMIT 20",
+            $hours
+        ), ARRAY_A);
+
+        // Общие цифры
+        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        $totals = $wpdb->get_row($wpdb->prepare(
+            "SELECT COUNT(*) as total_clicks, SUM(spam_click) as total_spam
+             FROM `{$table}`
+             WHERE created_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL %d HOUR)",
+            $hours
+        ), ARRAY_A);
+
+        return [
+            'period_hours' => $hours,
+            'total_clicks' => (int) ($totals['total_clicks'] ?? 0),
+            'total_spam'   => (int) ($totals['total_spam'] ?? 0),
+            'spam_rate'    => $totals['total_clicks'] > 0
+                ? round((int) $totals['total_spam'] / (int) $totals['total_clicks'] * 100, 1)
+                : 0,
+            'top_ips'      => $top_ips ?: [],
+            'top_products' => $top_products ?: [],
+        ];
     }
 
     /**
@@ -858,9 +1056,9 @@ class WC_Affiliate_URL_Params
             $link = str_replace(
                 '<a ',
                 '<a data-product-id="' . esc_attr((string) $product->get_id()) . '"'
-                . ' data-product-url="' . esc_url($base_url) . '"'
-                . ' target="_blank"'
-                . ' rel="nofollow" ',
+                    . ' data-product-url="' . esc_url($base_url) . '"'
+                    . ' target="_blank"'
+                    . ' rel="nofollow" ',
                 $link
             );
         }

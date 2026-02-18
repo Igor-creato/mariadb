@@ -125,7 +125,7 @@ class Cashback_Fraud_Admin
         }
 
         $active_tab = isset($_GET['tab']) ? sanitize_text_field(wp_unslash($_GET['tab'])) : 'alerts';
-        $allowed_tabs = ['alerts', 'users', 'settings'];
+        $allowed_tabs = ['alerts', 'users', 'settings', 'spam'];
         if (!in_array($active_tab, $allowed_tabs, true)) {
             $active_tab = 'alerts';
         }
@@ -138,6 +138,7 @@ class Cashback_Fraud_Admin
         $tabs = [
             'alerts'   => __('Уведомления', 'cashback-plugin'),
             'users'    => __('Подозрительные', 'cashback-plugin'),
+            'spam'     => __('Спам-клики', 'cashback-plugin'),
             'settings' => __('Настройки', 'cashback-plugin'),
         ];
         foreach ($tabs as $slug => $label) {
@@ -155,6 +156,9 @@ class Cashback_Fraud_Admin
                 break;
             case 'users':
                 $this->render_users_tab();
+                break;
+            case 'spam':
+                $this->render_spam_tab();
                 break;
             case 'settings':
                 $this->render_settings_tab();
@@ -427,6 +431,252 @@ class Cashback_Fraud_Admin
             'page_slug' => 'cashback-antifraud',
             'add_args' => ['tab' => 'users'],
         ]);
+    }
+
+    // ===========================
+    // Tab: Spam Analytics
+    // ===========================
+
+    /**
+     * Вкладка аналитики спам-кликов.
+     *
+     * Данные из WC_Affiliate_URL_Params::get_spam_stats() + детальная таблица.
+     *
+     * @since 4.3.0
+     */
+    private function render_spam_tab(): void
+    {
+        // Период: 1ч, 6ч, 24ч, 7д
+        $allowed_hours = [1, 6, 24, 168];
+        $hours = isset($_GET['hours']) ? absint($_GET['hours']) : 24;
+        if (!in_array($hours, $allowed_hours, true)) {
+            $hours = 24;
+        }
+
+        $stats = class_exists('WC_Affiliate_URL_Params')
+            ? WC_Affiliate_URL_Params::get_spam_stats($hours)
+            : ['total_clicks' => 0, 'total_spam' => 0, 'spam_rate' => 0, 'top_ips' => [], 'top_products' => []];
+
+        // Период
+        $period_labels = [
+            1   => __('1 час', 'cashback-plugin'),
+            6   => __('6 часов', 'cashback-plugin'),
+            24  => __('24 часа', 'cashback-plugin'),
+            168 => __('7 дней', 'cashback-plugin'),
+        ];
+
+        echo '<form method="get" style="margin-bottom:15px;">';
+        echo '<input type="hidden" name="page" value="cashback-antifraud">';
+        echo '<input type="hidden" name="tab" value="spam">';
+        echo '<label for="hours"><strong>' . esc_html__('Период:', 'cashback-plugin') . '</strong> </label>';
+        echo '<select name="hours" id="hours" onchange="this.form.submit()">';
+        foreach ($period_labels as $val => $label) {
+            echo '<option value="' . esc_attr($val) . '"' . selected($hours, $val, false) . '>' . esc_html($label) . '</option>';
+        }
+        echo '</select>';
+        echo '</form>';
+
+        // Summary cards
+        $total = (int) $stats['total_clicks'];
+        $spam = (int) $stats['total_spam'];
+        $rate = (float) $stats['spam_rate'];
+
+        $rate_class = 'cashback-severity-low';
+        if ($rate >= 50) {
+            $rate_class = 'cashback-severity-critical';
+        } elseif ($rate >= 25) {
+            $rate_class = 'cashback-severity-high';
+        } elseif ($rate >= 10) {
+            $rate_class = 'cashback-severity-medium';
+        }
+
+        echo '<div style="display:flex; gap:20px; margin-bottom:20px; flex-wrap:wrap;">';
+
+        echo '<div style="background:#fff; border:1px solid #c3c4c7; border-left:4px solid #2271b1; padding:15px 20px; min-width:180px;">';
+        echo '<div style="font-size:28px; font-weight:600; line-height:1.2;">' . esc_html(number_format($total)) . '</div>';
+        echo '<div style="color:#646970; margin-top:4px;">' . esc_html__('Всего кликов', 'cashback-plugin') . '</div>';
+        echo '</div>';
+
+        echo '<div style="background:#fff; border:1px solid #c3c4c7; border-left:4px solid ' . ($spam > 0 ? '#d63638' : '#00a32a') . '; padding:15px 20px; min-width:180px;">';
+        echo '<div style="font-size:28px; font-weight:600; line-height:1.2; color:' . ($spam > 0 ? '#d63638' : '#1d2327') . ';">' . esc_html(number_format($spam)) . '</div>';
+        echo '<div style="color:#646970; margin-top:4px;">' . esc_html__('Спам-кликов', 'cashback-plugin') . '</div>';
+        echo '</div>';
+
+        echo '<div style="background:#fff; border:1px solid #c3c4c7; border-left:4px solid #dba617; padding:15px 20px; min-width:180px;">';
+        echo '<div style="font-size:28px; font-weight:600; line-height:1.2;">';
+        echo '<span class="' . esc_attr($rate_class) . '" style="font-size:28px; padding:2px 10px;">' . esc_html(number_format($rate, 1)) . '%</span>';
+        echo '</div>';
+        echo '<div style="color:#646970; margin-top:4px;">' . esc_html__('Доля спама', 'cashback-plugin') . '</div>';
+        echo '</div>';
+
+        echo '</div>';
+
+        // Top IPs and Top Products side by side
+        echo '<div style="display:flex; gap:20px; margin-bottom:20px; flex-wrap:wrap;">';
+
+        // --- Top IPs ---
+        echo '<div style="flex:1; min-width:400px;">';
+        echo '<h3>' . esc_html__('Топ IP по спам-кликам', 'cashback-plugin') . '</h3>';
+
+        if (empty($stats['top_ips'])) {
+            echo '<p style="color:#646970;">' . esc_html__('Спам-кликов не обнаружено за выбранный период.', 'cashback-plugin') . '</p>';
+        } else {
+            echo '<table class="widefat striped cashback-table">';
+            echo '<thead><tr>';
+            echo '<th>' . esc_html__('IP-адрес', 'cashback-plugin') . '</th>';
+            echo '<th>' . esc_html__('Всего', 'cashback-plugin') . '</th>';
+            echo '<th>' . esc_html__('Спам', 'cashback-plugin') . '</th>';
+            echo '<th>' . esc_html__('Доля', 'cashback-plugin') . '</th>';
+            echo '</tr></thead><tbody>';
+
+            foreach ($stats['top_ips'] as $row) {
+                $ip_total = (int) $row['total'];
+                $ip_spam = (int) $row['spam_count'];
+                $ip_rate = $ip_total > 0 ? round($ip_spam / $ip_total * 100, 1) : 0;
+
+                $row_class = '';
+                if ($ip_rate >= 80) {
+                    $row_class = 'cashback-severity-critical';
+                } elseif ($ip_rate >= 50) {
+                    $row_class = 'cashback-severity-high';
+                }
+
+                echo '<tr>';
+                echo '<td><code>' . esc_html($row['ip_address']) . '</code></td>';
+                echo '<td>' . esc_html(number_format($ip_total)) . '</td>';
+                echo '<td>' . esc_html(number_format($ip_spam)) . '</td>';
+                echo '<td>';
+                if ($row_class) {
+                    echo '<span class="' . esc_attr($row_class) . '">' . esc_html($ip_rate) . '%</span>';
+                } else {
+                    echo esc_html($ip_rate) . '%';
+                }
+                echo '</td>';
+                echo '</tr>';
+            }
+
+            echo '</tbody></table>';
+        }
+        echo '</div>';
+
+        // --- Top Products ---
+        echo '<div style="flex:1; min-width:400px;">';
+        echo '<h3>' . esc_html__('Топ товаров по спам-кликам', 'cashback-plugin') . '</h3>';
+
+        if (empty($stats['top_products'])) {
+            echo '<p style="color:#646970;">' . esc_html__('Спам-кликов не обнаружено за выбранный период.', 'cashback-plugin') . '</p>';
+        } else {
+            echo '<table class="widefat striped cashback-table">';
+            echo '<thead><tr>';
+            echo '<th>ID</th>';
+            echo '<th>' . esc_html__('Товар', 'cashback-plugin') . '</th>';
+            echo '<th>' . esc_html__('Всего', 'cashback-plugin') . '</th>';
+            echo '<th>' . esc_html__('Спам', 'cashback-plugin') . '</th>';
+            echo '</tr></thead><tbody>';
+
+            foreach ($stats['top_products'] as $row) {
+                $pid = (int) $row['product_id'];
+                $title = get_the_title($pid);
+                if (empty($title)) {
+                    $title = '#' . $pid;
+                }
+
+                echo '<tr>';
+                echo '<td>' . esc_html($pid) . '</td>';
+                echo '<td>';
+                $edit_link = get_edit_post_link($pid);
+                if ($edit_link) {
+                    echo '<a href="' . esc_url($edit_link) . '" target="_blank">' . esc_html(mb_strimwidth($title, 0, 50, '...')) . '</a>';
+                } else {
+                    echo esc_html(mb_strimwidth($title, 0, 50, '...'));
+                }
+                echo '</td>';
+                echo '<td>' . esc_html(number_format((int) $row['total'])) . '</td>';
+                echo '<td>' . esc_html(number_format((int) $row['spam_count'])) . '</td>';
+                echo '</tr>';
+            }
+
+            echo '</tbody></table>';
+        }
+        echo '</div>';
+
+        echo '</div>'; // flex container
+
+        // --- Recent spam clicks ---
+        echo '<h3>' . esc_html__('Последние спам-клики', 'cashback-plugin') . '</h3>';
+
+        $recent = $this->get_recent_spam_clicks(50);
+
+        if (empty($recent)) {
+            echo '<p style="color:#646970;">' . esc_html__('Спам-кликов пока не было.', 'cashback-plugin') . '</p>';
+        } else {
+            echo '<table class="widefat striped cashback-table">';
+            echo '<thead><tr>';
+            echo '<th>' . esc_html__('Дата (UTC)', 'cashback-plugin') . '</th>';
+            echo '<th>' . esc_html__('IP', 'cashback-plugin') . '</th>';
+            echo '<th>' . esc_html__('Товар', 'cashback-plugin') . '</th>';
+            echo '<th>' . esc_html__('User-Agent', 'cashback-plugin') . '</th>';
+            echo '<th>' . esc_html__('User ID', 'cashback-plugin') . '</th>';
+            echo '</tr></thead><tbody>';
+
+            foreach ($recent as $click) {
+                $click_pid = (int) $click->product_id;
+                $click_title = get_the_title($click_pid);
+                if (empty($click_title)) {
+                    $click_title = '#' . $click_pid;
+                }
+
+                $ua_short = $click->user_agent
+                    ? mb_strimwidth($click->user_agent, 0, 60, '...')
+                    : '—';
+
+                echo '<tr>';
+                echo '<td style="white-space:nowrap;">' . esc_html($click->created_at) . '</td>';
+                echo '<td><code>' . esc_html($click->ip_address) . '</code></td>';
+                echo '<td>' . esc_html(mb_strimwidth($click_title, 0, 40, '...')) . '</td>';
+                echo '<td><small title="' . esc_attr($click->user_agent ?? '') . '">' . esc_html($ua_short) . '</small></td>';
+                echo '<td>' . ($click->user_id > 0 ? esc_html($click->user_id) : '<em>guest</em>') . '</td>';
+                echo '</tr>';
+            }
+
+            echo '</tbody></table>';
+        }
+    }
+
+    /**
+     * Последние N спам-кликов из cashback_click_log.
+     *
+     * @since 4.3.0
+     *
+     * @param int $limit Количество записей.
+     *
+     * @return array|object[] Массив объектов.
+     */
+    private function get_recent_spam_clicks(int $limit = 50): array
+    {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'cashback_click_log';
+
+        // Проверяем существование таблицы
+        $table_exists = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s",
+            $table
+        ));
+
+        if (!$table_exists) {
+            return [];
+        }
+
+        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $table is safe prefixed name
+        return $wpdb->get_results($wpdb->prepare(
+            "SELECT ip_address, product_id, user_agent, user_id, created_at
+             FROM `{$table}`
+             WHERE spam_click = 1
+             ORDER BY created_at DESC
+             LIMIT %d",
+            $limit
+        )) ?: [];
     }
 
     // ===========================

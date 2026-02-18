@@ -308,7 +308,9 @@ class Mariadb_Plugin
             KEY `idx_cpa_network` (`cpa_network`),
             KEY `idx_created_at` (`created_at`),
             KEY `idx_ip_address` (`ip_address`),
-            KEY `idx_session_id` (`session_id`)
+            KEY `idx_session_id` (`session_id`),
+            KEY `idx_spam_by_ip` (`created_at`,`spam_click`,`ip_address`),
+            KEY `idx_spam_by_product` (`created_at`,`spam_click`,`product_id`)
         ) ENGINE=InnoDB {$charset_collate} COMMENT='Лог кликов по партнерским ссылкам';";
 
         // Таблица банков
@@ -567,6 +569,18 @@ class Mariadb_Plugin
                 'table' => $wpdb->prefix . 'cashback_payout_requests',
                 'index' => 'idx_user_created',
                 'sql' => "CREATE INDEX `idx_user_created` ON `{$wpdb->prefix}cashback_payout_requests` (`user_id`, `created_at` DESC)"
+            ],
+            // Spam-аналитика: GROUP BY ip_address WHERE created_at >= ... (covering index)
+            [
+                'table' => $wpdb->prefix . 'cashback_click_log',
+                'index' => 'idx_spam_by_ip',
+                'sql' => "CREATE INDEX `idx_spam_by_ip` ON `{$wpdb->prefix}cashback_click_log` (`created_at`, `spam_click`, `ip_address`)"
+            ],
+            // Spam-аналитика: GROUP BY product_id WHERE created_at >= ... (covering index)
+            [
+                'table' => $wpdb->prefix . 'cashback_click_log',
+                'index' => 'idx_spam_by_product',
+                'sql' => "CREATE INDEX `idx_spam_by_product` ON `{$wpdb->prefix}cashback_click_log` (`created_at`, `spam_click`, `product_id`)"
             ],
         ];
 

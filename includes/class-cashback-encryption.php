@@ -264,7 +264,11 @@ class Cashback_Encryption
     }
 
     /**
-     * Получает IP-адрес клиента
+     * Получает IP-адрес клиента.
+     *
+     * Прокси-заголовки читаются ТОЛЬКО если REMOTE_ADDR в CASHBACK_TRUSTED_PROXIES.
+     * Из прокси-заголовков принимаются только публичные IP (не приватные/зарезервированные),
+     * чтобы предотвратить спуфинг через X-Forwarded-For: 10.0.0.1.
      */
     public static function get_client_ip(): string
     {
@@ -274,14 +278,17 @@ class Cashback_Encryption
         $trusted_proxies = defined('CASHBACK_TRUSTED_PROXIES') ? (array) CASHBACK_TRUSTED_PROXIES : [];
 
         if (!empty($trusted_proxies) && in_array($remote_addr, $trusted_proxies, true)) {
+            // Приоритет: CF-Connecting-IP (Cloudflare) → X-Forwarded-For → X-Real-IP
             $proxy_headers = ['HTTP_CF_CONNECTING_IP', 'HTTP_X_FORWARDED_FOR', 'HTTP_X_REAL_IP'];
             foreach ($proxy_headers as $header) {
                 if (!empty($_SERVER[$header])) {
                     $ip = sanitize_text_field(wp_unslash($_SERVER[$header]));
+                    // X-Forwarded-For может содержать цепочку: client, proxy1, proxy2
                     if (strpos($ip, ',') !== false) {
                         $ip = trim(explode(',', $ip)[0]);
                     }
-                    if (filter_var($ip, FILTER_VALIDATE_IP)) {
+                    // Принимаем только публичные IP — приватные/зарезервированные = спуфинг
+                    if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
                         return $ip;
                     }
                 }
