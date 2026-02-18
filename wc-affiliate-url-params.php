@@ -537,8 +537,11 @@ class WC_Affiliate_URL_Params
             wp_send_json_error(['message' => 'Товар не найден или не является внешним.'], 404);
         }
 
-        // 3. Генерация UUID v4 на сервере
-        $click_id = wp_generate_uuid4();
+        // 3. Генерация UUID v4 на сервере (без дефисов, 32 hex символа)
+        $click_id = str_replace('-', '', wp_generate_uuid4());
+        if (strlen($click_id) !== 32) {
+            wp_send_json_error(['message' => 'Ошибка генерации UUID.'], 500);
+        }
 
         // 4. Контекст пользователя
         $user_id = get_current_user_id(); // 0 для гостей

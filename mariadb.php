@@ -283,7 +283,7 @@ class Mariadb_Plugin
         // Таблица логирования кликов по партнерским ссылкам
         $table_click_log = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_click_log` (
             `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-            `click_id` char(36) NOT NULL COMMENT 'UUID клика, передаётся в CPA как subID, ключ для диспута',
+            `click_id` char(32) NOT NULL COMMENT 'UUID клика без дефисов, передаётся в CPA как subID, ключ для диспута',
             `user_id` bigint(20) unsigned DEFAULT NULL COMMENT 'WP user ID (NULL для гостей)',
             `session_id` varchar(128) DEFAULT NULL COMMENT 'Идентификатор сессии для незалогиненных',
             `product_id` bigint(20) unsigned NOT NULL COMMENT 'ID товара WooCommerce',
