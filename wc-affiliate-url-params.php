@@ -105,6 +105,12 @@ class WC_Affiliate_URL_Params
         echo '<div class="options_group show_if_external">';
         echo '<h4 style="padding: 10px 12px; margin: 0; border-bottom: 1px solid #ddd;">'
             . esc_html__('Партнерская сеть', 'wc-affiliate-url-params') . '</h4>';
+        echo '<p class="description" style="padding: 5px 12px; color: #666; margin: 0;">'
+            . wp_kses(
+                __('В поле <b>Значение</b>: для подстановки ID пользователя введите <code>user</code>, для уникального идентификатора клика — <code>uuid</code>, иначе значение будет передано как есть.', 'wc-affiliate-url-params'),
+                ['b' => [], 'code' => []]
+            )
+            . '</p>';
 
         // Выпадающий список сетей
         echo '<p class="form-field _affiliate_network_id_field" style="padding: 5px 12px;">';
@@ -150,6 +156,55 @@ class WC_Affiliate_URL_Params
         if (!empty($network_params)) {
             $this->render_network_params_table($network_params);
         }
+        echo '</div>';
+
+        echo '</div>';
+
+        // Индивидуальные параметры товара
+        $product_params = get_post_meta($post->ID, '_affiliate_product_params', true);
+        if (!is_array($product_params)) {
+            $product_params = [];
+        }
+
+        echo '<div class="options_group show_if_external">';
+        echo '<h4 style="padding: 10px 12px; margin: 0; border-bottom: 1px solid #ddd;">'
+            . esc_html__('Индивидуальные параметры товара', 'wc-affiliate-url-params') . '</h4>';
+        echo '<p class="description" style="padding: 5px 12px; color: #666; margin: 0;">'
+            . esc_html__('Добавляются только к URL этого товара. При совпадении ключа с параметром сети — используется значение товара.', 'wc-affiliate-url-params')
+            . '</p>';
+
+        echo '<div id="affiliate-product-params-container" style="padding: 10px 12px;">';
+
+        // Заголовки колонок (без рамки)
+        echo '<div class="product-params-labels" style="display: flex; gap: 10px; margin-bottom: 6px;">';
+        echo '<span style="flex: 1; font-weight: 600; font-size: 13px;">' . esc_html__('Параметр', 'wc-affiliate-url-params') . '</span>';
+        echo '<span style="flex: 1; font-weight: 600; font-size: 13px;">' . esc_html__('Значение', 'wc-affiliate-url-params') . '</span>';
+        echo '<span style="width: 36px;"></span>';
+        echo '</div>';
+
+        // Контейнер для строк параметров
+        echo '<div id="affiliate-product-params-rows">';
+
+        foreach ($product_params as $pp) {
+            $key = isset($pp['key']) ? esc_attr($pp['key']) : '';
+            $value = isset($pp['value']) ? esc_attr($pp['value']) : '';
+            echo '<div class="product-param-row" style="display: flex; gap: 10px; margin-bottom: 6px; align-items: center;">';
+            echo '<input type="text" name="affiliate_product_param_key[]" value="' . $key . '" class="regular-text" placeholder="param_key" pattern="[a-zA-Z0-9_\-]+" title="' . esc_attr__('Только латиница, цифры, _ и -', 'wc-affiliate-url-params') . '" style="flex:1;" />';
+            echo '<input type="text" name="affiliate_product_param_value[]" value="' . $value . '" class="regular-text" placeholder="user / uuid / значение" style="flex:1;" />';
+            echo '<button type="button" class="button button-small remove-product-param-btn" style="color:#a00; min-width:36px;" title="' . esc_attr__('Удалить', 'wc-affiliate-url-params') . '">&times;</button>';
+            echo '</div>';
+        }
+
+        echo '</div>';
+
+        echo '<p style="margin-top: 8px;">';
+        echo '<button type="button" id="add-product-param-row" class="button button-small"'
+            . (count($product_params) >= 5 ? ' disabled' : '') . '>'
+            . esc_html__('+ Добавить параметр', 'wc-affiliate-url-params') . '</button>';
+        echo '<span class="description" style="margin-left: 8px;">'
+            . esc_html__('Макс. 5 параметров.', 'wc-affiliate-url-params')
+            . '</span>';
+        echo '</p>';
         echo '</div>';
 
         echo '</div>';
@@ -251,6 +306,33 @@ class WC_Affiliate_URL_Params
 
         // Очищаем кэш
         wp_cache_delete('affiliate_params_' . $post_id, self::CACHE_GROUP);
+
+        // Индивидуальные параметры товара
+        $param_keys = isset($_POST['affiliate_product_param_key']) && is_array($_POST['affiliate_product_param_key'])
+            ? array_map('sanitize_text_field', wp_unslash($_POST['affiliate_product_param_key']))
+            : [];
+        $param_values = isset($_POST['affiliate_product_param_value']) && is_array($_POST['affiliate_product_param_value'])
+            ? array_map('sanitize_text_field', wp_unslash($_POST['affiliate_product_param_value']))
+            : [];
+
+        $product_params = [];
+        $max_product_params = 5;
+
+        for ($i = 0; $i < min(count($param_keys), $max_product_params); $i++) {
+            $key = trim($param_keys[$i]);
+            $value = trim($param_values[$i]);
+
+            if ($key === '' || !preg_match('/^[a-zA-Z0-9_\-]+$/', $key)) {
+                continue;
+            }
+
+            $product_params[] = [
+                'key'   => $key,
+                'value' => $value,
+            ];
+        }
+
+        update_post_meta($post_id, '_affiliate_product_params', $product_params);
 
         // Проверяем активность выбранной сети
         global $wpdb;
@@ -439,16 +521,40 @@ class WC_Affiliate_URL_Params
             $network_id
         ), ARRAY_A);
 
-        if (empty($rows)) {
-            return [];
+        $params = [];
+        if (!empty($rows)) {
+            foreach ($rows as $i => $row) {
+                $params[$i] = [
+                    'key'   => $row['param_name'],
+                    'value' => $row['param_type'],
+                ];
+            }
         }
 
-        $params = [];
-        foreach ($rows as $i => $row) {
-            $params[$i] = [
-                'key'   => $row['param_name'],
-                'value' => $row['param_type'],
-            ];
+        // Мерж индивидуальных параметров товара
+        $product_params = get_post_meta($product_id, '_affiliate_product_params', true);
+        if (is_array($product_params) && !empty($product_params)) {
+            $key_to_index = [];
+            foreach ($params as $idx => $p) {
+                $key_to_index[$p['key']] = $idx;
+            }
+
+            foreach ($product_params as $pp) {
+                if (empty($pp['key'])) {
+                    continue;
+                }
+
+                if (isset($key_to_index[$pp['key']])) {
+                    // Переопределяем значение сетевого параметра
+                    $params[$key_to_index[$pp['key']]]['value'] = $pp['value'];
+                } else {
+                    // Добавляем новый параметр
+                    $params[] = [
+                        'key'   => $pp['key'],
+                        'value' => $pp['value'],
+                    ];
+                }
+            }
         }
 
         return $params;
@@ -561,14 +667,14 @@ class WC_Affiliate_URL_Params
             'wc-affiliate-url-params-admin',
             plugins_url('assets/css/admin.css', __FILE__),
             [],
-            '1.1.0'
+            '1.2.0'
         );
 
         wp_enqueue_script(
             'wc-affiliate-network-admin',
             plugins_url('assets/js/admin-affiliate-network.js', __FILE__),
             ['jquery'],
-            '1.0.0',
+            '1.1.0',
             true
         );
 

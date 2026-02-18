@@ -210,6 +210,9 @@ class Cashback_Partner_Management_Admin
                 <!-- Вкладка параметров URL -->
                 <div class="card" id="network-params-form" style="margin-top: 20px; margin-bottom: 20px;">
                     <h2 class="title">Параметры URL партнерской сети</h2>
+                    <p class="description" style="margin: 5px 0 15px; color: #666;">
+                        В поле <b>Значение параметра</b>: для подстановки ID пользователя введите <code>user</code>, для уникального идентификатора клика — <code>uuid</code>, иначе значение будет передано как есть.
+                    </p>
 
                     <div style="margin-bottom: 15px;">
                         <label for="network-select" style="display:block; font-weight:600; margin-bottom:5px;">Выберите сеть:</label>

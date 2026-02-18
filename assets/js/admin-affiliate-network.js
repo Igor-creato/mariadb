@@ -248,4 +248,50 @@ jQuery(document).ready(function ($) {
       },
     );
   });
+
+  // === Индивидуальные параметры товара (репитер) ===
+  var MAX_PRODUCT_PARAMS = 5;
+
+  $(document).on('click', '#add-product-param-row', function () {
+    var $container = $('#affiliate-product-params-rows');
+    var rowCount = $container.find('.product-param-row').length;
+
+    if (rowCount >= MAX_PRODUCT_PARAMS) {
+      alert(
+        'Максимальное количество индивидуальных параметров — ' +
+          MAX_PRODUCT_PARAMS,
+      );
+      return;
+    }
+
+    var html =
+      '<div class="product-param-row" style="display:flex;gap:10px;margin-bottom:6px;align-items:center;">' +
+      '<input type="text" name="affiliate_product_param_key[]" ' +
+      'class="regular-text" placeholder="param_key" ' +
+      'pattern="[a-zA-Z0-9_\\-]+" title="Только латиница, цифры, _ и -" ' +
+      'style="flex:1;" />' +
+      '<input type="text" name="affiliate_product_param_value[]" ' +
+      'class="regular-text" placeholder="user / uuid / значение" ' +
+      'style="flex:1;" />' +
+      '<button type="button" class="button button-small remove-product-param-btn" ' +
+      'style="color:#a00;min-width:36px;" title="Удалить">&times;</button>' +
+      '</div>';
+
+    $container.append(html);
+
+    if ($container.find('.product-param-row').length >= MAX_PRODUCT_PARAMS) {
+      $('#add-product-param-row').prop('disabled', true);
+    }
+  });
+
+  $(document).on('click', '.remove-product-param-btn', function () {
+    $(this).closest('.product-param-row').remove();
+
+    if (
+      $('#affiliate-product-params-rows .product-param-row').length <
+      MAX_PRODUCT_PARAMS
+    ) {
+      $('#add-product-param-row').prop('disabled', false);
+    }
+  });
 });

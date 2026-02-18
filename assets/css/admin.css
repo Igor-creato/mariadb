@@ -16,6 +16,31 @@
     box-sizing: border-box;
 }
 
+/* Таблица индивидуальных параметров товара */
+.affiliate-product-params-table {
+    border-collapse: collapse;
+}
+
+.affiliate-product-params-table th,
+.affiliate-product-params-table td {
+    padding: 6px 8px;
+    vertical-align: middle;
+}
+
+.affiliate-product-params-table input[type="text"] {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.remove-product-param-btn {
+    min-width: 28px;
+    padding: 0 6px !important;
+    line-height: 24px !important;
+    height: 26px !important;
+    font-size: 16px;
+    cursor: pointer;
+}
+
 /* Предупреждение об отключенной сети */
 .affiliate-network-warning {
     font-size: 13px;
