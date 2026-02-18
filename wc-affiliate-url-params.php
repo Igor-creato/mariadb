@@ -50,9 +50,8 @@ class WC_Affiliate_URL_Params
         add_action('wp_enqueue_scripts', [$this, 'enqueue_frontend_scripts']);
         add_action('admin_enqueue_scripts', [$this, 'enqueue_admin_scripts']);
 
-        // AJAX обработчик логирования кликов (server-side UUID)
-        add_action('wp_ajax_log_affiliate_click', [$this, 'handle_log_affiliate_click']);
-        add_action('wp_ajax_nopriv_log_affiliate_click', [$this, 'handle_log_affiliate_click']);
+        // Server-side redirect endpoint для логирования кликов
+        add_action('template_redirect', [$this, 'handle_click_redirect']);
     }
 
     /**
@@ -434,8 +433,8 @@ class WC_Affiliate_URL_Params
             return $url;
         }
 
-        // URL строится на сервере при клике (AJAX), здесь возвращаем #
-        return '#';
+        // URL ведёт на server-side redirect endpoint (query param — работает на любом сервере)
+        return home_url('/?cashback_click=' . $product_id);
     }
 
     /**
@@ -513,73 +512,109 @@ class WC_Affiliate_URL_Params
     }
 
     /**
-     * AJAX обработчик: генерация UUID на сервере, логирование клика, возврат URL для редиректа.
+     * Server-side redirect: генерация click_id, логирование, 302 redirect.
      *
-     * @since 3.0.0
+     * Работает через query parameter ?cashback_click={product_id}.
+     * Не зависит от rewrite rules — работает на Apache, Nginx, любом сервере.
+     *
+     * При любой ошибке пользователь всё равно получает redirect.
+     * Лучше потерять лог клика, чем потерять пользователя.
+     *
+     * @since 4.0.0
      *
      * @return void
      */
-    public function handle_log_affiliate_click(): void
+    public function handle_click_redirect(): void
     {
-        // 1. Проверка nonce
-        if (!check_ajax_referer('wc_affiliate_url_params', 'nonce', false)) {
-            wp_send_json_error(['message' => 'Неверный токен безопасности.'], 403);
+        if (!isset($_GET['cashback_click'])) {
+            return;
         }
 
-        // 2. Валидация product_id
-        $product_id = isset($_POST['product_id']) ? absint($_POST['product_id']) : 0;
+        $product_id = absint($_GET['cashback_click']);
         if ($product_id <= 0) {
-            wp_send_json_error(['message' => 'Некорректный ID товара.'], 400);
+            return;
         }
 
-        $product = wc_get_product($product_id);
-        if (!$product || $product->get_type() !== 'external') {
-            wp_send_json_error(['message' => 'Товар не найден или не является внешним.'], 404);
+        // Запрещаем кеширование (click_id уникален каждый раз)
+        nocache_headers();
+
+        try {
+            $product = wc_get_product($product_id);
+            if (!$product || $product->get_type() !== 'external') {
+                wp_redirect(home_url(), 302);
+                exit;
+            }
+
+            $fallback_url = $product->get_product_url();
+            if (empty($fallback_url)) {
+                wp_redirect(home_url(), 302);
+                exit;
+            }
+
+            // Генерация click_id через random_bytes()
+            $click_id = bin2hex(random_bytes(16));
+
+            // Валидация: 32 hex символа
+            if (!ctype_xdigit($click_id) || strlen($click_id) !== 32) {
+                error_log('[wc-affiliate-url-params] click_id validation failed: ' . $click_id);
+                wp_redirect($fallback_url, 302);
+                exit;
+            }
+
+            // Контекст пользователя
+            $user_id = get_current_user_id(); // 0 для гостей
+            $session_id = $this->get_session_id();
+
+            // Построение финального affiliate URL
+            $affiliate_url = $this->build_final_affiliate_url($product_id, $user_id, $click_id);
+            if (empty($affiliate_url)) {
+                $affiliate_url = $fallback_url;
+            }
+
+            // CPA-сеть
+            $cpa_network = $this->get_network_slug_for_product($product_id);
+
+            // Метаданные запроса
+            $ip_address = Cashback_Encryption::get_client_ip();
+            $user_agent = isset($_SERVER['HTTP_USER_AGENT'])
+                ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT']))
+                : null;
+            $referer = isset($_SERVER['HTTP_REFERER'])
+                ? esc_url_raw(wp_unslash($_SERVER['HTTP_REFERER']))
+                : null;
+
+            // Логирование клика в БД (ошибка НЕ блокирует редирект)
+            $this->log_click_to_db([
+                'click_id'      => $click_id,
+                'user_id'       => $user_id > 0 ? $user_id : null,
+                'session_id'    => $session_id,
+                'product_id'    => $product_id,
+                'cpa_network'   => $cpa_network,
+                'affiliate_url' => $affiliate_url,
+                'ip_address'    => $ip_address,
+                'user_agent'    => $user_agent,
+                'referer'       => $referer,
+            ]);
+
+            // 302 redirect (не 301 — URL уникален каждый раз из-за click_id)
+            wp_redirect($affiliate_url, 302);
+            exit;
+        } catch (\Throwable $e) {
+            // Лучше потерять лог клика, чем потерять пользователя
+            error_log('[wc-affiliate-url-params] Redirect error: ' . $e->getMessage());
+
+            try {
+                $product = wc_get_product($product_id);
+                $url = ($product && $product->get_type() === 'external')
+                    ? $product->get_product_url()
+                    : home_url();
+            } catch (\Throwable $e2) {
+                $url = home_url();
+            }
+
+            wp_redirect($url ?: home_url(), 302);
+            exit;
         }
-
-        // 3. Генерация UUID v4 на сервере (без дефисов, 32 hex символа)
-        $click_id = str_replace('-', '', wp_generate_uuid4());
-        if (strlen($click_id) !== 32) {
-            wp_send_json_error(['message' => 'Ошибка генерации UUID.'], 500);
-        }
-
-        // 4. Контекст пользователя
-        $user_id = get_current_user_id(); // 0 для гостей
-        $session_id = $this->get_session_id();
-
-        // 5. Построение финального affiliate URL
-        $affiliate_url = $this->build_final_affiliate_url($product_id, $user_id, $click_id);
-        if (empty($affiliate_url)) {
-            $affiliate_url = $product->get_product_url();
-        }
-
-        // 6. CPA-сеть
-        $cpa_network = $this->get_network_slug_for_product($product_id);
-
-        // 7. Метаданные запроса
-        $ip_address = Cashback_Encryption::get_client_ip();
-        $user_agent = isset($_SERVER['HTTP_USER_AGENT'])
-            ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT']))
-            : null;
-        $referer = isset($_SERVER['HTTP_REFERER'])
-            ? esc_url_raw(wp_unslash($_SERVER['HTTP_REFERER']))
-            : null;
-
-        // 8. Логирование клика в БД (ошибка логирования не блокирует редирект)
-        $this->log_click_to_db([
-            'click_id'      => $click_id,
-            'user_id'       => $user_id > 0 ? $user_id : null,
-            'session_id'    => $session_id,
-            'product_id'    => $product_id,
-            'cpa_network'   => $cpa_network,
-            'affiliate_url' => $affiliate_url,
-            'ip_address'    => $ip_address,
-            'user_agent'    => $user_agent,
-            'referer'       => $referer,
-        ]);
-
-        // 9. Возвращаем URL для редиректа
-        wp_send_json_success(['redirect_url' => $affiliate_url]);
     }
 
     /**
@@ -771,7 +806,8 @@ class WC_Affiliate_URL_Params
                 '<a ',
                 '<a data-product-id="' . esc_attr((string) $product->get_id()) . '"'
                 . ' data-product-url="' . esc_url($base_url) . '"'
-                . ' target="_blank" ',
+                . ' target="_blank"'
+                . ' rel="nofollow" ',
                 $link
             );
         }
@@ -802,7 +838,8 @@ class WC_Affiliate_URL_Params
             . ' class="single_add_to_cart_button button alt"'
             . ' data-product-id="' . esc_attr((string) $product->get_id()) . '"'
             . ' data-product-url="' . esc_url($base_url) . '"'
-            . ' target="_blank">';
+            . ' target="_blank"'
+            . ' rel="nofollow">';
         echo esc_html($button_text);
         echo '</a>';
         echo '</p>';
@@ -822,20 +859,17 @@ class WC_Affiliate_URL_Params
                 'wc-affiliate-url-params',
                 plugins_url('assets/js/frontend.js', __FILE__),
                 ['jquery'],
-                '3.0.0',
+                '4.0.0',
                 true
             );
 
             wp_localize_script('wc-affiliate-url-params', 'wcAffiliateParams', [
                 'isLoggedIn' => is_user_logged_in(),
-                'userId' => is_user_logged_in() ? get_current_user_id() : 0,
                 'warningMessage' => __(
                     'Вы не авторизованы, при переходе покупка не будет учтена сервисом. Продолжить?',
                     'wc-affiliate-url-params'
                 ),
                 'loginUrl' => add_query_arg('action', 'register', get_permalink(wc_get_page_id('myaccount'))),
-                'nonce' => wp_create_nonce('wc_affiliate_url_params'),
-                'ajaxUrl' => admin_url('admin-ajax.php'),
             ]);
 
             wp_enqueue_style(

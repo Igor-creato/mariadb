@@ -1,16 +1,25 @@
 /**
- * WC Affiliate URL Params — Server-Side UUID + Click Logging
+ * WC Affiliate URL Params — Guest Warning Modal
  *
- * Перехватывает клики по партнерским ссылкам, отправляет AJAX на сервер
- * для генерации UUID, логирования клика и получения финального URL.
+ * Для авторизованных пользователей: JS-перехват не нужен.
+ * Ссылки ведут на ?cashback_click={id}, сервер делает 302 redirect.
  *
- * @since 3.0.0
+ * Для гостей: перехватываем клик, показываем модалку с предупреждением.
+ * Кнопка «Продолжить» — обычная ссылка на redirect endpoint.
+ *
+ * @since 4.0.0
  */
 (function ($) {
   'use strict';
 
+  // Авторизованные пользователи — никакого JS-перехвата,
+  // ссылки работают как обычные <a href target=_blank>
+  if (wcAffiliateParams.isLoggedIn) {
+    return;
+  }
+
   $(document).ready(function () {
-    // Обработчик кликов по кнопкам партнерских товаров
+    // Перехват кликов — ТОЛЬКО для гостей
     $(document).on(
       'click',
       'a.add_to_cart_button, a.single_add_to_cart_button, a.product_type_external, a.add-to-cart-loop',
@@ -19,80 +28,30 @@
         var productId = $button.data('product-id');
         var href = $button.attr('href') || '';
 
-        // Перехватываем только партнерские товары (href="#" и есть data-product-id)
-        if (!productId || href !== '#') {
+        // Только партнерские товары (href содержит cashback_click и есть data-product-id)
+        if (!productId || href.indexOf('cashback_click=') === -1) {
           return;
         }
 
         e.preventDefault();
         e.stopImmediatePropagation();
 
-        // Проверка авторизации
-        if (!wcAffiliateParams.isLoggedIn) {
-          showAuthWarning($button, productId);
-          return false;
-        }
-
-        // Авторизованный пользователь — отправляем AJAX
-        sendClickRequest($button, productId);
+        showAuthWarning($button);
         return false;
       },
     );
   });
 
   /**
-   * Отправка AJAX запроса для логирования клика и получения redirect URL
-   *
-   * @param {jQuery} $button Кнопка, по которой кликнули
-   * @param {number} productId ID товара WooCommerce
-   */
-  function sendClickRequest($button, productId) {
-    var fallbackUrl = $button.data('product-url') || '';
-
-    // Состояние загрузки
-    $button.addClass('loading');
-    $button.css('pointer-events', 'none');
-
-    $.ajax({
-      url: wcAffiliateParams.ajaxUrl,
-      type: 'POST',
-      data: {
-        action: 'log_affiliate_click',
-        product_id: productId,
-        nonce: wcAffiliateParams.nonce,
-      },
-      success: function (response) {
-        if (response.success && response.data && response.data.redirect_url) {
-          window.open(response.data.redirect_url, '_blank');
-        } else {
-          // Fallback: базовый URL товара
-          if (fallbackUrl) {
-            window.open(fallbackUrl, '_blank');
-          }
-        }
-      },
-      error: function () {
-        // Fallback: базовый URL товара, чтобы не блокировать пользователя
-        if (fallbackUrl) {
-          window.open(fallbackUrl, '_blank');
-        }
-      },
-      complete: function () {
-        $button.removeClass('loading');
-        $button.css('pointer-events', '');
-      },
-    });
-  }
-
-  /**
    * Показ модального окна для неавторизованных пользователей
    *
    * @param {jQuery} $button Кнопка, по которой кликнули
-   * @param {number} productId ID товара WooCommerce
    */
-  function showAuthWarning($button, productId) {
+  function showAuthWarning($button) {
     // Удаляем существующее модальное окно
     $('#wc-affiliate-warning-modal').remove();
+
+    var redirectUrl = $button.attr('href');
 
     var modal =
       '<div id="wc-affiliate-warning-modal" class="wc-affiliate-modal">' +
@@ -104,7 +63,9 @@
       wcAffiliateParams.warningMessage +
       '</p>' +
       '<div class="wc-affiliate-modal-actions">' +
-      '<a href="#" class="wc-affiliate-btn wc-affiliate-btn-primary" id="wc-affiliate-continue">' +
+      '<a href="' +
+      redirectUrl +
+      '" target="_blank" rel="nofollow" class="wc-affiliate-btn wc-affiliate-btn-primary" id="wc-affiliate-continue">' +
       '\u041F\u0440\u043E\u0434\u043E\u043B\u0436\u0438\u0442\u044C \u0431\u0435\u0437 \u0430\u0432\u0442\u043E\u0440\u0438\u0437\u0430\u0446\u0438\u0438</a>' +
       '<a href="' +
       wcAffiliateParams.loginUrl +
@@ -118,11 +79,10 @@
       $('#wc-affiliate-warning-modal').addClass('show');
     }, 10);
 
-    // «Продолжить без авторизации» — AJAX с user_id=0 на сервере
-    $('#wc-affiliate-continue').on('click', function (e) {
-      e.preventDefault();
+    // «Продолжить без авторизации» — обычная ссылка, закрываем модалку
+    $('#wc-affiliate-continue').on('click', function () {
       closeModal();
-      sendClickRequest($button, productId);
+      // Ссылка — обычный <a href target=_blank>, браузер сам откроет
     });
 
     // Закрытие по крестику
