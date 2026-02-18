@@ -1352,6 +1352,15 @@ END;",
             DO DELETE FROM `{$safe_prefix}cashback_webhooks`
             WHERE received_at < NOW() - INTERVAL 6 MONTH",
 
+            // Событие ежедневно удаляет записи кликов старше 90 дней
+            "CREATE EVENT IF NOT EXISTS `{$safe_prefix}cashback_ev_cleanup_click_log`
+            ON SCHEDULE EVERY 1 DAY
+            STARTS CURRENT_TIMESTAMP
+            ON COMPLETION NOT PRESERVE
+            ENABLE
+            DO DELETE FROM `{$safe_prefix}cashback_click_log`
+            WHERE created_at < NOW() - INTERVAL 90 DAY",
+
             // Событие ежедневно проверяет и помечает неактивные профили если неактивны больше 6 месяцев
             "CREATE EVENT IF NOT EXISTS `{$safe_prefix}cashback_ev_mark_inactive_profiles`
             ON SCHEDULE EVERY 1 DAY

@@ -93,6 +93,7 @@ function cashback_plugin_uninstall(): void
     $events = [
         "{$prefix}cashback_ev_confirmed_cashback",
         "{$prefix}cashback_ev_cleanup_cashback_webhooks_old",
+        "{$prefix}cashback_ev_cleanup_click_log",
         "{$prefix}cashback_ev_mark_inactive_profiles",
     ];
 
