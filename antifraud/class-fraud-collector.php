@@ -224,7 +224,7 @@ class Cashback_Fraud_Collector
                     if (strpos($ip, ',') !== false) {
                         $ip = trim(explode(',', $ip)[0]);
                     }
-                    if (filter_var($ip, FILTER_VALIDATE_IP)) {
+                    if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
                         return $ip;
                     }
                 }

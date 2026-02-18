@@ -102,13 +102,17 @@ class Cashback_Users_Management_Admin
         global $wpdb;
 
         // Получаем параметры для пагинации и фильтрации
+        $max_allowed_pages = 1000;
         $current_page = isset($_GET['paged']) ? max(1, absint($_GET['paged'])) : 1;
+        if ($current_page > $max_allowed_pages) {
+            $current_page = $max_allowed_pages;
+        }
         $per_page = 10;
         $offset = ($current_page - 1) * $per_page;
 
         // Получаем фильтр статуса с валидацией по допустимому списку
         $filter_status = isset($_GET['status']) ? sanitize_text_field(wp_unslash($_GET['status'])) : '';
-        $allowed_filter_statuses = ['active', 'inactive', 'blocked'];
+        $allowed_filter_statuses = ['active', 'noactive', 'banned', 'deleted'];
         if (!empty($filter_status) && !in_array($filter_status, $allowed_filter_statuses, true)) {
             $filter_status = '';
         }
@@ -383,6 +387,23 @@ class Cashback_Users_Management_Admin
             $update_formats[] = '%s';
         }
 
+        // 🔒 Если баним пользователя — сначала захватываем withdrawal lock
+        // чтобы сериализовать с параллельным выводом средств
+        $needs_withdrawal_lock = isset($status) && $status === 'banned';
+        $withdrawal_lock_name = 'user_withdrawal_' . $user_id;
+
+        if ($needs_withdrawal_lock) {
+            $lock_acquired = $wpdb->get_var($wpdb->prepare(
+                "SELECT GET_LOCK(%s, 10)",
+                $withdrawal_lock_name
+            ));
+
+            if (!$lock_acquired) {
+                wp_send_json_error(['message' => 'Пользователь в процессе вывода средств. Попробуйте позже.']);
+                return;
+            }
+        }
+
         // 🔒 НАЧИНАЕМ ТРАНЗАКЦИЮ ДО чтения и обновления профиля
         $wpdb->query('START TRANSACTION');
 
@@ -420,7 +441,7 @@ class Cashback_Users_Management_Admin
             }
 
             // Если пользователь был забанен - обрабатываем последствия ВНУТРИ транзакции
-            if (isset($_POST['status']) && $_POST['status'] === 'banned') {
+            if (isset($status) && $status === 'banned') {
                 $ban_reason = isset($_POST['ban_reason']) ? sanitize_text_field(wp_unslash($_POST['ban_reason'])) : '';
 
                 // Перехватываем любой вывод, который может сломать JSON-ответ
@@ -434,7 +455,7 @@ class Cashback_Users_Management_Admin
             }
 
             // Если пользователь был разбанен - обрабатываем последствия ВНУТРИ транзакции
-            if ($old_status === 'banned' && isset($_POST['status']) && $_POST['status'] !== 'banned') {
+            if ($old_status === 'banned' && isset($status) && $status !== 'banned') {
                 // Перехватываем любой вывод, который может сломать JSON-ответ
                 ob_start();
                 $unban_success = $this->handle_user_unban($user_id, true);
@@ -451,8 +472,20 @@ class Cashback_Users_Management_Admin
         } catch (Exception $e) {
             // ❌ ОТКАТЫВАЕМ транзакцию при любой ошибке
             $wpdb->query('ROLLBACK');
-            wp_send_json_error(['message' => 'Ошибка: ' . $e->getMessage()]);
+
+            // Освобождаем withdrawal lock если захватывали
+            if ($needs_withdrawal_lock) {
+                $wpdb->query($wpdb->prepare("DO RELEASE_LOCK(%s)", $withdrawal_lock_name));
+            }
+
+            error_log('[Cashback Users] Error updating profile for user ' . $user_id . ': ' . $e->getMessage());
+            wp_send_json_error(['message' => 'Ошибка при обновлении профиля пользователя.']);
             return;
+        }
+
+        // Освобождаем withdrawal lock если захватывали
+        if ($needs_withdrawal_lock) {
+            $wpdb->query($wpdb->prepare("DO RELEASE_LOCK(%s)", $withdrawal_lock_name));
         }
 
         // Получаем обновленные данные из базы

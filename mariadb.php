@@ -1364,7 +1364,8 @@ END;",
             ON COMPLETION NOT PRESERVE
             ENABLE
             DO DELETE FROM `{$safe_prefix}cashback_webhooks`
-            WHERE received_at < NOW() - INTERVAL 6 MONTH",
+            WHERE received_at < NOW() - INTERVAL 6 MONTH
+            LIMIT 5000",
 
             // Событие ежедневно удаляет записи кликов старше 90 дней
             "CREATE EVENT IF NOT EXISTS `{$safe_prefix}cashback_ev_cleanup_click_log`
@@ -1373,7 +1374,8 @@ END;",
             ON COMPLETION NOT PRESERVE
             ENABLE
             DO DELETE FROM `{$safe_prefix}cashback_click_log`
-            WHERE created_at < NOW() - INTERVAL 90 DAY",
+            WHERE created_at < NOW() - INTERVAL 90 DAY
+            LIMIT 5000",
 
             // Событие ежедневно проверяет и помечает неактивные профили если неактивны больше 6 месяцев
             "CREATE EVENT IF NOT EXISTS `{$safe_prefix}cashback_ev_mark_inactive_profiles`
@@ -1383,15 +1385,19 @@ END;",
             ENABLE
             DO
             BEGIN
-                UPDATE `{$safe_prefix}cashback_user_profile`
-                SET status = 'noactive'
-                WHERE
-                    status = 'active'
-                    AND (
-                        (last_active_at IS NOT NULL AND last_active_at < DATE_SUB(NOW(), INTERVAL 6 MONTH))
-                        OR
-                        (last_active_at IS NULL AND created_at < DATE_SUB(NOW(), INTERVAL 6 MONTH))
-                    );
+                IF GET_LOCK('cashback_inactive_profiles_lock', 0) = 1 THEN
+                    UPDATE `{$safe_prefix}cashback_user_profile`
+                    SET status = 'noactive'
+                    WHERE
+                        status = 'active'
+                        AND (
+                            (last_active_at IS NOT NULL AND last_active_at < DATE_SUB(NOW(), INTERVAL 6 MONTH))
+                            OR
+                            (last_active_at IS NULL AND created_at < DATE_SUB(NOW(), INTERVAL 6 MONTH))
+                        )
+                    LIMIT 1000;
+                    DO RELEASE_LOCK('cashback_inactive_profiles_lock');
+                END IF;
             END;"
         ];
 

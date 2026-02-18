@@ -168,7 +168,7 @@ jQuery(document).ready(function ($) {
     var data = {
       action: 'process_cashback_withdrawal',
       withdrawal_amount: amount,
-      nonce: cashback_ajax.nonce,
+      nonce: cashback_ajax.withdrawal_submit_nonce,
     };
 
     // Отправляем AJAX запрос

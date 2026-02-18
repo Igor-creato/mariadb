@@ -617,7 +617,7 @@ class CashbackWithdrawal
         echo '<button type="submit" class="woocommerce-Button button" id="withdrawal-submit" name="withdrawal_submit" value="' . esc_attr__('Вывести', 'cashback-plugin') . '">' . __('Вывести', 'cashback-plugin') . '</button>';
         echo '</p>';
         echo '<div id="withdrawal-messages"></div>';
-        wp_nonce_field('cashback_withdrawal_nonce', 'withdrawal_nonce');
+        wp_nonce_field('cashback_withdrawal_submit_nonce', 'withdrawal_nonce');
         echo '</form>';
         echo '</div>';
 
@@ -727,7 +727,7 @@ class CashbackWithdrawal
     public function process_cashback_withdrawal()
     {
         // === 1. Security: nonce and authentication ===
-        if (!wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'] ?? '')), 'cashback_withdrawal_nonce')) {
+        if (!wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'] ?? '')), 'cashback_withdrawal_submit_nonce')) {
             wp_send_json_error(__('Ошибка безопасности.', 'cashback-plugin'));
             return;
         }
@@ -773,6 +773,14 @@ class CashbackWithdrawal
             }
         }
 
+        // === 1.9. Rate limiting: max 3 withdrawal requests per 24 hours ===
+        $rate_key = 'cb_withdrawal_rate_' . $user_id;
+        $rate_count = (int) get_transient($rate_key);
+        if ($rate_count >= 3) {
+            wp_send_json_error(__('Слишком много заявок на вывод. Попробуйте через 24 часа.', 'cashback-plugin'));
+            return;
+        }
+
         // === 2. Защита от повторных запросов через GET_LOCK ===
         global $wpdb;
         $lock_name = "user_withdrawal_{$user_id}";
@@ -793,7 +801,7 @@ class CashbackWithdrawal
 
         $withdrawal_amount = sanitize_text_field(wp_unslash($_POST['withdrawal_amount'] ?? '0'));
         if (!is_numeric($withdrawal_amount)) {
-            $wpdb->query($wpdb->prepare("SELECT RELEASE_LOCK(%s)", $lock_name));
+            $wpdb->query($wpdb->prepare("DO RELEASE_LOCK(%s)", $lock_name));
             wp_send_json_error(__('Некорректная сумма вывода.', 'cashback-plugin'));
             return;
         }
@@ -803,7 +811,7 @@ class CashbackWithdrawal
         $payout_account = $this->get_payout_account($user_id);
 
         if (empty($payout_method) || empty($payout_account)) {
-            $wpdb->query($wpdb->prepare("SELECT RELEASE_LOCK(%s)", $lock_name)); // Снимаем блокировку
+            $wpdb->query($wpdb->prepare("DO RELEASE_LOCK(%s)", $lock_name)); // Снимаем блокировку
             wp_send_json_error(array(
                 'message' => __('Для вывода средств пожалуйста, заполните способ вывода и номер счета в вашем профиле.', 'cashback-plugin'),
                 'show_form' => true
@@ -817,7 +825,7 @@ class CashbackWithdrawal
 
         if ($user_payout_method_id > 0 && !$this->is_payout_method_active($user_payout_method_id)) {
             $method_name = $this->get_payout_method_name($user_payout_method_id);
-            $wpdb->query($wpdb->prepare("SELECT RELEASE_LOCK(%s)", $lock_name)); // Снимаем блокировку
+            $wpdb->query($wpdb->prepare("DO RELEASE_LOCK(%s)", $lock_name)); // Снимаем блокировку
             wp_send_json_error(array(
                 'message' => sprintf(__('Через %s сейчас выплаты не производятся, выберите другую', 'cashback-plugin'), $method_name),
                 'show_form' => true
@@ -827,7 +835,7 @@ class CashbackWithdrawal
 
         if ($user_bank_id > 0 && !$this->is_bank_active($user_bank_id)) {
             $bank_name = $this->get_bank_name($user_bank_id);
-            $wpdb->query($wpdb->prepare("SELECT RELEASE_LOCK(%s)", $lock_name)); // Снимаем блокировку
+            $wpdb->query($wpdb->prepare("DO RELEASE_LOCK(%s)", $lock_name)); // Снимаем блокировку
             wp_send_json_error(array(
                 'message' => sprintf(__('Через %s сейчас выплаты не производятся, выберите другой', 'cashback-plugin'), $bank_name),
                 'show_form' => true
@@ -835,49 +843,24 @@ class CashbackWithdrawal
             return;
         }
 
-        // === 4. Input validation ===
-        $min_payout_amount = $this->get_min_payout_amount($user_id);
-        $available_balance = $this->get_available_balance($user_id);
+        // === 4. Input validation (non-DB checks before transaction) ===
         $max_withdrawal_amount = 50000.00; // Максимальная сумма вывода
-
         $withdrawal_str = (string) $withdrawal_amount;
-        $min_payout_str = (string) $min_payout_amount;
-        $balance_str = (string) $available_balance;
         $max_withdrawal_str = (string) $max_withdrawal_amount;
 
         if (bccomp($withdrawal_str, '0', 2) <= 0) {
-            $wpdb->query($wpdb->prepare("SELECT RELEASE_LOCK(%s)", $lock_name)); // Снимаем блокировку
+            $wpdb->query($wpdb->prepare("DO RELEASE_LOCK(%s)", $lock_name));
             wp_send_json_error(__('Сумма вывода должна быть положительной.', 'cashback-plugin'));
             return;
         }
 
-        // Проверяем, что баланс пользователя больше или равен минимальной сумме для вывода
-        if (bccomp($balance_str, $min_payout_str, 2) < 0) {
-            $wpdb->query($wpdb->prepare("SELECT RELEASE_LOCK(%s)", $lock_name)); // Снимаем блокировку
-            wp_send_json_error(sprintf(__('Вы не можете вывести средства, Ваш баланс %s меньше минимально допустимой суммы для вывода %s', 'cashback-plugin'), wc_price($available_balance), wc_price($min_payout_amount)));
-            return;
-        }
-
-        if (bccomp($withdrawal_str, $min_payout_str, 2) < 0) {
-            $wpdb->query($wpdb->prepare("SELECT RELEASE_LOCK(%s)", $lock_name)); // Снимаем блокировку
-            wp_send_json_error(sprintf(__('Вы ввели сумму меньше минимально допустимой, введите сумму больше или равно %s', 'cashback-plugin'), wc_price($min_payout_amount)));
-            return;
-        }
-
-        if (bccomp($withdrawal_str, $balance_str, 2) > 0) {
-            $wpdb->query($wpdb->prepare("SELECT RELEASE_LOCK(%s)", $lock_name)); // Снимаем блокировку
-            wp_send_json_error(sprintf(__('Вы ввели сумму больше доступной, введите сумму меньше или равно %s', 'cashback-plugin'), wc_price($available_balance)));
-            return;
-        }
-
         if (bccomp($withdrawal_str, $max_withdrawal_str, 2) > 0) {
-            $wpdb->query($wpdb->prepare("SELECT RELEASE_LOCK(%s)", $lock_name)); // Снимаем блокировку
+            $wpdb->query($wpdb->prepare("DO RELEASE_LOCK(%s)", $lock_name));
             wp_send_json_error(sprintf(__('Максимальная сумма вывода %s', 'cashback-plugin'), wc_price($max_withdrawal_amount)));
             return;
         }
 
         // === 5. Atomic balance deduction with row-level locking ===
-        // Блокировка уже получена выше через GET_LOCK
         $table_balance = $wpdb->prefix . 'cashback_user_balance';
         $table_requests = $wpdb->prefix . 'cashback_payout_requests';
 
@@ -896,8 +879,21 @@ class CashbackWithdrawal
                 throw new Exception('User balance record not found');
             }
 
-            // Re-check balance under lock (in case it changed after initial read)
-            if (bccomp($withdrawal_amount, $user_balance->available_balance, 2) > 0) {
+            // === Balance-dependent validations under lock (prevents TOCTOU) ===
+            $min_payout_amount = $this->get_min_payout_amount($user_id);
+            $available_balance = $user_balance->available_balance;
+            $balance_str = (string) $available_balance;
+            $min_payout_str = (string) $min_payout_amount;
+
+            if (bccomp($balance_str, $min_payout_str, 2) < 0) {
+                throw new Exception('balance_below_min');
+            }
+
+            if (bccomp($withdrawal_str, $min_payout_str, 2) < 0) {
+                throw new Exception('amount_below_min');
+            }
+
+            if (bccomp($withdrawal_str, $balance_str, 2) > 0) {
                 throw new Exception('Insufficient available balance after lock');
             }
 
@@ -985,6 +981,10 @@ class CashbackWithdrawal
 
             $wpdb->query('COMMIT');
 
+            // Инкремент счетчика rate limiting после успешного вывода
+            $rate_count = (int) get_transient($rate_key);
+            set_transient($rate_key, $rate_count + 1, DAY_IN_SECONDS);
+
             // Логирование успешной операции с идемпотентным ключом
             $new_balance = bcsub((string) $user_balance->available_balance, (string) $withdrawal_amount, 2);
             wc_get_logger()->info(sprintf(
@@ -997,7 +997,7 @@ class CashbackWithdrawal
             ));
 
             // Освобождаем блокировку MariaDB
-            $wpdb->query($wpdb->prepare("SELECT RELEASE_LOCK(%s)", $lock_name));
+            $wpdb->query($wpdb->prepare("DO RELEASE_LOCK(%s)", $lock_name));
 
             wp_send_json_success(sprintf(
                 __('Заявка на вывод кэшбэка на сумму %s руб. успешно добавлена', 'cashback-plugin'),
@@ -1008,10 +1008,11 @@ class CashbackWithdrawal
             $error_message = $e->getMessage();
 
             // Освобождаем блокировку MariaDB
-            $wpdb->query($wpdb->prepare("SELECT RELEASE_LOCK(%s)", $lock_name));
+            $wpdb->query($wpdb->prepare("DO RELEASE_LOCK(%s)", $lock_name));
 
-            // Log unexpected errors
-            if ($error_message !== 'Insufficient available balance after lock') {
+            // Log unexpected errors (skip expected validation exceptions)
+            $expected_errors = ['Insufficient available balance after lock', 'balance_below_min', 'amount_below_min'];
+            if (!in_array($error_message, $expected_errors, true)) {
                 wc_get_logger()->error(sprintf(
                     "CashbackWithdrawal error for user %d: %s. Amount: %f",
                     $user_id,
@@ -1022,6 +1023,12 @@ class CashbackWithdrawal
 
             if ($error_message === 'Insufficient available balance after lock') {
                 wp_send_json_error(__('Недостаточно средств для вывода. Пожалуйста, обновите страницу и попробуйте снова.', 'cashback-plugin'));
+            } elseif ($error_message === 'balance_below_min') {
+                $min_amt = $this->get_min_payout_amount($user_id);
+                wp_send_json_error(sprintf(__('Ваш баланс меньше минимально допустимой суммы для вывода %s', 'cashback-plugin'), wc_price($min_amt)));
+            } elseif ($error_message === 'amount_below_min') {
+                $min_amt = $this->get_min_payout_amount($user_id);
+                wp_send_json_error(sprintf(__('Введите сумму больше или равно %s', 'cashback-plugin'), wc_price($min_amt)));
             } else {
                 wp_send_json_error(__('Ошибка при обработке запроса на вывод. Пожалуйста, попробуйте еще раз.', 'cashback-plugin'));
             }
@@ -1053,7 +1060,8 @@ class CashbackWithdrawal
             // Передаем AJAX URL в JavaScript
             wp_localize_script('cashback-withdrawal-js', 'cashback_ajax', array(
                 'ajax_url' => admin_url('admin-ajax.php'),
-                'nonce' => wp_create_nonce('cashback_withdrawal_nonce')
+                'nonce' => wp_create_nonce('cashback_withdrawal_nonce'),
+                'withdrawal_submit_nonce' => wp_create_nonce('cashback_withdrawal_submit_nonce')
             ));
         }
     }
@@ -1088,6 +1096,14 @@ class CashbackWithdrawal
             wp_send_json_error(array(
                 'message' => Cashback_User_Status::get_banned_message($ban_info)
             ));
+            return;
+        }
+
+        // Rate limiting: max 10 settings saves per hour
+        $settings_rate_key = 'cb_settings_rate_' . $user_id;
+        $settings_rate_count = (int) get_transient($settings_rate_key);
+        if ($settings_rate_count >= 10) {
+            wp_send_json_error(array('message' => __('Слишком частое сохранение настроек. Попробуйте позже.', 'cashback-plugin')));
             return;
         }
 
@@ -1174,6 +1190,10 @@ class CashbackWithdrawal
         );
 
         if ($result) {
+            // Инкремент счетчика rate limiting
+            $settings_rate_count = (int) get_transient($settings_rate_key);
+            set_transient($settings_rate_key, $settings_rate_count + 1, HOUR_IN_SECONDS);
+
             wp_send_json_success(array(
                 'message' => __('Настройки успешно сохранены.', 'cashback-plugin')
             ));

@@ -130,7 +130,7 @@ class Cashback_Click_Log_Admin
         $filter_email = isset($_GET['email']) ? sanitize_text_field(wp_unslash($_GET['email'])) : '';
         $filter_date_from = isset($_GET['date_from']) ? sanitize_text_field(wp_unslash($_GET['date_from'])) : '';
         $filter_date_to = isset($_GET['date_to']) ? sanitize_text_field(wp_unslash($_GET['date_to'])) : '';
-        $filter_spam_only = isset($_GET['spam_only']) && $_GET['spam_only'] === '1';
+        $filter_spam_only = isset($_GET['spam_only']) && sanitize_text_field(wp_unslash($_GET['spam_only'])) === '1';
 
         // Валидация дат
         if (!empty($filter_date_from) && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $filter_date_from)) {
@@ -174,9 +174,11 @@ class Cashback_Click_Log_Admin
                 $where_params
             ));
         } else {
-            $total_items = (int) $wpdb->get_var(
-                "SELECT COUNT(*) FROM {$this->table_name} cl LEFT JOIN {$users_table} u ON cl.user_id = u.ID {$where_clause}"
-            );
+            $total_items = (int) $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM {$this->table_name} cl LEFT JOIN {$users_table} u ON cl.user_id = u.ID WHERE %d = %d",
+                1,
+                1
+            ));
         }
 
         $total_pages = (int) ceil($total_items / $this->per_page);

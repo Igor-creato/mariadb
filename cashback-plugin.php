@@ -242,6 +242,7 @@ class CashbackPlugin
             if (class_exists('Cashback_Encryption') && !Cashback_Encryption::is_configured()) {
                 add_action('admin_notices', array($this, 'encryption_key_missing_notice'));
             }
+
         } else {
             add_action('admin_notices', array($this, 'woocommerce_required_notice'));
         }
@@ -453,6 +454,7 @@ class CashbackPlugin
         );
         printf('<div class="notice notice-error"><p>%s</p></div>', wp_kses_post($message));
     }
+
 }
 
 // Инициализация плагина

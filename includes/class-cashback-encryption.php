@@ -38,27 +38,39 @@ class Cashback_Encryption
     }
 
     /**
-     * Шифрует строку AES-256-CBC. Результат: base64(iv . ciphertext)
+     * Текущая версия формата шифрования.
+     * Префикс позволяет в будущем ротировать ключи без потери совместимости.
+     */
+    private const KEY_VERSION = 'v1:';
+
+    /**
+     * Шифрует строку AES-256-CBC. Результат: "v1:" . base64(iv . ciphertext)
      */
     public static function encrypt(string $plaintext): string
     {
         $key = self::get_key();
-        $iv = openssl_random_pseudo_bytes(self::IV_LENGTH);
+        $iv = random_bytes(self::IV_LENGTH);
         $ciphertext = openssl_encrypt($plaintext, self::CIPHER, $key, OPENSSL_RAW_DATA, $iv);
 
         if ($ciphertext === false) {
             throw new \RuntimeException('Encryption failed: ' . openssl_error_string());
         }
 
-        return base64_encode($iv . $ciphertext);
+        return self::KEY_VERSION . base64_encode($iv . $ciphertext);
     }
 
     /**
-     * Расшифровывает строку. Ожидает base64(iv . ciphertext)
+     * Расшифровывает строку. Поддерживает как "v1:base64(...)" так и legacy "base64(...)"
      */
     public static function decrypt(string $encrypted): string
     {
         $key = self::get_key();
+
+        // Поддержка версионного префикса и legacy формата
+        if (strpos($encrypted, self::KEY_VERSION) === 0) {
+            $encrypted = substr($encrypted, strlen(self::KEY_VERSION));
+        }
+
         $data = base64_decode($encrypted, true);
 
         if ($data === false || strlen($data) < self::IV_LENGTH + 1) {
@@ -95,6 +107,10 @@ class Cashback_Encryption
             'bank' => $bank,
         ];
         $json = wp_json_encode($plaintext_data, JSON_UNESCAPED_UNICODE);
+
+        if ($json === false) {
+            throw new \RuntimeException('Failed to encode details to JSON.');
+        }
 
         // Шифруем
         $encrypted_details = self::encrypt($json);
@@ -214,7 +230,12 @@ class Cashback_Encryption
         ];
         ksort($canonical);
 
-        return hash('sha256', wp_json_encode($canonical, JSON_UNESCAPED_UNICODE));
+        $json = wp_json_encode($canonical, JSON_UNESCAPED_UNICODE);
+        if ($json === false) {
+            throw new \RuntimeException('Failed to encode canonical details to JSON for hashing.');
+        }
+
+        return hash('sha256', $json);
     }
 
     /**

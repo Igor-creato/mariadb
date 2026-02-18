@@ -223,11 +223,15 @@ class Cashback_Support_Admin
         }
 
         // Подсчёт общего количества
-        $count_sql = "SELECT COUNT(*) FROM `{$this->tickets_table}` t {$where_clause}";
         if (!empty($where_params)) {
+            $count_sql = "SELECT COUNT(*) FROM `{$this->tickets_table}` t {$where_clause}";
             $total_items = (int) $wpdb->get_var($wpdb->prepare($count_sql, $where_params));
         } else {
-            $total_items = (int) $wpdb->get_var($count_sql);
+            $total_items = (int) $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM `{$this->tickets_table}` t WHERE %d = %d",
+                1,
+                1
+            ));
         }
 
         $total_pages = (int) ceil($total_items / $per_page);

@@ -196,18 +196,27 @@ class Cashback_Fraud_Admin
             $where[] = 'a.severity = %s';
             $params[] = $filter_severity;
         }
-        if ($filter_type) {
+        $allowed_alert_types = array_keys(self::get_alert_type_labels());
+        if ($filter_type && in_array($filter_type, $allowed_alert_types, true)) {
             $where[] = 'a.alert_type = %s';
             $params[] = $filter_type;
+        } else {
+            $filter_type = '';
         }
 
         $where_sql = implode(' AND ', $where);
 
         // Count
         $count_query = "SELECT COUNT(*) FROM `{$table}` a WHERE {$where_sql}";
-        $total_items = empty($params)
-            ? (int) $wpdb->get_var($count_query)
-            : (int) $wpdb->get_var($wpdb->prepare($count_query, ...$params));
+        if (empty($params)) {
+            $total_items = (int) $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM `{$table}` a WHERE %d = %d",
+                1,
+                1
+            ));
+        } else {
+            $total_items = (int) $wpdb->get_var($wpdb->prepare($count_query, ...$params));
+        }
 
         $total_pages = (int) ceil($total_items / self::PER_PAGE);
 
@@ -757,10 +766,23 @@ class Cashback_Fraud_Admin
         $value = $settings[$key] ?? '';
         $default = $defaults[$key] ?? '';
 
+        // Экранируем extra_attrs: парсим key="value" пары и пересобираем безопасно
+        $safe_attrs = '';
+        if (!empty($extra_attrs)) {
+            $allowed_attrs = ['step', 'min', 'max', 'placeholder'];
+            if (preg_match_all('/(\w+)=["\']([^"\']*)["\']/', $extra_attrs, $matches, PREG_SET_ORDER)) {
+                foreach ($matches as $match) {
+                    if (in_array($match[1], $allowed_attrs, true)) {
+                        $safe_attrs .= ' ' . esc_attr($match[1]) . '="' . esc_attr($match[2]) . '"';
+                    }
+                }
+            }
+        }
+
         echo '<tr>';
         echo '<th scope="row">' . esc_html($label) . '</th>';
         echo '<td>';
-        echo '<input type="number" name="' . esc_attr($key) . '" value="' . esc_attr($value) . '" class="small-text" ' . $extra_attrs . '>';
+        echo '<input type="number" name="' . esc_attr($key) . '" value="' . esc_attr($value) . '" class="small-text"' . $safe_attrs . '>';
         echo ' <span class="description">' . sprintf(esc_html__('По умолчанию: %s', 'cashback-plugin'), esc_html((string) $default)) . '</span>';
         echo '</td>';
         echo '</tr>';

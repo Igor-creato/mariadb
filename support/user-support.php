@@ -232,7 +232,8 @@ class Cashback_User_Support
                 (SELECT COUNT(*) FROM `{$this->messages_table}` m WHERE m.ticket_id = t.id AND m.is_admin = 1 AND m.is_read = 0) as unread_count
              FROM `{$this->tickets_table}` t
              WHERE t.user_id = %d
-             ORDER BY t.created_at DESC",
+             ORDER BY t.created_at DESC
+             LIMIT 50",
             $user_id
         ));
 

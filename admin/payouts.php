@@ -162,7 +162,11 @@ class Cashback_Payouts_Admin
         global $wpdb;
 
         // Получаем параметры для пагинации и фильтрации
+        $max_allowed_pages = 1000;
         $current_page = max(1, absint($_GET['paged'] ?? 1));
+        if ($current_page > $max_allowed_pages) {
+            $current_page = $max_allowed_pages;
+        }
         $per_page = 10;
         $offset = ($current_page - 1) * $per_page;
 
@@ -858,20 +862,41 @@ class Cashback_Payouts_Admin
                 return;
             }
         } else {
-            // Обновление без транзакции (нет смены статуса с обновлением баланса)
-            $update_data['updated_at'] = current_time('mysql');
-            $update_formats[] = '%s';
+            // Обновление метаданных (без смены статуса) — оборачиваем в транзакцию
+            // чтобы предотвратить чтение устаревших данных при параллельных запросах
+            $wpdb->query('START TRANSACTION');
 
-            $result = $wpdb->update(
-                $this->table_name,
-                $update_data,
-                ['id' => $payout_id],
-                $update_formats,
-                ['%d']
-            );
+            try {
+                // Блокируем строку для консистентного обновления
+                $payout_check = $wpdb->get_row($wpdb->prepare(
+                    "SELECT id FROM {$this->table_name} WHERE id = %d FOR UPDATE",
+                    $payout_id
+                ), ARRAY_A);
 
-            if ($result === false) {
-                wp_send_json_error(['message' => __('Ошибка при обновлении запроса выплаты в базе данных.', 'cashback-plugin')]);
+                if (!$payout_check) {
+                    throw new Exception(__('Запрос выплаты не найден.', 'cashback-plugin'));
+                }
+
+                $update_data['updated_at'] = current_time('mysql');
+                $update_formats[] = '%s';
+
+                $result = $wpdb->update(
+                    $this->table_name,
+                    $update_data,
+                    ['id' => $payout_id],
+                    $update_formats,
+                    ['%d']
+                );
+
+                if ($result === false) {
+                    throw new Exception(__('Ошибка при обновлении запроса выплаты в базе данных.', 'cashback-plugin'));
+                }
+
+                $wpdb->query('COMMIT');
+            } catch (\Throwable $e) {
+                $wpdb->query('ROLLBACK');
+                error_log('[Cashback Payouts] Error updating payout metadata #' . $payout_id . ': ' . $e->getMessage());
+                wp_send_json_error(['message' => __('Ошибка при обновлении запроса выплаты.', 'cashback-plugin')]);
                 return;
             }
         }

@@ -337,7 +337,7 @@ class Cashback_Bank_Management_Admin
     public function handle_update_bank(): void
     {
         // Проверяем nonce
-        if (!wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'update_bank_nonce')) {
+        if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'update_bank_nonce')) {
             wp_send_json_error(['message' => 'Неверный токен безопасности.']);
             return;
         }
@@ -350,12 +350,12 @@ class Cashback_Bank_Management_Admin
 
         global $wpdb;
 
-        $id = intval($_POST['id']);
-        $bank_code = sanitize_text_field(wp_unslash($_POST['bank_code']));
-        $name = sanitize_text_field(wp_unslash($_POST['name']));
-        $short_name = sanitize_text_field(wp_unslash($_POST['short_name']));
-        $is_active = intval($_POST['is_active']);
-        $sort_order = intval($_POST['sort_order']);
+        $id = intval(wp_unslash($_POST['id'] ?? 0));
+        $bank_code = sanitize_text_field(wp_unslash($_POST['bank_code'] ?? ''));
+        $name = sanitize_text_field(wp_unslash($_POST['name'] ?? ''));
+        $short_name = sanitize_text_field(wp_unslash($_POST['short_name'] ?? ''));
+        $is_active = intval(wp_unslash($_POST['is_active'] ?? 0));
+        $sort_order = intval(wp_unslash($_POST['sort_order'] ?? 0));
 
         // Валидация данных
         if (empty($bank_code) || empty($name)) {
@@ -400,7 +400,7 @@ class Cashback_Bank_Management_Admin
     public function handle_add_bank(): void
     {
         // Проверяем nonce
-        if (!wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'add_bank_nonce')) {
+        if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'add_bank_nonce')) {
             wp_send_json_error(['message' => 'Неверный токен безопасности.']);
             return;
         }
@@ -413,11 +413,11 @@ class Cashback_Bank_Management_Admin
 
         global $wpdb;
 
-        $bank_code = sanitize_text_field(wp_unslash($_POST['bank_code']));
-        $name = sanitize_text_field(wp_unslash($_POST['name']));
-        $short_name = sanitize_text_field(wp_unslash($_POST['short_name']));
-        $is_active = intval($_POST['is_active']);
-        $sort_order = intval($_POST['sort_order']);
+        $bank_code = sanitize_text_field(wp_unslash($_POST['bank_code'] ?? ''));
+        $name = sanitize_text_field(wp_unslash($_POST['name'] ?? ''));
+        $short_name = sanitize_text_field(wp_unslash($_POST['short_name'] ?? ''));
+        $is_active = intval(wp_unslash($_POST['is_active'] ?? 0));
+        $sort_order = intval(wp_unslash($_POST['sort_order'] ?? 0));
 
         // Валидация данных
         if (empty($bank_code) || empty($name)) {
