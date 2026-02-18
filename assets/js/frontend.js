@@ -1,150 +1,131 @@
+/**
+ * WC Affiliate URL Params — Server-Side UUID + Click Logging
+ *
+ * Перехватывает клики по партнерским ссылкам, отправляет AJAX на сервер
+ * для генерации UUID, логирования клика и получения финального URL.
+ *
+ * @since 3.0.0
+ */
 (function ($) {
   'use strict';
 
   $(document).ready(function () {
-    console.log('WC Affiliate URL Params: Script loaded');
-    console.log('WC Affiliate Params:', wcAffiliateParams);
-
-    // Обработчик только для кнопок покупки с внешней партнерской ссылкой
+    // Обработчик кликов по кнопкам партнерских товаров
     $(document).on(
       'click',
       'a.add_to_cart_button, a.single_add_to_cart_button, a.product_type_external, a.add-to-cart-loop',
       function (e) {
-        const $button = $(this);
-        let href = $button.attr('href') || $button.data('href');
+        var $button = $(this);
+        var productId = $button.data('product-id');
+        var href = $button.attr('href') || '';
 
-        // Для кнопок без href ищем URL в контексте (форма, контейнер товара)
-        if (!href) {
-          // Сначала проверяем форму
-          const $form = $button.closest('form');
-          if ($form.length) {
-            href =
-              $form.find('input[name="product_url"]').val() ||
-              $form.find('a[href*="USER_PLACEHOLDER_"], a[href*="UUID_PLACEHOLDER_"]').attr('href') ||
-              $form.data('product-url');
-          }
-
-          // Если не нашли в форме, ищем в контейнере товара
-          if (!href) {
-            href = $button
-              .closest(
-                '.product, .wd-quick-view, .quick-view-modal, .wd-popup, .single-product, .products, .product-grid, .wc-block-grid__products, .products-list',
-              )
-              .find('a[href*="USER_PLACEHOLDER_"], a[href*="UUID_PLACEHOLDER_"]')
-              .attr('href');
-          }
-
-          // Последний вариант - глобальный поиск
-          if (!href) {
-            href = $('a[href*="USER_PLACEHOLDER_"], a[href*="UUID_PLACEHOLDER_"]').first().attr('href');
-          }
+        // Перехватываем только партнерские товары (href="#" и есть data-product-id)
+        if (!productId || href !== '#') {
+          return;
         }
 
-        if (!href) {
-          console.log('WC Affiliate: No href found for purchase button, skipping');
-          return; // Не наш элемент
-        }
-
-        console.log('WC Affiliate: Found purchase button with href:', href);
-
-        var hasUserPlaceholder = href.includes('USER_PLACEHOLDER_');
-        var hasUuidPlaceholder = href.includes('UUID_PLACEHOLDER_');
-
-        // ПРОВЕРКА: содержит ли href какие-либо placeholder
-        if (!hasUserPlaceholder && !hasUuidPlaceholder) {
-          console.log(
-            'WC Affiliate: Href does not contain any placeholders, skipping purchase button',
-          );
-          return; // Не наш элемент
-        }
-
-        // Перехватываем клик — браузер не должен перейти по старому URL с плейсхолдерами
         e.preventDefault();
         e.stopImmediatePropagation();
 
-        console.log(
-          'WC Affiliate: Intercepted purchase button with placeholders:',
-          href,
-          $button,
-        );
-
-        var processedUrl = href;
-
-        // Обработка USER_PLACEHOLDER — проверяем авторизацию
-        if (hasUserPlaceholder) {
-          if (!wcAffiliateParams.isLoggedIn) {
-            console.log('WC Affiliate: User not logged in, showing warning for purchase button');
-            // Передаём URL с плейсхолдерами — UUID генерируется при клике на "Продолжить"
-            showAuthWarning($button, processedUrl);
-            return false;
-          } else {
-            console.log('WC Affiliate: User logged in, replacing user placeholder');
-            processedUrl = replaceUserPlaceholders(processedUrl, wcAffiliateParams.userId);
-          }
+        // Проверка авторизации
+        if (!wcAffiliateParams.isLoggedIn) {
+          showAuthWarning($button, productId);
+          return false;
         }
 
-        // Заменяем UUID placeholder уникальным UUID при каждом клике
-        if (hasUuidPlaceholder) {
-          processedUrl = replaceUuidPlaceholders(processedUrl);
-        }
-
-        // Открываем URL с подставленными значениями в новой вкладке
-        console.log('WC Affiliate: Opening processed URL:', processedUrl);
-        window.open(processedUrl, '_blank');
+        // Авторизованный пользователь — отправляем AJAX
+        sendClickRequest($button, productId);
         return false;
       },
     );
   });
 
   /**
-   * Показ предупреждения для неавторизованных пользователей
+   * Отправка AJAX запроса для логирования клика и получения redirect URL
+   *
+   * @param {jQuery} $button Кнопка, по которой кликнули
+   * @param {number} productId ID товара WooCommerce
    */
-  function showAuthWarning($button, originalUrl) {
-    // Удаляем существующее модальное окно, если есть
+  function sendClickRequest($button, productId) {
+    var fallbackUrl = $button.data('product-url') || '';
+
+    // Состояние загрузки
+    $button.addClass('loading');
+    $button.css('pointer-events', 'none');
+
+    $.ajax({
+      url: wcAffiliateParams.ajaxUrl,
+      type: 'POST',
+      data: {
+        action: 'log_affiliate_click',
+        product_id: productId,
+        nonce: wcAffiliateParams.nonce,
+      },
+      success: function (response) {
+        if (response.success && response.data && response.data.redirect_url) {
+          window.open(response.data.redirect_url, '_blank');
+        } else {
+          // Fallback: базовый URL товара
+          if (fallbackUrl) {
+            window.open(fallbackUrl, '_blank');
+          }
+        }
+      },
+      error: function () {
+        // Fallback: базовый URL товара, чтобы не блокировать пользователя
+        if (fallbackUrl) {
+          window.open(fallbackUrl, '_blank');
+        }
+      },
+      complete: function () {
+        $button.removeClass('loading');
+        $button.css('pointer-events', '');
+      },
+    });
+  }
+
+  /**
+   * Показ модального окна для неавторизованных пользователей
+   *
+   * @param {jQuery} $button Кнопка, по которой кликнули
+   * @param {number} productId ID товара WooCommerce
+   */
+  function showAuthWarning($button, productId) {
+    // Удаляем существующее модальное окно
     $('#wc-affiliate-warning-modal').remove();
 
-    // Создаем модальное окно (кнопка "Продолжить" без href — URL формируется при клике)
-    const modal = `
-            <div id="wc-affiliate-warning-modal" class="wc-affiliate-modal">
-                <div class="wc-affiliate-modal-content">
-                    <span class="wc-affiliate-modal-close">&times;</span>
-                    <div class="wc-affiliate-modal-icon">⚠️</div>
-                    <h3 class="wc-affiliate-modal-title">Внимание</h3>
-                    <p class="wc-affiliate-modal-message">${wcAffiliateParams.warningMessage}</p>
-                    <div class="wc-affiliate-modal-actions">
-                        <a href="#"
-                           class="wc-affiliate-btn wc-affiliate-btn-primary"
-                           id="wc-affiliate-continue">
-                            Продолжить без авторизации
-                        </a>
-                        <a href="${
-                          wcAffiliateParams.loginUrl
-                        }" class="wc-affiliate-btn wc-affiliate-btn-secondary" id="wc-affiliate-cancel">
-                            Авторизоваться или зарегистрироваться
-                        </a>
-                    </div>
-                </div>
-            </div>
-        `;
+    var modal =
+      '<div id="wc-affiliate-warning-modal" class="wc-affiliate-modal">' +
+      '<div class="wc-affiliate-modal-content">' +
+      '<span class="wc-affiliate-modal-close">&times;</span>' +
+      '<div class="wc-affiliate-modal-icon">\u26A0\uFE0F</div>' +
+      '<h3 class="wc-affiliate-modal-title">\u0412\u043D\u0438\u043C\u0430\u043D\u0438\u0435</h3>' +
+      '<p class="wc-affiliate-modal-message">' +
+      wcAffiliateParams.warningMessage +
+      '</p>' +
+      '<div class="wc-affiliate-modal-actions">' +
+      '<a href="#" class="wc-affiliate-btn wc-affiliate-btn-primary" id="wc-affiliate-continue">' +
+      '\u041F\u0440\u043E\u0434\u043E\u043B\u0436\u0438\u0442\u044C \u0431\u0435\u0437 \u0430\u0432\u0442\u043E\u0440\u0438\u0437\u0430\u0446\u0438\u0438</a>' +
+      '<a href="' +
+      wcAffiliateParams.loginUrl +
+      '" class="wc-affiliate-btn wc-affiliate-btn-secondary" id="wc-affiliate-cancel">' +
+      '\u0410\u0432\u0442\u043E\u0440\u0438\u0437\u043E\u0432\u0430\u0442\u044C\u0441\u044F \u0438\u043B\u0438 \u0437\u0430\u0440\u0435\u0433\u0438\u0441\u0442\u0440\u0438\u0440\u043E\u0432\u0430\u0442\u044C\u0441\u044F</a>' +
+      '</div></div></div>';
 
     $('body').append(modal);
 
-    // Показываем модальное окно
-    setTimeout(() => {
+    setTimeout(function () {
       $('#wc-affiliate-warning-modal').addClass('show');
     }, 10);
 
-    // Клик на "Продолжить" — генерируем свежий UUID при каждом клике
+    // «Продолжить без авторизации» — AJAX с user_id=0 на сервере
     $('#wc-affiliate-continue').on('click', function (e) {
       e.preventDefault();
-      var url = replaceUserPlaceholdersWithUnregistered(originalUrl);
-      url = replaceUuidPlaceholders(url);
-      console.log('WC Affiliate: Continue without auth, URL:', url);
-      window.open(url, '_blank');
       closeModal();
+      sendClickRequest($button, productId);
     });
 
-    // Обработчики закрытия
+    // Закрытие по крестику
     $('#wc-affiliate-warning-modal').on('click', '.wc-affiliate-modal-close', function () {
       closeModal();
     });
@@ -162,64 +143,10 @@
    */
   function closeModal() {
     $('#wc-affiliate-warning-modal').removeClass('show');
-    setTimeout(() => {
+    setTimeout(function () {
       $('#wc-affiliate-warning-modal').remove();
-      $(window).off('click.wcAffiliateModal'); // Удаляем обработчик, чтобы избежать дублирования
+      $(window).off('click.wcAffiliateModal');
     }, 300);
-  }
-
-  /**
-   * Замена placeholder на реальный ID пользователя
-   */
-  function replaceUserPlaceholders(url, userId) {
-    return url.replace(/USER_PLACEHOLDER_\d+/g, userId);
-  }
-
-  /**
-   * Замена UUID_PLACEHOLDER_ на уникальный UUID при каждом клике
-   */
-  function replaceUuidPlaceholders(url) {
-    return url.replace(/UUID_PLACEHOLDER_\d+/g, function () {
-      return generateUuid();
-    });
-  }
-
-  /**
-   * Генерация UUID v4
-   */
-  function generateUuid() {
-    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-      return crypto.randomUUID();
-    }
-    // Fallback для старых браузеров
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
-      var r = (Math.random() * 16) | 0;
-      var v = c === 'x' ? r : (r & 0x3) | 0x8;
-      return v.toString(16);
-    });
-  }
-
-  /**
-   * Замена параметров с placeholder на "unregistered" для кнопки "Продолжить"
-   */
-  function replaceUserPlaceholdersWithUnregistered(url) {
-    try {
-      const urlObj = new URL(url);
-      const params = new URLSearchParams(urlObj.search);
-
-      // Заменяем значения с USER_PLACEHOLDER_ на "unregistered"
-      for (const [key, value] of params.entries()) {
-        if (value.includes('USER_PLACEHOLDER_')) {
-          params.set(key, 'unregistered');
-        }
-      }
-
-      urlObj.search = params.toString();
-      return urlObj.toString();
-    } catch (e) {
-      console.error('Error processing URL:', e);
-      return url;
-    }
   }
 })(jQuery);
 

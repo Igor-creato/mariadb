@@ -49,6 +49,10 @@ class WC_Affiliate_URL_Params
         // Подключение JS и CSS
         add_action('wp_enqueue_scripts', [$this, 'enqueue_frontend_scripts']);
         add_action('admin_enqueue_scripts', [$this, 'enqueue_admin_scripts']);
+
+        // AJAX обработчик логирования кликов (server-side UUID)
+        add_action('wp_ajax_log_affiliate_click', [$this, 'handle_log_affiliate_click']);
+        add_action('wp_ajax_nopriv_log_affiliate_click', [$this, 'handle_log_affiliate_click']);
     }
 
     /**
@@ -415,13 +419,7 @@ class WC_Affiliate_URL_Params
             return $url;
         }
 
-        $logger = wc_get_logger();
         $product_id = $product->get_id();
-
-        $logger->debug(
-            sprintf('Modifying URL for product %d, original URL: %s', $product_id, $url),
-            ['source' => self::LOGGER_SOURCE]
-        );
 
         // Проверяем кэш
         $cache_key = 'affiliate_params_' . $product_id;
@@ -433,57 +431,11 @@ class WC_Affiliate_URL_Params
         }
 
         if (empty($cached_params)) {
-            $logger->debug('No params to add, returning original URL', ['source' => self::LOGGER_SOURCE]);
             return $url;
         }
 
-        $params = [];
-
-        foreach ($cached_params as $i => $param) {
-            if (empty($param['key']) || empty($param['value'])) {
-                continue;
-            }
-
-            $logger->debug(
-                sprintf('Param %d: key=%s, value=%s', $i, $param['key'], $param['value']),
-                ['source' => self::LOGGER_SOURCE]
-            );
-
-            $param_type = strtolower(trim($param['value']));
-
-            if ($param_type === 'user') {
-                // Подстановка ID пользователя
-                if (is_user_logged_in()) {
-                    $params[$param['key']] = get_current_user_id();
-                    $logger->debug(
-                        sprintf('User logged in, using user ID: %d', get_current_user_id()),
-                        ['source' => self::LOGGER_SOURCE]
-                    );
-                } else {
-                    $params[$param['key']] = 'USER_PLACEHOLDER_' . $i;
-                    $logger->debug(
-                        sprintf('User not logged in, using placeholder: USER_PLACEHOLDER_%d', $i),
-                        ['source' => self::LOGGER_SOURCE]
-                    );
-                }
-            } elseif ($param_type === 'uuid') {
-                // UUID генерируется на клиенте при каждом клике
-                $params[$param['key']] = 'UUID_PLACEHOLDER_' . $i;
-                $logger->debug(
-                    sprintf('UUID param, using placeholder: UUID_PLACEHOLDER_%d', $i),
-                    ['source' => self::LOGGER_SOURCE]
-                );
-            } else {
-                // Статическое значение — подставляется как есть
-                $params[$param['key']] = $param['value'];
-            }
-        }
-
-        // Добавляем параметры в URL (add_query_arg обрабатывает ? и & автоматически)
-        $url = add_query_arg($params, $url);
-        $logger->debug(sprintf('Final URL: %s', $url), ['source' => self::LOGGER_SOURCE]);
-
-        return $url;
+        // URL строится на сервере при клике (AJAX), здесь возвращаем #
+        return '#';
     }
 
     /**
@@ -561,6 +513,244 @@ class WC_Affiliate_URL_Params
     }
 
     /**
+     * AJAX обработчик: генерация UUID на сервере, логирование клика, возврат URL для редиректа.
+     *
+     * @since 3.0.0
+     *
+     * @return void
+     */
+    public function handle_log_affiliate_click(): void
+    {
+        // 1. Проверка nonce
+        if (!check_ajax_referer('wc_affiliate_url_params', 'nonce', false)) {
+            wp_send_json_error(['message' => 'Неверный токен безопасности.'], 403);
+        }
+
+        // 2. Валидация product_id
+        $product_id = isset($_POST['product_id']) ? absint($_POST['product_id']) : 0;
+        if ($product_id <= 0) {
+            wp_send_json_error(['message' => 'Некорректный ID товара.'], 400);
+        }
+
+        $product = wc_get_product($product_id);
+        if (!$product || $product->get_type() !== 'external') {
+            wp_send_json_error(['message' => 'Товар не найден или не является внешним.'], 404);
+        }
+
+        // 3. Генерация UUID v4 на сервере
+        $click_id = wp_generate_uuid4();
+
+        // 4. Контекст пользователя
+        $user_id = get_current_user_id(); // 0 для гостей
+        $session_id = $this->get_session_id();
+
+        // 5. Построение финального affiliate URL
+        $affiliate_url = $this->build_final_affiliate_url($product_id, $user_id, $click_id);
+        if (empty($affiliate_url)) {
+            $affiliate_url = $product->get_product_url();
+        }
+
+        // 6. CPA-сеть
+        $cpa_network = $this->get_network_slug_for_product($product_id);
+
+        // 7. Метаданные запроса
+        $ip_address = Cashback_Encryption::get_client_ip();
+        $user_agent = isset($_SERVER['HTTP_USER_AGENT'])
+            ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT']))
+            : null;
+        $referer = isset($_SERVER['HTTP_REFERER'])
+            ? esc_url_raw(wp_unslash($_SERVER['HTTP_REFERER']))
+            : null;
+
+        // 8. Логирование клика в БД (ошибка логирования не блокирует редирект)
+        $this->log_click_to_db([
+            'click_id'      => $click_id,
+            'user_id'       => $user_id > 0 ? $user_id : null,
+            'session_id'    => $session_id,
+            'product_id'    => $product_id,
+            'cpa_network'   => $cpa_network,
+            'affiliate_url' => $affiliate_url,
+            'ip_address'    => $ip_address,
+            'user_agent'    => $user_agent,
+            'referer'       => $referer,
+        ]);
+
+        // 9. Возвращаем URL для редиректа
+        wp_send_json_success(['redirect_url' => $affiliate_url]);
+    }
+
+    /**
+     * Построение финального affiliate URL с подстановкой реальных значений параметров.
+     *
+     * @since 3.0.0
+     *
+     * @param int    $product_id ID товара WooCommerce.
+     * @param int    $user_id    ID текущего пользователя (0 для гостей).
+     * @param string $click_id   UUID v4, сгенерированный на сервере.
+     *
+     * @return string|null Полный affiliate URL или null если товар не найден.
+     */
+    private function build_final_affiliate_url(int $product_id, int $user_id, string $click_id): ?string
+    {
+        $product = wc_get_product($product_id);
+        if (!$product || $product->get_type() !== 'external') {
+            return null;
+        }
+
+        $base_url = $product->get_product_url();
+        if (empty($base_url)) {
+            return null;
+        }
+
+        $affiliate_params = $this->get_affiliate_params($product_id);
+        if (empty($affiliate_params)) {
+            return $base_url;
+        }
+
+        $params = [];
+        foreach ($affiliate_params as $param) {
+            if (empty($param['key']) || empty($param['value'])) {
+                continue;
+            }
+
+            $param_type = strtolower(trim($param['value']));
+
+            if ($param_type === 'user') {
+                $params[$param['key']] = $user_id > 0 ? (string) $user_id : 'unregistered';
+            } elseif ($param_type === 'uuid') {
+                $params[$param['key']] = $click_id;
+            } else {
+                $params[$param['key']] = $param['value'];
+            }
+        }
+
+        return add_query_arg($params, $base_url);
+    }
+
+    /**
+     * Получение slug CPA-сети для товара.
+     *
+     * @since 3.0.0
+     *
+     * @param int $product_id ID товара.
+     *
+     * @return string|null Slug сети или null.
+     */
+    private function get_network_slug_for_product(int $product_id): ?string
+    {
+        global $wpdb;
+
+        $network_id = (int) get_post_meta($product_id, '_affiliate_network_id', true);
+        if ($network_id <= 0) {
+            return null;
+        }
+
+        $networks_table = $wpdb->prefix . 'cashback_affiliate_networks';
+        $slug = $wpdb->get_var($wpdb->prepare(
+            "SELECT slug FROM {$networks_table} WHERE id = %d AND is_active = 1",
+            $network_id
+        ));
+
+        return $slug ?: null;
+    }
+
+    /**
+     * Получение идентификатора сессии для текущего посетителя.
+     *
+     * Для авторизованных пользователей возвращает null (достаточно user_id).
+     * Для гостей: WooCommerce session или PHP session_id().
+     *
+     * @since 3.0.0
+     *
+     * @return string|null Идентификатор сессии или null.
+     */
+    private function get_session_id(): ?string
+    {
+        if (is_user_logged_in()) {
+            return null;
+        }
+
+        // WooCommerce сессия
+        if (function_exists('WC') && WC()->session) {
+            $wc_session_id = WC()->session->get_customer_id();
+            if (!empty($wc_session_id)) {
+                return (string) $wc_session_id;
+            }
+        }
+
+        // Fallback: PHP session
+        if (session_status() === PHP_SESSION_NONE) {
+            @session_start();
+        }
+        $sid = session_id();
+        return !empty($sid) ? $sid : null;
+    }
+
+    /**
+     * Запись клика в cashback_click_log с транзакцией.
+     *
+     * Ошибка записи логируется, но не блокирует редирект пользователя.
+     *
+     * @since 3.0.0
+     *
+     * @param array $data Данные клика.
+     *
+     * @return bool true при успехе, false при ошибке.
+     */
+    private function log_click_to_db(array $data): bool
+    {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'cashback_click_log';
+
+        // Время в UTC с микросекундами
+        $created_at = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Y-m-d H:i:s.u');
+
+        try {
+            $wpdb->query('START TRANSACTION');
+
+            $user_id_sql = $data['user_id'] !== null
+                ? $wpdb->prepare('%d', $data['user_id'])
+                : 'NULL';
+
+            $result = $wpdb->query($wpdb->prepare(
+                "INSERT INTO `{$table}` (click_id, user_id, session_id, product_id, cpa_network, affiliate_url, ip_address, user_agent, referer, created_at)
+                 VALUES (%s, {$user_id_sql}, %s, %d, %s, %s, %s, %s, %s, %s)",
+                $data['click_id'],
+                $data['session_id'],
+                $data['product_id'],
+                $data['cpa_network'],
+                $data['affiliate_url'],
+                $data['ip_address'],
+                $data['user_agent'],
+                $data['referer'],
+                $created_at
+            ));
+
+            if ($result === false) {
+                $wpdb->query('ROLLBACK');
+                $logger = wc_get_logger();
+                $logger->error(
+                    sprintf('Ошибка записи клика для товара %d: %s', $data['product_id'], $wpdb->last_error),
+                    ['source' => self::LOGGER_SOURCE]
+                );
+                return false;
+            }
+
+            $wpdb->query('COMMIT');
+            return true;
+        } catch (\Exception $e) {
+            $wpdb->query('ROLLBACK');
+            $logger = wc_get_logger();
+            $logger->error(
+                sprintf('Исключение при записи клика: %s', $e->getMessage()),
+                ['source' => self::LOGGER_SOURCE]
+            );
+            return false;
+        }
+    }
+
+    /**
      * Добавление data-product-id к ссылкам внешних товаров.
      *
      * @since 1.0.0
@@ -573,7 +763,14 @@ class WC_Affiliate_URL_Params
     public function add_product_id_to_link(string $link, WC_Product $product): string
     {
         if ($product->get_type() === 'external') {
-            $link = str_replace('<a ', '<a data-product-id="' . esc_attr((string) $product->get_id()) . '" target="_blank" ', $link);
+            $base_url = $product->get_product_url();
+            $link = str_replace(
+                '<a ',
+                '<a data-product-id="' . esc_attr((string) $product->get_id()) . '"'
+                . ' data-product-url="' . esc_url($base_url) . '"'
+                . ' target="_blank" ',
+                $link
+            );
         }
         return $link;
     }
@@ -598,7 +795,11 @@ class WC_Affiliate_URL_Params
         $button_text = $product->single_add_to_cart_text();
 
         echo '<p class="cart">';
-        echo '<a href="' . esc_url($product_url) . '" class="single_add_to_cart_button button alt" data-product-id="' . esc_attr((string) $product->get_id()) . '" target="_blank">';
+        echo '<a href="' . esc_url($product_url) . '"'
+            . ' class="single_add_to_cart_button button alt"'
+            . ' data-product-id="' . esc_attr((string) $product->get_id()) . '"'
+            . ' data-product-url="' . esc_url($base_url) . '"'
+            . ' target="_blank">';
         echo esc_html($button_text);
         echo '</a>';
         echo '</p>';
@@ -618,7 +819,7 @@ class WC_Affiliate_URL_Params
                 'wc-affiliate-url-params',
                 plugins_url('assets/js/frontend.js', __FILE__),
                 ['jquery'],
-                '1.0.0',
+                '3.0.0',
                 true
             );
 
@@ -630,7 +831,8 @@ class WC_Affiliate_URL_Params
                     'wc-affiliate-url-params'
                 ),
                 'loginUrl' => add_query_arg('action', 'register', get_permalink(wc_get_page_id('myaccount'))),
-                'nonce' => wp_create_nonce('wc_affiliate_url_params')
+                'nonce' => wp_create_nonce('wc_affiliate_url_params'),
+                'ajaxUrl' => admin_url('admin-ajax.php'),
             ]);
 
             wp_enqueue_style(

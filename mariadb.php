@@ -297,7 +297,7 @@ class Mariadb_Plugin
             `utm_medium` varchar(255) DEFAULT NULL COMMENT 'UTM medium',
             `utm_campaign` varchar(255) DEFAULT NULL COMMENT 'UTM campaign',
             `country` varchar(2) DEFAULT NULL COMMENT 'Код страны GeoIP (ISO 3166-1 alpha-2)',
-            `created_at` datetime(6) NOT NULL DEFAULT current_timestamp(6) COMMENT 'Время клика',
+            `created_at` datetime(6) NOT NULL COMMENT 'Время клика (UTC)',
             PRIMARY KEY (`id`),
             UNIQUE KEY `uk_click_id` (`click_id`),
             KEY `idx_user_id` (`user_id`),

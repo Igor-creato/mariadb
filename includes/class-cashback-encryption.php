@@ -266,7 +266,7 @@ class Cashback_Encryption
     /**
      * Получает IP-адрес клиента
      */
-    private static function get_client_ip(): string
+    public static function get_client_ip(): string
     {
         $remote_addr = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '0.0.0.0';
 
