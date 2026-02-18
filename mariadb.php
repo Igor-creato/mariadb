@@ -137,6 +137,7 @@ class Mariadb_Plugin
            `processed_at` datetime DEFAULT NULL  COMMENT 'Когда транзакция была учтена в балансе',
            `processed_batch_id` char(36) DEFAULT NULL COMMENT 'UUID батча начисления',
            `idempotency_key` varchar(64) DEFAULT NULL COMMENT 'Ключ идемпотентности для предотвращения дублирования транзакций',
+           `spam_click` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = транзакция из подозрительного клика, кэшбэк только после ручной проверки',
            `created_at` timestamp NULL DEFAULT current_timestamp(),
            `updated_at` timestamp NULL DEFAULT current_timestamp()
            ON UPDATE current_timestamp(),
@@ -174,6 +175,7 @@ class Mariadb_Plugin
             `cashback` decimal(10,2) DEFAULT NULL,
             `user_agent` text DEFAULT NULL,
             `click_time` timestamp NULL DEFAULT NULL,
+            `spam_click` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = транзакция из подозрительного клика, кэшбэк только после ручной проверки',
             `created_at` timestamp NULL DEFAULT current_timestamp(),
             `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
             PRIMARY KEY (`id`),
@@ -284,7 +286,7 @@ class Mariadb_Plugin
         $table_click_log = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_click_log` (
             `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
             `click_id` char(32) NOT NULL COMMENT 'UUID клика без дефисов, передаётся в CPA как subID, ключ для диспута',
-            `user_id` bigint(20) unsigned DEFAULT NULL COMMENT 'WP user ID (NULL для гостей)',
+            `user_id` bigint(20) unsigned NOT NULL DEFAULT 0 COMMENT 'WP user ID (0 для гостей)',
             `session_id` varchar(128) DEFAULT NULL COMMENT 'Идентификатор сессии для незалогиненных',
             `product_id` bigint(20) unsigned NOT NULL COMMENT 'ID товара WooCommerce',
             `cpa_network` varchar(100) DEFAULT NULL COMMENT 'Название CPA-сети',
@@ -297,6 +299,7 @@ class Mariadb_Plugin
             `utm_medium` varchar(255) DEFAULT NULL COMMENT 'UTM medium',
             `utm_campaign` varchar(255) DEFAULT NULL COMMENT 'UTM campaign',
             `country` varchar(2) DEFAULT NULL COMMENT 'Код страны GeoIP (ISO 3166-1 alpha-2)',
+            `spam_click` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = подозрительный клик (rate limit), кэшбэк только после ручной проверки',
             `created_at` datetime(6) NOT NULL COMMENT 'Время клика (UTC)',
             PRIMARY KEY (`id`),
             UNIQUE KEY `uk_click_id` (`click_id`),
@@ -361,6 +364,12 @@ class Mariadb_Plugin
 
         // Миграция: замена ON DELETE CASCADE на ON DELETE RESTRICT для финансовых таблиц
         $this->migrate_financial_fk_to_restrict();
+
+        // Миграция: user_id NOT NULL DEFAULT 0 в cashback_click_log
+        $this->migrate_click_log_user_id_not_null();
+
+        // Миграция: spam_click колонка в click_log, transactions, unregistered_transactions
+        $this->migrate_add_spam_click_column();
 
         error_log('Mariadb Plugin: Tables created successfully');
     }
@@ -777,6 +786,99 @@ class Mariadb_Plugin
     }
 
     /**
+     * Миграция: user_id с DEFAULT NULL на NOT NULL DEFAULT 0 в cashback_click_log.
+     *
+     * Нужна для корректной работы log_click_to_db() с плейсхолдером %d.
+     * Безопасна для повторного запуска.
+     *
+     * @since 4.1.0
+     *
+     * @return void
+     */
+    private function migrate_click_log_user_id_not_null(): void
+    {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'cashback_click_log';
+
+        // Проверяем существование таблицы
+        $table_exists = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s",
+            $table
+        ));
+
+        if (!$table_exists) {
+            return;
+        }
+
+        $is_nullable = $wpdb->get_var($wpdb->prepare(
+            "SELECT IS_NULLABLE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND COLUMN_NAME = 'user_id'",
+            $table
+        ));
+
+        if ($is_nullable === 'YES') {
+            $wpdb->query("UPDATE `{$table}` SET `user_id` = 0 WHERE `user_id` IS NULL");
+            $wpdb->query("ALTER TABLE `{$table}` MODIFY `user_id` bigint(20) unsigned NOT NULL DEFAULT 0 COMMENT 'WP user ID (0 для гостей)'");
+
+            if ($wpdb->last_error) {
+                error_log('Mariadb Plugin Error: Failed to migrate user_id column: ' . $wpdb->last_error);
+            } else {
+                error_log('Mariadb Plugin: Migrated cashback_click_log.user_id to NOT NULL DEFAULT 0');
+            }
+        }
+
+        // Удаляем idx_rate_limit если он был добавлен ранее (больше не нужен)
+        $index_exists = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND INDEX_NAME = %s",
+            $table,
+            'idx_rate_limit'
+        ));
+
+        if ($index_exists) {
+            $wpdb->query("ALTER TABLE `{$table}` DROP INDEX `idx_rate_limit`");
+        }
+    }
+
+    /**
+     * Миграция: добавление колонки spam_click в 3 таблицы.
+     *
+     * Безопасна для повторного запуска — проверяет существование колонки.
+     *
+     * @since 4.2.0
+     *
+     * @return void
+     */
+    private function migrate_add_spam_click_column(): void
+    {
+        global $wpdb;
+
+        $tables = [
+            $wpdb->prefix . 'cashback_click_log',
+            $wpdb->prefix . 'cashback_transactions',
+            $wpdb->prefix . 'cashback_unregistered_transactions',
+        ];
+
+        foreach ($tables as $table) {
+            $column_exists = $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND COLUMN_NAME = 'spam_click'",
+                $table
+            ));
+
+            if ($column_exists) {
+                continue;
+            }
+
+            $wpdb->query("ALTER TABLE `{$table}` ADD COLUMN `spam_click` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = подозрительный клик, кэшбэк только после ручной проверки'");
+
+            if ($wpdb->last_error) {
+                error_log("Mariadb Plugin Error: Failed to add spam_click to {$table}: " . $wpdb->last_error);
+            } else {
+                error_log("Mariadb Plugin: Added spam_click column to {$table}");
+            }
+        }
+    }
+
+    /**
      * Миграция существующих данных: шифрует plaintext реквизиты
      *
      * Работает батчами по 100 записей. Безопасна для повторного запуска.
@@ -1181,7 +1283,7 @@ BEGIN
             INDEX idx_user (user_id)
         );
 
-        -- Захватываем транзакции с блокировкой
+        -- Захватываем транзакции с блокировкой (spam_click=1 пропускаем — только ручная проверка)
         INSERT INTO tmp_cashback_batch (transaction_id, user_id, cashback)
         SELECT id, user_id, cashback
         FROM `{$safe_prefix}cashback_transactions`
@@ -1190,6 +1292,7 @@ BEGIN
             AND processed_at IS NULL
             AND cashback IS NOT NULL
             AND cashback > 0
+            AND spam_click = 0
             AND updated_at <= DATE_SUB(NOW(), INTERVAL 1 DAY)
         FOR UPDATE;
 

@@ -22,6 +22,17 @@ class WC_Affiliate_URL_Params
     private const LOGGER_SOURCE = 'wc-affiliate-url-params';
 
     /**
+     * Rate limiting: 3 уровня за RATE_LIMIT_WINDOW_SECONDS (60 сек).
+     *
+     * <= SPAM_THRESHOLD:  Норма — redirect + лог (spam_click=0).
+     * > SPAM_THRESHOLD и < BLOCK_THRESHOLD: Redirect + лог (spam_click=1). Кэшбэк только после ручной проверки.
+     * >= BLOCK_THRESHOLD: Redirect НЕТ. Защита от DDoS и бана CPA.
+     */
+    private const RATE_LIMIT_SPAM_THRESHOLD = 5;
+    private const RATE_LIMIT_BLOCK_THRESHOLD = 100;
+    private const RATE_LIMIT_WINDOW_SECONDS = 60;
+
+    /**
      * Конструктор класса.
      *
      * @since 2.0.0
@@ -583,10 +594,20 @@ class WC_Affiliate_URL_Params
                 ? esc_url_raw(wp_unslash($_SERVER['HTTP_REFERER']))
                 : null;
 
+            // Rate Limiting: 3 уровня (normal / spam / blocked)
+            $rate_status = $this->get_click_rate_status($ip_address, $product_id, $user_agent ?? '');
+
+            // 100+ кликов/мин → блокировка (защита от DDoS и бана CPA)
+            if ($rate_status === 'blocked') {
+                status_header(429);
+                nocache_headers();
+                exit;
+            }
+
             // Логирование клика в БД (ошибка НЕ блокирует редирект)
             $this->log_click_to_db([
                 'click_id'      => $click_id,
-                'user_id'       => $user_id > 0 ? $user_id : null,
+                'user_id'       => $user_id,
                 'session_id'    => $session_id,
                 'product_id'    => $product_id,
                 'cpa_network'   => $cpa_network,
@@ -594,6 +615,7 @@ class WC_Affiliate_URL_Params
                 'ip_address'    => $ip_address,
                 'user_agent'    => $user_agent,
                 'referer'       => $referer,
+                'spam_click'    => $rate_status === 'spam' ? 1 : 0,
             ]);
 
             // 302 redirect (не 301 — URL уникален каждый раз из-за click_id)
@@ -696,11 +718,12 @@ class WC_Affiliate_URL_Params
      * Получение идентификатора сессии для текущего посетителя.
      *
      * Для авторизованных пользователей возвращает null (достаточно user_id).
-     * Для гостей: WooCommerce session или PHP session_id().
+     * Для гостей используется только WooCommerce session.
+     * PHP session_start() не используется — конфликтует с page cache и object cache.
      *
      * @since 3.0.0
      *
-     * @return string|null Идентификатор сессии или null.
+     * @return string|null Идентификатор WC-сессии или null.
      */
     private function get_session_id(): ?string
     {
@@ -708,7 +731,6 @@ class WC_Affiliate_URL_Params
             return null;
         }
 
-        // WooCommerce сессия
         if (function_exists('WC') && WC()->session) {
             $wc_session_id = WC()->session->get_customer_id();
             if (!empty($wc_session_id)) {
@@ -716,22 +738,54 @@ class WC_Affiliate_URL_Params
             }
         }
 
-        // Fallback: PHP session
-        if (session_status() === PHP_SESSION_NONE) {
-            @session_start();
+        return null;
+    }
+
+    /**
+     * Трёхуровневый rate limit по IP + User Agent + product_id.
+     *
+     * Использует WordPress transients (wp_options без Redis, RAM с Redis).
+     * Счётчик инкрементируется при каждом вызове (включая spam).
+     *
+     * @since 4.1.0
+     *
+     * @param string $ip_address IP адрес клиента.
+     * @param int    $product_id ID товара.
+     * @param string $user_agent User-Agent браузера.
+     *
+     * @return string 'normal' | 'spam' | 'blocked'
+     */
+    private function get_click_rate_status(string $ip_address, int $product_id, string $user_agent): string
+    {
+        $raw_key = $ip_address . '|' . $user_agent . '|' . $product_id;
+        $hash = substr(md5($raw_key), 0, 12);
+        $transient_key = 'cb_clk_' . $hash;
+
+        $count = (int) get_transient($transient_key);
+        $new_count = $count + 1;
+
+        set_transient($transient_key, $new_count, self::RATE_LIMIT_WINDOW_SECONDS);
+
+        if ($new_count >= self::RATE_LIMIT_BLOCK_THRESHOLD) {
+            return 'blocked';
         }
-        $sid = session_id();
-        return !empty($sid) ? $sid : null;
+
+        if ($new_count > self::RATE_LIMIT_SPAM_THRESHOLD) {
+            return 'spam';
+        }
+
+        return 'normal';
     }
 
     /**
      * Запись клика в cashback_click_log с транзакцией.
      *
      * Ошибка записи логируется, но не блокирует редирект пользователя.
+     * user_id = 0 для гостей (не NULL), чтобы использовать единый %d плейсхолдер.
      *
      * @since 3.0.0
      *
-     * @param array $data Данные клика.
+     * @param array $data Данные клика (user_id: int, 0 для гостей).
      *
      * @return bool true при успехе, false при ошибке.
      */
@@ -747,14 +801,12 @@ class WC_Affiliate_URL_Params
         try {
             $wpdb->query('START TRANSACTION');
 
-            $user_id_sql = $data['user_id'] !== null
-                ? $wpdb->prepare('%d', $data['user_id'])
-                : 'NULL';
-
+            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $table is a safe prefixed table name
             $result = $wpdb->query($wpdb->prepare(
-                "INSERT INTO `{$table}` (click_id, user_id, session_id, product_id, cpa_network, affiliate_url, ip_address, user_agent, referer, created_at)
-                 VALUES (%s, {$user_id_sql}, %s, %d, %s, %s, %s, %s, %s, %s)",
+                "INSERT INTO `{$table}` (click_id, user_id, session_id, product_id, cpa_network, affiliate_url, ip_address, user_agent, referer, spam_click, created_at)
+                 VALUES (%s, %d, %s, %d, %s, %s, %s, %s, %s, %d, %s)",
                 $data['click_id'],
+                absint($data['user_id']),
                 $data['session_id'],
                 $data['product_id'],
                 $data['cpa_network'],
@@ -762,6 +814,7 @@ class WC_Affiliate_URL_Params
                 $data['ip_address'],
                 $data['user_agent'],
                 $data['referer'],
+                absint($data['spam_click'] ?? 0),
                 $created_at
             ));
 

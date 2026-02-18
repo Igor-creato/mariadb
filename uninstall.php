@@ -172,6 +172,11 @@ function cashback_plugin_uninstall(): void
     // Delete transients
     delete_transient('cashback_support_flush_rules');
 
+    // Delete rate limiting transients (cb_clk_* pattern)
+    $wpdb->query(
+        "DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_cb_clk_%' OR option_name LIKE '_transient_timeout_cb_clk_%'"
+    );
+
     // Delete encryption key file
     $key_file = WP_CONTENT_DIR . '/.cashback-encryption-key.php';
     if (file_exists($key_file)) {
