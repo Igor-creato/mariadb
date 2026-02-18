@@ -1,4 +1,9 @@
 jQuery(document).ready(function($) {
+    function escapeHtml(text) {
+        var map = {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'};
+        return String(text).replace(/[&<>"']/g, function(m) { return map[m]; });
+    }
+
     // Обработка фильтра по статусу
     $('#filter-submit').on('click', function() {
         var status = $('#filter-status').val();
@@ -28,7 +33,7 @@ jQuery(document).ready(function($) {
 
             if (field === 'status') {
                 // Для поля status создаем select
-                var selectHtml = '<select class="edit-input" data-field="' + field + '">';
+                var selectHtml = '<select class="edit-input" data-field="' + escapeHtml(field) + '">';
                 selectHtml += '<option value="active"' + (currentValue === 'active' ? ' selected' : '') + '>active</option>';
                 selectHtml += '<option value="noactive"' + (currentValue === 'noactive' ? ' selected' : '') + '>noactive</option>';
                 selectHtml += '<option value="banned"' + (currentValue === 'banned' ? ' selected' : '') + '>banned</option>';
@@ -39,10 +44,10 @@ jQuery(document).ready(function($) {
                 // Для числовых полей создаем input с типом number
                 var step = '0.01';
                 var placeholder = field === 'cashback_rate' ? 'Ставка кэшбэка' : 'Мин. сумма';
-                cell.html('<input type="number" step="' + step + '" class="edit-input" data-field="' + field + '" value="' + currentValue + '" placeholder="' + placeholder + '" />');
+                cell.html('<input type="number" step="' + step + '" class="edit-input" data-field="' + escapeHtml(field) + '" value="' + escapeHtml(currentValue) + '" placeholder="' + escapeHtml(placeholder) + '" />');
             } else {
                 // Для остальных полей создаем input
-                cell.html('<input type="text" class="edit-input" data-field="' + field + '" value="' + currentValue + '" />');
+                cell.html('<input type="text" class="edit-input" data-field="' + escapeHtml(field) + '" value="' + escapeHtml(currentValue) + '" />');
             }
         });
 

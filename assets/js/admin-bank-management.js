@@ -1,4 +1,9 @@
 jQuery(document).ready(function($) {
+    function escapeHtml(text) {
+        var map = {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'};
+        return String(text).replace(/[&<>"']/g, function(m) { return map[m]; });
+    }
+
     // Обработка клика по кнопке "Редактировать"
     $('.edit-btn').on('click', function() {
         var row = $(this).closest('tr');
@@ -11,14 +16,14 @@ jQuery(document).ready(function($) {
 
             if (field === 'is_active') {
                 // Для поля is_active создаем select
-                var selectHtml = '<select class="edit-input" data-field="' + field + '">';
+                var selectHtml = '<select class="edit-input" data-field="' + escapeHtml(field) + '">';
                 selectHtml += '<option value="1"' + (currentValue === 'Да' ? ' selected' : '') + '>Да</option>';
                 selectHtml += '<option value="0"' + (currentValue === 'Нет' ? ' selected' : '') + '>Нет</option>';
                 selectHtml += '</select>';
                 cell.html(selectHtml);
             } else {
                 // Для остальных полей создаем input
-                cell.html('<input type="text" class="edit-input regular-text" data-field="' + field + '" value="' + currentValue + '" />');
+                cell.html('<input type="text" class="edit-input regular-text" data-field="' + escapeHtml(field) + '" value="' + escapeHtml(currentValue) + '" />');
             }
         });
 
@@ -117,7 +122,7 @@ jQuery(document).ready(function($) {
                 // Удаляем предыдущие уведомления об ошибках
                 $('.notice-error.bank-add-error').remove();
                 // Показываем ошибку как WordPress notice
-                var errorHtml = '<div class="notice notice-error is-dismissible bank-add-error"><p>' + response.data.message + '</p></div>';
+                var errorHtml = '<div class="notice notice-error is-dismissible bank-add-error"><p>' + escapeHtml(response.data.message) + '</p></div>';
                 $('#add-bank-form').before(errorHtml);
                 // Прокручиваем к сообщению об ошибке
                 $('html, body').animate({
