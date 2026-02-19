@@ -1,0 +1,732 @@
+<?php
+/**
+ * Админ-страница API-валидации кэшбэка
+ *
+ * Обеспечивает:
+ * - Настройка API credentials для каждой CPA-сети
+ * - Кнопка «Проверить» при выплате (AJAX-валидация пользователя)
+ * - Страница с логом синхронизации
+ * - Ручной запуск синхронизации
+ *
+ * @package CashbackPlugin
+ * @since   5.0.0
+ */
+
+declare(strict_types=1);
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+class Cashback_Admin_API_Validation
+{
+    /** @var self|null */
+    private static ?self $instance = null;
+
+    /** @var string Slug страницы */
+    const PAGE_SLUG = 'cashback-api-validation';
+
+    /**
+     * @return self
+     */
+    public static function get_instance(): self
+    {
+        if (null === self::$instance) {
+            self::$instance = new self();
+        }
+        return self::$instance;
+    }
+
+    private function __construct()
+    {
+        // Подменю в админке
+        add_action('admin_menu', [$this, 'add_admin_menu']);
+
+        // AJAX обработчики
+        add_action('wp_ajax_cashback_validate_user', [$this, 'ajax_validate_user']);
+        add_action('wp_ajax_cashback_save_api_credentials', [$this, 'ajax_save_credentials']);
+        add_action('wp_ajax_cashback_manual_sync', [$this, 'ajax_manual_sync']);
+        add_action('wp_ajax_cashback_get_sync_log', [$this, 'ajax_get_sync_log']);
+        add_action('wp_ajax_cashback_get_validation_status', [$this, 'ajax_get_validation_status']);
+
+        // Подключение JS/CSS только на наших страницах
+        add_action('admin_enqueue_scripts', [$this, 'enqueue_assets']);
+    }
+
+    // =========================================================================
+    // Admin Menu
+    // =========================================================================
+
+    /**
+     * Добавить подменю
+     */
+    public function add_admin_menu(): void
+    {
+        add_submenu_page(
+            'cashback-overview',
+            'API Валидация',
+            'API Валидация',
+            'manage_options',
+            self::PAGE_SLUG,
+            [$this, 'render_page']
+        );
+    }
+
+    /**
+     * Подключение ассетов
+     */
+    public function enqueue_assets(string $hook): void
+    {
+        // Подключаем на странице валидации и на странице выплат.
+        // Используем $_GET['page'] как надёжный fallback — кириллический
+        // заголовок меню «Кэшбэк» даёт непредсказуемый $hook prefix.
+        $target_slugs = [self::PAGE_SLUG, 'cashback-payouts'];
+
+        $allowed_hooks = [];
+        foreach ($target_slugs as $slug) {
+            $allowed_hooks[] = 'cashback-overview_page_' . $slug;
+            $allowed_hooks[] = 'toplevel_page_' . $slug;
+            $allowed_hooks[] = 'admin_page_' . $slug;
+        }
+
+        $current_page = isset($_GET['page'])
+            ? sanitize_text_field(wp_unslash($_GET['page']))
+            : '';
+
+        $is_target_page = in_array($hook, $allowed_hooks, true)
+            || in_array($current_page, $target_slugs, true);
+
+        if (!$is_target_page) {
+            return;
+        }
+
+        wp_enqueue_script(
+            'cashback-api-validation',
+            plugin_dir_url(dirname(__FILE__)) . 'admin/js/api-validation.js',
+            ['jquery'],
+            '5.0.0',
+            true
+        );
+
+        wp_localize_script('cashback-api-validation', 'cashbackApiValidation', [
+            'ajaxUrl' => admin_url('admin-ajax.php'),
+            'nonce'   => wp_create_nonce('cashback_api_validation'),
+            'i18n'    => [
+                'validating'      => 'Проверка...',
+                'validate'        => 'Проверить',
+                'match'           => '✅ Данные совпадают',
+                'mismatch'        => '⚠️ Обнаружены расхождения',
+                'error'           => '❌ Ошибка проверки',
+                'syncing'         => 'Синхронизация...',
+                'sync_complete'   => 'Синхронизация завершена',
+                'saving'          => 'Сохранение...',
+                'saved'           => 'Сохранено',
+                'confirm_sync'    => 'Запустить синхронизацию статусов?',
+            ],
+        ]);
+
+        wp_enqueue_style(
+            'cashback-api-validation',
+            plugin_dir_url(dirname(__FILE__)) . 'admin/css/api-validation.css',
+            [],
+            '5.0.0'
+        );
+    }
+
+    // =========================================================================
+    // Page render
+    // =========================================================================
+
+    /**
+     * Рендер страницы настроек API-валидации
+     */
+    public function render_page(): void
+    {
+        if (!current_user_can('manage_options')) {
+            wp_die('Доступ запрещён');
+        }
+
+        $active_tab = sanitize_text_field($_GET['tab'] ?? 'settings');
+        ?>
+        <div class="wrap">
+            <h1>API Валидация кэшбэка</h1>
+
+            <nav class="nav-tab-wrapper">
+                <a href="?page=<?php echo self::PAGE_SLUG; ?>&tab=settings"
+                   class="nav-tab <?php echo $active_tab === 'settings' ? 'nav-tab-active' : ''; ?>">
+                    Настройки API
+                </a>
+                <a href="?page=<?php echo self::PAGE_SLUG; ?>&tab=validation"
+                   class="nav-tab <?php echo $active_tab === 'validation' ? 'nav-tab-active' : ''; ?>">
+                    Проверка пользователя
+                </a>
+                <a href="?page=<?php echo self::PAGE_SLUG; ?>&tab=sync"
+                   class="nav-tab <?php echo $active_tab === 'sync' ? 'nav-tab-active' : ''; ?>">
+                    Синхронизация
+                </a>
+            </nav>
+
+            <div class="tab-content" style="margin-top: 20px;">
+                <?php
+                switch ($active_tab) {
+                    case 'validation':
+                        $this->render_validation_tab();
+                        break;
+                    case 'sync':
+                        $this->render_sync_tab();
+                        break;
+                    default:
+                        $this->render_settings_tab();
+                        break;
+                }
+                ?>
+            </div>
+        </div>
+        <?php
+    }
+
+    /**
+     * Вкладка «Настройки API»
+     */
+    private function render_settings_tab(): void
+    {
+        global $wpdb;
+
+        $networks = $wpdb->get_results(
+            "SELECT * FROM {$wpdb->prefix}cashback_affiliate_networks ORDER BY sort_order, name",
+            ARRAY_A
+        );
+
+        ?>
+        <div id="cashback-api-settings">
+            <?php foreach ($networks as $network): ?>
+                <div class="cashback-network-card" data-network-id="<?php echo esc_attr($network['id']); ?>">
+                    <h2><?php echo esc_html($network['name']); ?>
+                        <span class="slug">(<?php echo esc_html($network['slug']); ?>)</span>
+                        <?php if ($network['is_active']): ?>
+                            <span class="status-badge active">Активна</span>
+                        <?php else: ?>
+                            <span class="status-badge inactive">Неактивна</span>
+                        <?php endif; ?>
+                    </h2>
+
+                    <table class="form-table">
+                        <tr>
+                            <th>API Base URL</th>
+                            <td>
+                                <input type="url" class="regular-text api-field"
+                                       name="api_base_url"
+                                       value="<?php echo esc_attr($network['api_base_url'] ?? ''); ?>"
+                                       placeholder="https://api.admitad.com">
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>Token Endpoint</th>
+                            <td>
+                                <input type="text" class="regular-text api-field"
+                                       name="api_token_endpoint"
+                                       value="<?php echo esc_attr($network['api_token_endpoint'] ?? ''); ?>"
+                                       placeholder="/token/">
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>Actions Endpoint</th>
+                            <td>
+                                <input type="text" class="regular-text api-field"
+                                       name="api_actions_endpoint"
+                                       value="<?php echo esc_attr($network['api_actions_endpoint'] ?? ''); ?>"
+                                       placeholder="/statistics/actions/">
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>Client ID</th>
+                            <td>
+                                <input type="text" class="regular-text api-credential"
+                                       name="client_id"
+                                       value=""
+                                       placeholder="<?php echo !empty($network['api_credentials']) ? '••••••• (сохранён)' : 'Введите Client ID'; ?>"
+                                       autocomplete="off">
+                                <p class="description">Credentials хранятся зашифрованными (AES-256-CBC)</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>Client Secret</th>
+                            <td>
+                                <input type="password" class="regular-text api-credential"
+                                       name="client_secret"
+                                       value=""
+                                       placeholder="<?php echo !empty($network['api_credentials']) ? '••••••• (сохранён)' : 'Введите Client Secret'; ?>"
+                                       autocomplete="off">
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>Website ID</th>
+                            <td>
+                                <input type="text" class="regular-text api-field"
+                                       name="api_website_id"
+                                       value="<?php echo esc_attr($network['api_website_id'] ?? ''); ?>"
+                                       placeholder="ID площадки в CPA-сети">
+                                <p class="description">Для фильтрации действий по конкретной площадке</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>Поле user_id в API</th>
+                            <td>
+                                <input type="text" class="regular-text api-field"
+                                       name="api_user_field"
+                                       value="<?php echo esc_attr($network['api_user_field'] ?? ''); ?>"
+                                       placeholder="subid">
+                                <p class="description">Admitad: <code>subid</code>, EPN: <code>sub</code></p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>Поле click_id в API</th>
+                            <td>
+                                <input type="text" class="regular-text api-field"
+                                       name="api_click_field"
+                                       value="<?php echo esc_attr($network['api_click_field'] ?? ''); ?>"
+                                       placeholder="subid1">
+                                <p class="description">Admitad: <code>subid1</code>, EPN: <code>click_id</code></p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>Маппинг статусов</th>
+                            <td>
+                                <textarea class="large-text code api-field" name="api_status_map" rows="6"
+                                    placeholder='{"pending":"waiting","approved":"completed","declined":"declined"}'
+                                ><?php echo esc_textarea($network['api_status_map'] ?? ''); ?></textarea>
+                                <p class="description">JSON: ключ = статус CPA-сети, значение = локальный статус (waiting/completed/declined)</p>
+                            </td>
+                        </tr>
+                    </table>
+
+                    <p>
+                        <button type="button" class="button button-primary cashback-save-network-btn"
+                                data-network-id="<?php echo esc_attr($network['id']); ?>">
+                            Сохранить настройки
+                        </button>
+                        <span class="cashback-save-status"></span>
+                    </p>
+                </div>
+                <hr>
+            <?php endforeach; ?>
+
+            <?php if (empty($networks)): ?>
+                <div class="notice notice-warning">
+                    <p>Нет партнёрских сетей. Добавьте сети в разделе <a href="?page=cashback-partners">Партнёры</a>.</p>
+                </div>
+            <?php endif; ?>
+        </div>
+        <?php
+    }
+
+    /**
+     * Вкладка «Проверка пользователя»
+     */
+    private function render_validation_tab(): void
+    {
+        ?>
+        <div id="cashback-validation-tab">
+            <h2>Проверка данных пользователя по API</h2>
+            <p class="description">
+                Сравнивает транзакции пользователя в локальной БД с данными CPA-сети.
+                Инкрементальная проверка — запрашиваются только новые данные с последнего чекпоинта.
+            </p>
+
+            <table class="form-table">
+                <tr>
+                    <th>User ID</th>
+                    <td>
+                        <input type="number" id="cashback-validate-user-id" class="regular-text"
+                               min="1" placeholder="ID пользователя WordPress">
+                    </td>
+                </tr>
+                <tr>
+                    <th>CPA-сеть</th>
+                    <td>
+                        <select id="cashback-validate-network">
+                            <?php
+                            $client = Cashback_API_Client::get_instance();
+                            $networks = $client->get_all_active_networks();
+                            foreach ($networks as $net):
+                                ?>
+                                <option value="<?php echo esc_attr($net['slug']); ?>">
+                                    <?php echo esc_html($net['name']); ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </td>
+                </tr>
+                <tr>
+                    <th>Полная проверка</th>
+                    <td>
+                        <label>
+                            <input type="checkbox" id="cashback-validate-full">
+                            Игнорировать чекпоинт (проверить с самого начала)
+                        </label>
+                        <p class="description">Медленнее, но перепроверяет все данные</p>
+                    </td>
+                </tr>
+            </table>
+
+            <p>
+                <button type="button" id="cashback-validate-btn" class="button button-primary button-hero">
+                    🔍 Проверить пользователя
+                </button>
+            </p>
+
+            <div id="cashback-validation-result" style="display:none; margin-top: 20px;">
+                <!-- Результат валидации подставляется через JS -->
+            </div>
+        </div>
+        <?php
+    }
+
+    /**
+     * Вкладка «Синхронизация»
+     */
+    private function render_sync_tab(): void
+    {
+        $last_sync = get_option('cashback_last_sync_result', null);
+        ?>
+        <div id="cashback-sync-tab">
+            <h2>Фоновая синхронизация статусов</h2>
+            <p class="description">
+                Cron каждые 2 часа запрашивает обновлённые статусы транзакций из CPA-сетей
+                через <code>status_updated_start</code>. Это страховка от потерянных webhook'ов.
+            </p>
+
+            <div class="cashback-sync-info">
+                <?php if ($last_sync): ?>
+                    <table class="widefat fixed" style="max-width: 600px;">
+                        <thead>
+                            <tr>
+                                <th colspan="2">Последняя синхронизация: <?php echo esc_html($last_sync['timestamp'] ?? '—'); ?>
+                                    (<?php echo esc_html($last_sync['elapsed'] ?? '?'); ?>s)
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if (!empty($last_sync['results'])):
+                                foreach ($last_sync['results'] as $net_slug => $res): ?>
+                                    <tr>
+                                        <td><strong><?php echo esc_html(strtoupper($net_slug)); ?></strong></td>
+                                        <td>
+                                            <?php if (!empty($res['success'])): ?>
+                                                Всего: <?php echo (int) $res['total']; ?>,
+                                                обновлено: <strong><?php echo (int) $res['updated']; ?></strong>,
+                                                пропущено: <?php echo (int) $res['skipped']; ?>,
+                                                не найдено: <?php echo (int) $res['not_found']; ?>
+                                            <?php else: ?>
+                                                <span style="color:red;">Ошибка: <?php echo esc_html($res['error'] ?? ''); ?></span>
+                                            <?php endif; ?>
+                                        </td>
+                                    </tr>
+                                <?php endforeach;
+                            endif; ?>
+                        </tbody>
+                    </table>
+                <?php else: ?>
+                    <p>Синхронизация ещё не запускалась.</p>
+                <?php endif; ?>
+            </div>
+
+            <p style="margin-top: 20px;">
+                <button type="button" id="cashback-manual-sync-btn" class="button button-primary">
+                    ▶ Запустить синхронизацию сейчас
+                </button>
+                <span id="cashback-sync-status"></span>
+            </p>
+
+            <h3 style="margin-top: 30px;">Лог синхронизации</h3>
+            <p>
+                <label>Показать за последние:
+                    <select id="cashback-sync-log-period">
+                        <option value="1">1 день</option>
+                        <option value="7" selected>7 дней</option>
+                        <option value="30">30 дней</option>
+                    </select>
+                </label>
+                <button type="button" id="cashback-load-sync-log" class="button">Загрузить</button>
+            </p>
+
+            <table id="cashback-sync-log-table" class="widefat striped" style="display:none;">
+                <thead>
+                    <tr>
+                        <th>Дата</th>
+                        <th>Сеть</th>
+                        <th>Транзакция</th>
+                        <th>Action ID</th>
+                        <th>Статус до</th>
+                        <th>Статус после</th>
+                        <th>Сумма API</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        <?php
+    }
+
+    // =========================================================================
+    // AJAX handlers
+    // =========================================================================
+
+    /**
+     * AJAX: Валидация пользователя
+     */
+    public function ajax_validate_user(): void
+    {
+        check_ajax_referer('cashback_api_validation', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Недостаточно прав']);
+        }
+
+        $user_id = (int) ($_POST['user_id'] ?? 0);
+        $network = sanitize_text_field($_POST['network'] ?? 'admitad');
+        $full    = !empty($_POST['full_check']);
+
+        if ($user_id < 1) {
+            wp_send_json_error(['message' => 'Укажите корректный User ID']);
+        }
+
+        // Проверяем существование пользователя
+        $user = get_user_by('id', $user_id);
+        if (!$user) {
+            wp_send_json_error(['message' => "Пользователь #{$user_id} не найден"]);
+        }
+
+        $client = Cashback_API_Client::get_instance();
+        $result = $client->validate_user($user_id, $network, !$full);
+
+        // Логируем в аудит
+        $this->log_audit('api_validation', $user_id, $result);
+
+        wp_send_json_success($result);
+    }
+
+    /**
+     * AJAX: Сохранение API credentials
+     */
+    public function ajax_save_credentials(): void
+    {
+        check_ajax_referer('cashback_api_validation', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Недостаточно прав']);
+        }
+
+        global $wpdb;
+
+        $network_id = (int) ($_POST['network_id'] ?? 0);
+        if ($network_id < 1) {
+            wp_send_json_error(['message' => 'Неверный ID сети']);
+        }
+
+        // Обновляем обычные поля
+        $fields = [
+            'api_base_url'         => sanitize_text_field($_POST['api_base_url'] ?? ''),
+            'api_token_endpoint'   => sanitize_text_field($_POST['api_token_endpoint'] ?? ''),
+            'api_actions_endpoint' => sanitize_text_field($_POST['api_actions_endpoint'] ?? ''),
+            'api_user_field'       => sanitize_text_field($_POST['api_user_field'] ?? ''),
+            'api_click_field'      => sanitize_text_field($_POST['api_click_field'] ?? ''),
+            'api_website_id'       => sanitize_text_field($_POST['api_website_id'] ?? ''),
+        ];
+
+        // Валидация маппинга статусов (должен быть валидный JSON)
+        $status_map_raw = wp_unslash($_POST['api_status_map'] ?? '');
+        if (!empty($status_map_raw)) {
+            $decoded = json_decode($status_map_raw, true);
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                wp_send_json_error(['message' => 'Маппинг статусов: невалидный JSON — ' . json_last_error_msg()]);
+            }
+            $fields['api_status_map'] = wp_json_encode($decoded);
+        }
+
+        $wpdb->update(
+            $wpdb->prefix . 'cashback_affiliate_networks',
+            $fields,
+            ['id' => $network_id]
+        );
+
+        if ($wpdb->last_error) {
+            wp_send_json_error(['message' => 'Ошибка сохранения: ' . $wpdb->last_error]);
+        }
+
+        // Сохраняем credentials если указаны новые
+        $client_id     = sanitize_text_field($_POST['client_id'] ?? '');
+        $client_secret = sanitize_text_field($_POST['client_secret'] ?? '');
+
+        if (!empty($client_id) && !empty($client_secret)) {
+            $client = Cashback_API_Client::get_instance();
+
+            // Получаем текущие credentials для мерджа (scope и т.д.)
+            $existing = $client->get_credentials($network_id) ?: [];
+
+            $credentials = array_merge($existing, [
+                'client_id'     => $client_id,
+                'client_secret' => $client_secret,
+            ]);
+
+            if (!empty($_POST['scope'])) {
+                $credentials['scope'] = sanitize_text_field($_POST['scope']);
+            }
+
+            $saved = $client->save_credentials($network_id, $credentials);
+
+            if (!$saved) {
+                wp_send_json_error(['message' => 'Настройки сохранены, но credentials не удалось зашифровать. Проверьте CB_ENCRYPTION_KEY.']);
+            }
+        }
+
+        // Аудит
+        $this->log_audit('api_credentials_updated', 0, ['network_id' => $network_id]);
+
+        wp_send_json_success(['message' => 'Настройки сохранены']);
+    }
+
+    /**
+     * AJAX: Ручной запуск синхронизации
+     */
+    public function ajax_manual_sync(): void
+    {
+        check_ajax_referer('cashback_api_validation', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Недостаточно прав']);
+        }
+
+        $result = Cashback_API_Cron::manual_sync();
+
+        $this->log_audit('manual_sync', 0, $result);
+
+        wp_send_json_success($result);
+    }
+
+    /**
+     * AJAX: Получить лог синхронизации
+     */
+    public function ajax_get_sync_log(): void
+    {
+        check_ajax_referer('cashback_api_validation', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Недостаточно прав']);
+        }
+
+        global $wpdb;
+
+        $days = (int) ($_POST['days'] ?? 7);
+        $days = max(1, min($days, 90));
+
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT sl.*, ct.user_id, ct.order_number
+             FROM {$wpdb->prefix}cashback_sync_log sl
+             LEFT JOIN {$wpdb->prefix}cashback_transactions ct ON sl.transaction_id = ct.id
+             WHERE sl.synced_at >= DATE_SUB(NOW(), INTERVAL %d DAY)
+             ORDER BY sl.synced_at DESC
+             LIMIT 500",
+            $days
+        ), ARRAY_A);
+
+        wp_send_json_success(['log' => $rows ?: []]);
+    }
+
+    /**
+     * AJAX: Получить статус валидации для кнопки на странице выплат
+     *
+     * Возвращает последний чекпоинт для пользователя.
+     */
+    public function ajax_get_validation_status(): void
+    {
+        check_ajax_referer('cashback_api_validation', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Недостаточно прав']);
+        }
+
+        $user_id = (int) ($_POST['user_id'] ?? 0);
+
+        if ($user_id < 1) {
+            wp_send_json_error(['message' => 'Неверный user_id']);
+        }
+
+        global $wpdb;
+
+        $checkpoints = $wpdb->get_results($wpdb->prepare(
+            "SELECT * FROM {$wpdb->prefix}cashback_validation_checkpoints WHERE user_id = %d",
+            $user_id
+        ), ARRAY_A);
+
+        wp_send_json_success(['checkpoints' => $checkpoints ?: []]);
+    }
+
+    // =========================================================================
+    // Кнопка валидации для страницы выплат (payouts)
+    // =========================================================================
+
+    /**
+     * HTML кнопки «Проверить» для встраивания в строку заявки на выплату
+     *
+     * Вызывается из шаблона выплат, например:
+     * Cashback_Admin_API_Validation::get_instance()->render_validate_button($user_id);
+     *
+     * @param int $user_id
+     */
+    public function render_validate_button(int $user_id): void
+    {
+        ?>
+        <button type="button"
+                class="button cashback-inline-validate-btn"
+                data-user-id="<?php echo esc_attr($user_id); ?>"
+                title="Проверить данные через API CPA-сети">
+            🔍 Проверить
+        </button>
+        <span class="cashback-inline-validate-status" data-user-id="<?php echo esc_attr($user_id); ?>"></span>
+        <?php
+    }
+
+    // =========================================================================
+    // Audit
+    // =========================================================================
+
+    /**
+     * Записать в аудит-лог
+     */
+    private function log_audit(string $action, int $entity_id, $details): void
+    {
+        global $wpdb;
+
+        $wpdb->insert(
+            $wpdb->prefix . 'cashback_audit_log',
+            [
+                'action'      => 'api_validation.' . $action,
+                'actor_id'    => get_current_user_id(),
+                'entity_type' => 'user',
+                'entity_id'   => $entity_id,
+                'ip_address'  => $this->get_client_ip(),
+                'user_agent'  => sanitize_text_field($_SERVER['HTTP_USER_AGENT'] ?? ''),
+                'details'     => wp_json_encode($details),
+            ]
+        );
+    }
+
+    /**
+     * IP клиента
+     */
+    private function get_client_ip(): string
+    {
+        $headers = ['HTTP_CF_CONNECTING_IP', 'HTTP_X_FORWARDED_FOR', 'REMOTE_ADDR'];
+        foreach ($headers as $header) {
+            if (!empty($_SERVER[$header])) {
+                $ip = explode(',', $_SERVER[$header])[0];
+                $ip = trim($ip);
+                if (filter_var($ip, FILTER_VALIDATE_IP)) {
+                    return $ip;
+                }
+            }
+        }
+        return '0.0.0.0';
+    }
+}

@@ -1,0 +1,136 @@
+/**
+ * Cashback API Validation — Admin CSS
+ * @since 5.0.0
+ */
+
+/* Network cards */
+.cashback-network-card {
+    background: #fff;
+    border: 1px solid #ccd0d4;
+    border-radius: 4px;
+    padding: 20px 25px;
+    margin-bottom: 20px;
+    box-shadow: 0 1px 1px rgba(0, 0, 0, 0.04);
+}
+
+.cashback-network-card h2 {
+    margin-top: 0;
+    font-size: 1.3em;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.cashback-network-card h2 .slug {
+    color: #72777c;
+    font-weight: normal;
+    font-size: 0.8em;
+}
+
+.cashback-network-card .form-table th {
+    width: 180px;
+    padding: 12px 10px 12px 0;
+}
+
+.cashback-network-card .form-table td {
+    padding: 8px 10px;
+}
+
+/* Status badges */
+.status-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 0.7em;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.status-badge.active {
+    background: #dff0d8;
+    color: #3c763d;
+}
+
+.status-badge.inactive {
+    background: #f2dede;
+    color: #a94442;
+}
+
+/* Save button status */
+.cashback-save-status {
+    margin-left: 12px;
+    font-size: 13px;
+    vertical-align: middle;
+}
+
+/* Validation result */
+#cashback-validation-result {
+    max-width: 900px;
+}
+
+#cashback-validation-result .notice {
+    margin-left: 0;
+}
+
+#cashback-validation-result table {
+    margin-top: 10px;
+}
+
+#cashback-validation-result code {
+    font-size: 11px;
+    background: #f1f1f1;
+    padding: 2px 5px;
+    border-radius: 2px;
+}
+
+#cashback-validation-result h3 {
+    color: #23282d;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 8px;
+}
+
+/* Sync info */
+.cashback-sync-info {
+    margin: 15px 0;
+}
+
+/* Inline validate button (payouts page) */
+.cashback-inline-validate-btn {
+    padding: 2px 8px !important;
+    font-size: 12px !important;
+    min-height: 26px !important;
+    line-height: 22px !important;
+}
+
+.cashback-inline-validate-status {
+    font-size: 12px;
+    margin-left: 6px;
+    vertical-align: middle;
+}
+
+/* Sync log table */
+#cashback-sync-log-table {
+    margin-top: 10px;
+    max-width: 1000px;
+}
+
+#cashback-sync-log-table code {
+    font-size: 11px;
+}
+
+/* Tab content */
+.tab-content {
+    max-width: 1100px;
+}
+
+/* Button hero override for validate */
+#cashback-validate-btn {
+    font-size: 15px !important;
+}
+
+/* Textarea for JSON */
+textarea.code[name="api_status_map"] {
+    font-family: monospace;
+    font-size: 12px;
+}

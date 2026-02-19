@@ -171,6 +171,17 @@ class CashbackPlugin
                 array('back_link' => true)
             );
         }
+
+        // --- API Валидация: миграции БД ---
+        $this->require_file('includes/class-cashback-api-migration.php');
+        if (class_exists('Cashback_API_Migration')) {
+            try {
+                Cashback_API_Migration::run();
+            } catch (Exception $e) {
+                error_log('Cashback API Migration Error: ' . $e->getMessage());
+            }
+        }
+
         // Создание таблиц поддержки и директории для вложений
         $this->require_file('support/support-db.php');
         if (class_exists('Cashback_Support_DB')) {
@@ -204,6 +215,13 @@ class CashbackPlugin
             wp_schedule_event(time(), 'daily', 'cashback_fraud_cleanup_cron');
         }
 
+        // --- API Валидация: cron фоновой синхронизации ---
+        $this->require_file('includes/class-cashback-api-client.php');
+        $this->require_file('includes/class-cashback-api-cron.php');
+        if (class_exists('Cashback_API_Cron')) {
+            Cashback_API_Cron::init();
+        }
+
         // Сбрасываем переписывание URL
         flush_rewrite_rules();
     }
@@ -218,6 +236,7 @@ class CashbackPlugin
             'cashback_health_check_cron',
             'cashback_fraud_detection_cron',
             'cashback_fraud_cleanup_cron',
+            'cashback_api_sync_statuses', // API Валидация: фоновая синхронизация
         ];
 
         foreach ($cron_hooks as $hook) {
@@ -242,7 +261,6 @@ class CashbackPlugin
             if (class_exists('Cashback_Encryption') && !Cashback_Encryption::is_configured()) {
                 add_action('admin_notices', array($this, 'encryption_key_missing_notice'));
             }
-
         } else {
             add_action('admin_notices', array($this, 'woocommerce_required_notice'));
         }
@@ -290,6 +308,12 @@ class CashbackPlugin
         $this->require_file('antifraud/class-fraud-collector.php');
         $this->require_file('antifraud/class-fraud-detector.php');
         $this->require_file('antifraud/class-fraud-admin.php');
+
+        // --- API Валидация ---
+        $this->require_file('includes/class-cashback-api-client.php');
+        $this->require_file('includes/class-cashback-api-migration.php');
+        $this->require_file('includes/class-cashback-api-cron.php');
+        $this->require_file('admin/class-cashback-admin-api-validation.php');
     }
 
     /**
@@ -349,6 +373,16 @@ class CashbackPlugin
 
         if (is_admin() && class_exists('Cashback_Fraud_Admin')) {
             new Cashback_Fraud_Admin();
+        }
+
+        // --- API Валидация: админ-страница + AJAX (только в админке) ---
+        if (is_admin() && class_exists('Cashback_Admin_API_Validation')) {
+            Cashback_Admin_API_Validation::get_instance();
+        }
+
+        // --- API Валидация: cron фоновой синхронизации (фронт + админка) ---
+        if (class_exists('Cashback_API_Cron')) {
+            Cashback_API_Cron::init();
         }
     }
 
@@ -454,7 +488,6 @@ class CashbackPlugin
         );
         printf('<div class="notice notice-error"><p>%s</p></div>', wp_kses_post($message));
     }
-
 }
 
 // Инициализация плагина
