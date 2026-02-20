@@ -597,6 +597,10 @@ class Cashback_API_Client
                 $local_tx = $local_by_uniq[$order_id] ?? null;
             }
 
+            if (!$local_tx && !empty($action['tracking'])) {
+                $local_tx = $local_by_uniq[$action['tracking']] ?? null;
+            }
+
             if (!$local_tx) {
                 $missing_local[] = [
                     'action_id'  => $action_id,
@@ -647,6 +651,9 @@ class Cashback_API_Client
             $api_action_ids[] = (string) ($a['action_id'] ?? $a['id'] ?? '');
             if (!empty($a['order_id'])) {
                 $api_action_ids[] = (string) $a['order_id'];
+            }
+            if (!empty($a['tracking'])) {
+                $api_action_ids[] = (string) $a['tracking'];
             }
         }
 
@@ -796,6 +803,16 @@ class Cashback_API_Client
                         "SELECT id, order_status, comission FROM {$this->transactions_table}
                          WHERE uniq_id = %s AND partner = %s",
                         (string) $action['order_id'],
+                        $slug
+                    ), ARRAY_A);
+                }
+
+                // Если не нашли по order_id — пробуем по tracking
+                if (!$local && !empty($action['tracking'])) {
+                    $local = $wpdb->get_row($wpdb->prepare(
+                        "SELECT id, order_status, comission FROM {$this->transactions_table}
+                         WHERE uniq_id = %s AND partner = %s",
+                        (string) $action['tracking'],
                         $slug
                     ), ARRAY_A);
                 }
