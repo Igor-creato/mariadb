@@ -182,7 +182,7 @@ class Cashback_API_Client
         global $wpdb;
 
         return $wpdb->get_results(
-            "SELECT id, name, slug, api_base_url, api_user_field, api_click_field, api_status_map, is_active
+            "SELECT id, name, slug, api_base_url, api_user_field, api_click_field, api_website_id, api_status_map, is_active
              FROM {$this->networks_table}
              WHERE is_active = 1 AND api_base_url IS NOT NULL AND api_base_url != ''
              ORDER BY sort_order, name",
@@ -344,11 +344,11 @@ class Cashback_API_Client
 
         $query_params = [];
 
-        if (!empty($params['subid'])) {
-            $query_params['subid'] = $params['subid'];
-        }
-        if (!empty($params['subid1'])) {
-            $query_params['subid1'] = $params['subid1'];
+        // Поддержка всех subid-вариантов (subid, subid1-subid4, sub и произвольных)
+        foreach ($params as $key => $value) {
+            if ($value !== '' && $value !== null && preg_match('/^sub(id\d?)?$/', $key)) {
+                $query_params[$key] = $value;
+            }
         }
         if (!empty($params['date_start'])) {
             $query_params['date_start'] = $params['date_start'];
@@ -513,12 +513,20 @@ class Cashback_API_Client
 
         $date_end = (new DateTime())->format('d.m.Y');
 
-        // Запрос к API
-        $api_result = $this->fetch_all_admitad_actions($network['credentials'], [
-            'subid'      => (string) $user_id,
+        // Запрос к API — используем api_user_field из настроек сети
+        $user_field = $network['api_user_field'] ?? 'subid';
+        $api_params = [
+            $user_field  => (string) $user_id,
             'date_start' => $date_start,
             'date_end'   => $date_end,
-        ], 20, $network);
+        ];
+
+        // ID площадки из настроек сети
+        if (!empty($network['api_website_id'])) {
+            $api_params['website'] = $network['api_website_id'];
+        }
+
+        $api_result = $this->fetch_all_admitad_actions($network['credentials'], $api_params, 20, $network);
 
         if (!$api_result['success']) {
             return [
@@ -745,11 +753,18 @@ class Cashback_API_Client
             $date_end = (new DateTime())->format('d.m.Y');
 
             // Запрос по status_updated_start — получаем все действия с обновлёнными статусами
-            $api_result = $this->fetch_all_admitad_actions($config['credentials'], [
+            $sync_params = [
                 'status_updated_start' => $date_start . ' 00:00:00',
                 'status_updated_end'   => $date_end . ' 23:59:59',
                 'date_start'           => '01.01.2020',
-            ], 20, $config);
+            ];
+
+            // ID площадки из настроек сети
+            if (!empty($config['api_website_id'])) {
+                $sync_params['website'] = $config['api_website_id'];
+            }
+
+            $api_result = $this->fetch_all_admitad_actions($config['credentials'], $sync_params, 20, $config);
 
             if (!$api_result['success']) {
                 $results[$slug] = ['success' => false, 'error' => $api_result['error']];
