@@ -89,7 +89,7 @@
         html += `<tr><td>Расхождений</td><td style="color:${data.mismatch_count > 0 ? 'red' : 'green'};">${data.mismatch_count || 0}</td></tr>`;
         html += '</tbody></table>';
 
-        // Суммы
+        // Финансовая сверка
         if (data.sums) {
             html += '<table class="widefat fixed" style="max-width:700px; margin-top:15px;">';
             html += '<thead><tr><th colspan="2">Финансовая сверка</th></tr></thead>';
@@ -106,74 +106,111 @@
             html += '</tbody></table>';
         }
 
-        // Расхождения
-        if (data.mismatched && data.mismatched.length > 0) {
-            html += '<h3 style="margin-top:20px;">Расхождения в данных</h3>';
-            html += '<table class="widefat striped" style="max-width:1000px;">';
-            html += '<thead><tr><th>Action ID</th><th>Uniq ID</th><th>API статус</th><th>Локальный статус</th><th>API сумма</th><th>Локальная сумма</th><th>Проблема</th></tr></thead>';
-            html += '<tbody>';
-            data.mismatched.forEach(function (m) {
-                const problems = [];
-                if (m.status_mismatch) problems.push('статус');
-                if (m.commission_mismatch) problems.push('комиссия');
-                if (m.cart_mismatch) problems.push('сумма заказа');
+        // ─── Вкладки с расхождениями ───
+        const mismatchedCount = (data.mismatched || []).length;
+        const missingLocalCount = (data.missing_local || []).length;
+        const missingApiCount = (data.missing_api || []).length;
+        const totalIssues = mismatchedCount + missingLocalCount + missingApiCount;
 
-                const statusCls = m.status_mismatch ? ' class="cell-mismatch"' : '';
-                const apiSumCls = m.commission_mismatch ? ' class="cell-mismatch"' : '';
-                const localSumCls = m.commission_mismatch ? ' class="cell-mismatch"' : '';
+        if (totalIssues > 0) {
+            // Навигация вкладок
+            html += '<nav class="validation-result-tabs nav-tab-wrapper" style="margin-top:20px;">';
+            html += `<a href="#" class="nav-tab nav-tab-active" data-tab="tab-mismatched">Расхождения <span class="tab-badge${mismatchedCount > 0 ? ' badge-red' : ''}">${mismatchedCount}</span></a>`;
+            html += `<a href="#" class="nav-tab" data-tab="tab-missing-local">Есть в API, нет на сайте <span class="tab-badge${missingLocalCount > 0 ? ' badge-red' : ''}">${missingLocalCount}</span></a>`;
+            html += `<a href="#" class="nav-tab" data-tab="tab-missing-api">Есть на сайте, нет в API <span class="tab-badge${missingApiCount > 0 ? ' badge-red' : ''}">${missingApiCount}</span></a>`;
+            html += '</nav>';
 
-                html += `<tr>
-                    <td><code>${escHtml(m.action_id)}</code></td>
-                    <td><code>${escHtml(m.uniq_id || m.click_id)}</code></td>
-                    <td${statusCls}>${escHtml(m.api_status)} → ${escHtml(m.mapped_api_status)}</td>
-                    <td${statusCls}>${escHtml(m.local_status)}</td>
-                    <td${apiSumCls}>${formatMoney(m.api_payment)}</td>
-                    <td${localSumCls}>${formatMoney(m.local_commission)}</td>
-                    <td style="color:red; font-weight:bold;">${problems.join(', ')}</td>
-                </tr>`;
-            });
-            html += '</tbody></table>';
-        }
+            // Вкладка 1: Расхождения
+            html += '<div class="validation-tab-content" id="tab-mismatched">';
+            if (mismatchedCount > 0) {
+                html += '<table class="widefat striped">';
+                html += '<thead><tr><th>Action ID</th><th>Uniq ID</th><th>API статус</th><th>Локальный статус</th><th>API сумма</th><th>Локальная сумма</th><th>Проблема</th></tr></thead>';
+                html += '<tbody>';
+                data.mismatched.forEach(function (m) {
+                    const problems = [];
+                    if (m.status_mismatch) problems.push('статус');
+                    if (m.commission_mismatch) problems.push('комиссия');
+                    if (m.cart_mismatch) problems.push('сумма заказа');
 
-        // Отсутствующие локально
-        if (data.missing_local && data.missing_local.length > 0) {
-            html += '<h3 style="margin-top:20px;">Есть в API, нет локально</h3>';
-            html += '<table class="widefat striped" style="max-width:700px;">';
-            html += '<thead><tr><th>Action ID</th><th>Order ID</th><th>Статус</th><th>Сумма</th><th>Дата</th></tr></thead>';
-            html += '<tbody>';
-            data.missing_local.forEach(function (m) {
-                html += `<tr>
-                    <td><code>${escHtml(m.action_id)}</code></td>
-                    <td>${escHtml(m.order_id)}</td>
-                    <td>${escHtml(m.status)}</td>
-                    <td>${formatMoney(m.payment)}</td>
-                    <td>${escHtml(m.date)}</td>
-                </tr>`;
-            });
-            html += '</tbody></table>';
-        }
+                    const statusCls = m.status_mismatch ? ' class="cell-mismatch"' : '';
+                    const sumCls = m.commission_mismatch ? ' class="cell-mismatch"' : '';
 
-        // Отсутствующие в API
-        if (data.missing_api && data.missing_api.length > 0) {
-            html += '<h3 style="margin-top:20px;">Есть локально, нет в API</h3>';
-            html += '<table class="widefat striped" style="max-width:700px;">';
-            html += '<thead><tr><th>Local ID</th><th>Uniq ID</th><th>Click ID</th><th>Статус</th><th>Комиссия</th><th>Создано</th></tr></thead>';
-            html += '<tbody>';
-            data.missing_api.forEach(function (m) {
-                html += `<tr>
-                    <td>#${m.local_id}</td>
-                    <td><code>${escHtml(m.uniq_id || '—')}</code></td>
-                    <td><code>${escHtml(m.click_id || '—')}</code></td>
-                    <td>${escHtml(m.status)}</td>
-                    <td>${formatMoney(m.commission)}</td>
-                    <td>${escHtml(m.created)}</td>
-                </tr>`;
-            });
-            html += '</tbody></table>';
+                    html += `<tr>
+                        <td><code>${escHtml(m.action_id)}</code></td>
+                        <td><code>${escHtml(m.uniq_id || m.click_id)}</code></td>
+                        <td${statusCls}>${escHtml(m.api_status)} → ${escHtml(m.mapped_api_status)}</td>
+                        <td${statusCls}>${escHtml(m.local_status)}</td>
+                        <td${sumCls}>${formatMoney(m.api_payment)}</td>
+                        <td${sumCls}>${formatMoney(m.local_commission)}</td>
+                        <td style="color:red; font-weight:bold;">${problems.join(', ')}</td>
+                    </tr>`;
+                });
+                html += '</tbody></table>';
+            } else {
+                html += '<p class="validation-empty">Нет расхождений в сопоставленных данных.</p>';
+            }
+            html += '</div>';
+
+            // Вкладка 2: Есть в API, нет на сайте
+            html += '<div class="validation-tab-content" id="tab-missing-local" style="display:none;">';
+            if (missingLocalCount > 0) {
+                html += '<table class="widefat striped">';
+                html += '<thead><tr><th>Action ID</th><th>Order ID</th><th>Статус</th><th>Сумма</th><th>Дата</th><th>Магазин</th></tr></thead>';
+                html += '<tbody>';
+                data.missing_local.forEach(function (m) {
+                    html += `<tr>
+                        <td><code>${escHtml(m.action_id)}</code></td>
+                        <td>${escHtml(m.order_id)}</td>
+                        <td>${escHtml(m.status)}</td>
+                        <td>${formatMoney(m.payment)}</td>
+                        <td>${escHtml(m.date)}</td>
+                        <td>${escHtml(m.campaign || '')}</td>
+                    </tr>`;
+                });
+                html += '</tbody></table>';
+            } else {
+                html += '<p class="validation-empty">Все данные из API найдены в локальной базе.</p>';
+            }
+            html += '</div>';
+
+            // Вкладка 3: Есть на сайте, нет в API
+            html += '<div class="validation-tab-content" id="tab-missing-api" style="display:none;">';
+            if (missingApiCount > 0) {
+                html += '<table class="widefat striped">';
+                html += '<thead><tr><th>Local ID</th><th>Uniq ID</th><th>Click ID</th><th>Статус</th><th>Комиссия</th><th>Создано</th></tr></thead>';
+                html += '<tbody>';
+                data.missing_api.forEach(function (m) {
+                    html += `<tr>
+                        <td>#${m.local_id}</td>
+                        <td><code>${escHtml(m.uniq_id || '—')}</code></td>
+                        <td><code>${escHtml(m.click_id || '—')}</code></td>
+                        <td>${escHtml(m.status)}</td>
+                        <td>${formatMoney(m.commission)}</td>
+                        <td>${escHtml(m.created)}</td>
+                    </tr>`;
+                });
+                html += '</tbody></table>';
+            } else {
+                html += '<p class="validation-empty">Все локальные транзакции найдены в API.</p>';
+            }
+            html += '</div>';
         }
 
         $result.html(html).fadeIn();
     }
+
+    // Переключение вкладок результата
+    $(document).on('click', '.validation-result-tabs .nav-tab', function (e) {
+        e.preventDefault();
+        const $tab = $(this);
+        const targetId = $tab.data('tab');
+
+        $tab.siblings('.nav-tab').removeClass('nav-tab-active');
+        $tab.addClass('nav-tab-active');
+
+        $tab.closest('#cashback-validation-result').find('.validation-tab-content').hide();
+        $('#' + targetId).show();
+    });
 
     /**
      * Рендер ошибки валидации

@@ -607,7 +607,8 @@ class Cashback_API_Client
             $mapped_status = $status_map[$api_status] ?? 'waiting';
 
             // Подсчёт сумм по API
-            if ($mapped_status === 'completed') {
+            // balance — эквивалент completed (из кастомного маппинга approved→balance)
+            if ($mapped_status === 'completed' || $mapped_status === 'balance') {
                 $api_sums['approved'] += $api_payment;
             } elseif ($mapped_status === 'waiting') {
                 $api_sums['pending'] += $api_payment;

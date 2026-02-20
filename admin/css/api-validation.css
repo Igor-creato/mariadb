@@ -66,7 +66,7 @@
 
 /* Validation result */
 #cashback-validation-result {
-    max-width: 900px;
+    max-width: 1100px;
 }
 
 #cashback-validation-result .notice {
@@ -141,3 +141,49 @@ textarea.code[name="api_status_map"] {
     font-weight: bold;
     background-color: #fef1f1;
 }
+
+/* Validation result sub-tabs */
+.validation-result-tabs {
+    border-bottom: 1px solid #ccd0d4;
+}
+
+.validation-result-tabs .nav-tab {
+    font-size: 13px;
+    padding: 6px 14px;
+}
+
+.tab-badge {
+    display: inline-block;
+    min-width: 18px;
+    height: 18px;
+    line-height: 18px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: #ddd;
+    color: #555;
+    font-size: 11px;
+    font-weight: 600;
+    text-align: center;
+    margin-left: 4px;
+    vertical-align: middle;
+}
+
+.tab-badge.badge-red {
+    background: #dc3232;
+    color: #fff;
+}
+
+.validation-tab-content {
+    padding: 15px 0;
+}
+
+.validation-tab-content table {
+    max-width: 100%;
+}
+
+.validation-empty {
+    color: #72777c;
+    font-style: italic;
+    padding: 10px 0;
+}
+
