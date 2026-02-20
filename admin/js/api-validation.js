@@ -97,7 +97,9 @@
             html += `<tr><td>API approved</td><td>${formatMoney(data.sums.api_approved)}</td></tr>`;
             html += `<tr><td>API pending</td><td>${formatMoney(data.sums.api_pending)}</td></tr>`;
             html += `<tr><td>API declined</td><td>${formatMoney(data.sums.api_declined)}</td></tr>`;
-            html += `<tr><td>Локальная сумма комиссий</td><td>${formatMoney(data.sums.local_total)}</td></tr>`;
+            html += `<tr><td>Локальная сумма approved</td><td>${formatMoney(data.sums.local_approved)}</td></tr>`;
+            html += `<tr><td>Локальная сумма pending</td><td>${formatMoney(data.sums.local_pending)}</td></tr>`;
+            html += `<tr><td>Локальная сумма declined</td><td>${formatMoney(data.sums.local_declined)}</td></tr>`;
 
             const discStyle = data.sums.discrepancy > 0.01 ? 'color:red; font-weight:bold;' : 'color:green;';
             html += `<tr><td>Расхождение</td><td style="${discStyle}">${formatMoney(data.sums.discrepancy)}</td></tr>`;
@@ -107,20 +109,27 @@
         // Расхождения
         if (data.mismatched && data.mismatched.length > 0) {
             html += '<h3 style="margin-top:20px;">Расхождения в данных</h3>';
-            html += '<table class="widefat striped" style="max-width:900px;">';
-            html += '<thead><tr><th>Uniq ID</th><th>API статус</th><th>Локальный статус</th><th>API сумма</th><th>Локальная сумма</th><th>Проблема</th></tr></thead>';
+            html += '<table class="widefat striped" style="max-width:1000px;">';
+            html += '<thead><tr><th>Action ID</th><th>Uniq ID</th><th>API статус</th><th>Локальный статус</th><th>API сумма</th><th>Локальная сумма</th><th>Проблема</th></tr></thead>';
             html += '<tbody>';
             data.mismatched.forEach(function (m) {
                 const problems = [];
                 if (m.status_mismatch) problems.push('статус');
-                if (m.sum_mismatch) problems.push('сумма');
+                if (m.commission_mismatch) problems.push('комиссия');
+                if (m.cart_mismatch) problems.push('сумма заказа');
+
+                const statusCls = m.status_mismatch ? ' class="cell-mismatch"' : '';
+                const apiSumCls = m.commission_mismatch ? ' class="cell-mismatch"' : '';
+                const localSumCls = m.commission_mismatch ? ' class="cell-mismatch"' : '';
+
                 html += `<tr>
-                    <td><code>${escHtml(m.uniq_id)}</code></td>
-                    <td>${escHtml(m.api_status)} → ${escHtml(m.mapped_api_status)}</td>
-                    <td>${escHtml(m.local_status)}</td>
-                    <td>${formatMoney(m.api_payment)}</td>
-                    <td>${formatMoney(m.local_commission)}</td>
-                    <td style="color:red;">${problems.join(', ')}</td>
+                    <td><code>${escHtml(m.action_id)}</code></td>
+                    <td><code>${escHtml(m.uniq_id || m.click_id)}</code></td>
+                    <td${statusCls}>${escHtml(m.api_status)} → ${escHtml(m.mapped_api_status)}</td>
+                    <td${statusCls}>${escHtml(m.local_status)}</td>
+                    <td${apiSumCls}>${formatMoney(m.api_payment)}</td>
+                    <td${localSumCls}>${formatMoney(m.local_commission)}</td>
+                    <td style="color:red; font-weight:bold;">${problems.join(', ')}</td>
                 </tr>`;
             });
             html += '</tbody></table>';
@@ -148,12 +157,13 @@
         if (data.missing_api && data.missing_api.length > 0) {
             html += '<h3 style="margin-top:20px;">Есть локально, нет в API</h3>';
             html += '<table class="widefat striped" style="max-width:700px;">';
-            html += '<thead><tr><th>Local ID</th><th>Uniq ID</th><th>Статус</th><th>Комиссия</th><th>Создано</th></tr></thead>';
+            html += '<thead><tr><th>Local ID</th><th>Uniq ID</th><th>Click ID</th><th>Статус</th><th>Комиссия</th><th>Создано</th></tr></thead>';
             html += '<tbody>';
             data.missing_api.forEach(function (m) {
                 html += `<tr>
                     <td>#${m.local_id}</td>
-                    <td><code>${escHtml(m.uniq_id)}</code></td>
+                    <td><code>${escHtml(m.uniq_id || '—')}</code></td>
+                    <td><code>${escHtml(m.click_id || '—')}</code></td>
                     <td>${escHtml(m.status)}</td>
                     <td>${formatMoney(m.commission)}</td>
                     <td>${escHtml(m.created)}</td>

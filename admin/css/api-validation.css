@@ -134,3 +134,10 @@ textarea.code[name="api_status_map"] {
     font-family: monospace;
     font-size: 12px;
 }
+
+/* Mismatch cell highlighting */
+#cashback-validation-result td.cell-mismatch {
+    color: #dc3232;
+    font-weight: bold;
+    background-color: #fef1f1;
+}
