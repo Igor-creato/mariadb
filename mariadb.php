@@ -123,41 +123,54 @@ class Mariadb_Plugin
 
         // Таблица cashback_transactions
         $table2 = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_transactions` (
-           `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-           `user_id` bigint(20) unsigned NOT NULL,
-           `order_number` varchar(255) NOT NULL,
-           `offer_name` varchar(255) DEFAULT NULL,
-           `order_status` enum('waiting','completed','declined','balance') NOT NULL DEFAULT 'waiting',
-           `partner` varchar(255) DEFAULT NULL,
-           `sum_order` decimal(10,2) DEFAULT NULL,
-           `comission` decimal(10,2) DEFAULT NULL,
-           `uniq_id` varchar(255) DEFAULT NULL,
-           `cashback` decimal(10,2) DEFAULT NULL,
-           `applied_cashback_rate` decimal(5,2) NOT NULL DEFAULT 60.00 COMMENT 'Процент кэшбэка на момент создания транзакции',
-           `processed_at` datetime DEFAULT NULL  COMMENT 'Когда транзакция была учтена в балансе',
-           `processed_batch_id` char(36) DEFAULT NULL COMMENT 'UUID батча начисления',
-           `idempotency_key` varchar(64) DEFAULT NULL COMMENT 'Ключ идемпотентности для предотвращения дублирования транзакций',
-           `spam_click` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = транзакция из подозрительного клика, кэшбэк только после ручной проверки',
-           `created_at` timestamp NULL DEFAULT current_timestamp(),
-           `updated_at` timestamp NULL DEFAULT current_timestamp()
-           ON UPDATE current_timestamp(),
-            PRIMARY KEY (`id`),
-            UNIQUE KEY `unique_uniq_partner` (`uniq_id`,`partner`),
-            UNIQUE KEY `idx_idempotency_key` (`idempotency_key`),
-            KEY `user_id` (`user_id`),
-            KEY `idx_user_created` (`user_id`,`created_at` DESC),
-            KEY `idx_order_status_updated_cashback` (`order_status`,`updated_at`,`cashback`),
-            KEY `idx_processed` (`processed_at`),
-            KEY `idx_processed_batch_id` (`processed_batch_id`),
-            CONSTRAINT `fk_transactions_user`
-            FOREIGN KEY (`user_id`)
-            REFERENCES `{$wpdb->prefix}users` (`ID`)
-            ON DELETE RESTRICT,
-            CONSTRAINT `chk_applied_cashback_rate_range`
-            CHECK (`applied_cashback_rate` BETWEEN 0.00 AND 100.00),
-            CONSTRAINT `chk_cashback_positive`
-            CHECK (`cashback` >= 0)
-        ) ENGINE=InnoDB {$charset_collate};";
+            `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            `user_id` bigint(20) unsigned NOT NULL,
+            `order_number` varchar(255) NOT NULL,
+            `offer_id` int unsigned DEFAULT NULL COMMENT 'ID партнёрской программы в CPA-сети (advcampaign_id). Стабилен, в отличие от offer_name',
+            `offer_name` varchar(255) DEFAULT NULL,
+            `order_status` enum('waiting','completed','declined','balance') NOT NULL DEFAULT 'waiting',
+            `partner` varchar(255) DEFAULT NULL,
+            `sum_order` decimal(10,2) DEFAULT NULL,
+            `comission` decimal(10,2) DEFAULT NULL,
+            `currency` char(3) NOT NULL DEFAULT 'RUB' COMMENT 'Валюта комиссии (ISO 4217). Без неё невозможно корректно сравнивать суммы',
+            `uniq_id` varchar(255) DEFAULT NULL,
+            `cashback` decimal(10,2) DEFAULT NULL,
+            `applied_cashback_rate` decimal(5,2) NOT NULL DEFAULT 60.00 COMMENT 'Процент кэшбэка на момент создания транзакции',
+            `reward_ready` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = Admitad подтвердил готовность к снятию ([[[reward_ready]]]). Основной триггер начисления в баланс',
+            `action_date` datetime DEFAULT NULL COMMENT 'Реальное время покупки из [[[time]]]. НЕ путать с created_at (время получения хука)',
+            `click_time` datetime DEFAULT NULL COMMENT 'Время клика из [[[click_time]]]. Для антифрода: action_date - click_time = 0 → бот',
+            `click_id` char(32) DEFAULT NULL COMMENT 'UUID клика из [[[subid1]]], связь с cashback_click_log.click_id',
+            `website_id` int unsigned DEFAULT NULL COMMENT 'ID площадки в CPA-сети из [[[website_id]]]',
+            `action_type` varchar(10) DEFAULT NULL COMMENT 'sale/lead из [[[type]]]. Для корректного расчёта при нескольких тарифах',
+            `processed_at` datetime DEFAULT NULL COMMENT 'Когда транзакция была учтена в балансе',
+            `processed_batch_id` char(36) DEFAULT NULL COMMENT 'UUID батча начисления',
+            `idempotency_key` varchar(64) DEFAULT NULL COMMENT 'Ключ идемпотентности для предотвращения дублирования транзакций',
+            `spam_click` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = транзакция из подозрительного клика, кэшбэк только после ручной проверки',
+            `created_at` timestamp NULL DEFAULT current_timestamp(),
+            `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `unique_uniq_partner` (`uniq_id`,`partner`),
+    UNIQUE KEY `idx_idempotency_key` (`idempotency_key`),
+    KEY `user_id` (`user_id`),
+    KEY `idx_user_created` (`user_id`,`created_at` DESC),
+    KEY `idx_processed` (`processed_at`),
+    KEY `idx_processed_batch_id` (`processed_batch_id`),
+    KEY `idx_click_id` (`click_id`),
+    KEY `idx_offer_id` (`offer_id`),
+
+    KEY `idx_balance_candidates` (`order_status`,`reward_ready`,`processed_at`,`spam_click`,`cashback`),
+
+    CONSTRAINT `fk_transactions_user`
+        FOREIGN KEY (`user_id`)
+        REFERENCES `{$wpdb->prefix}users` (`ID`)
+        ON DELETE RESTRICT,
+    CONSTRAINT `chk_applied_cashback_rate_range`
+        CHECK (`applied_cashback_rate` BETWEEN 0.00 AND 100.00),
+    CONSTRAINT `chk_cashback_positive`
+        CHECK (`cashback` >= 0),
+    CONSTRAINT `chk_currency_format`
+        CHECK (`currency` REGEXP '^[A-Z]{3}$')
+) ENGINE=InnoDB {$charset_collate};";
 
 
 
@@ -166,15 +179,25 @@ class Mariadb_Plugin
             `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
             `user_id` varchar(255) NOT NULL,
             `order_number` varchar(255) NOT NULL,
+            `offer_id` int unsigned DEFAULT NULL COMMENT 'ID партнёрской программы в CPA-сети (advcampaign_id). Стабилен, в отличие от offer_name',
             `offer_name` varchar(255) DEFAULT NULL,
-            `order_status`  enum('waiting','completed','declined','balance') NOT NULL DEFAULT 'waiting',
+            `order_status` enum('waiting','completed','declined','balance') NOT NULL DEFAULT 'waiting',
             `partner` varchar(255) DEFAULT NULL,
             `sum_order` decimal(10,2) DEFAULT NULL,
             `comission` decimal(10,2) DEFAULT NULL,
+            `currency` char(3) NOT NULL DEFAULT 'RUB' COMMENT 'Валюта комиссии (ISO 4217). Без неё невозможно корректно сравнивать суммы',
             `uniq_id` varchar(255) DEFAULT NULL,
             `cashback` decimal(10,2) DEFAULT NULL,
-            `user_agent` text DEFAULT NULL,
-            `click_time` timestamp NULL DEFAULT NULL,
+            `applied_cashback_rate` decimal(5,2) NOT NULL DEFAULT 60.00 COMMENT 'Процент кэшбэка на момент создания транзакции',
+            `reward_ready` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = Admitad подтвердил готовность к снятию ([[[reward_ready]]]). Основной триггер начисления в баланс',
+            `action_date` datetime DEFAULT NULL COMMENT 'Реальное время покупки из [[[time]]]. НЕ путать с created_at (время получения хука)',
+            `click_time` datetime DEFAULT NULL COMMENT 'Время клика из [[[click_time]]]. Для антифрода: action_date - click_time = 0 → бот',
+            `click_id` char(32) DEFAULT NULL COMMENT 'UUID клика из [[[subid1]]], связь с cashback_click_log.click_id',
+            `website_id` int unsigned DEFAULT NULL COMMENT 'ID площадки в CPA-сети из [[[website_id]]]',
+            `action_type` varchar(10) DEFAULT NULL COMMENT 'sale/lead из [[[type]]]. Для корректного расчёта при нескольких тарифах',
+            `processed_at` datetime DEFAULT NULL COMMENT 'Когда транзакция была учтена в балансе',
+            `processed_batch_id` char(36) DEFAULT NULL COMMENT 'UUID батча начисления',
+            `idempotency_key` varchar(64) DEFAULT NULL COMMENT 'Ключ идемпотентности для предотвращения дублирования транзакций',
             `spam_click` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = транзакция из подозрительного клика, кэшбэк только после ручной проверки',
             `created_at` timestamp NULL DEFAULT current_timestamp(),
             `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
