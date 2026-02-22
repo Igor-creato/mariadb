@@ -806,6 +806,15 @@ class CashbackWithdrawal
             return;
         }
 
+        // === 2.2. Validate client-generated idempotency key (UUID v4 format) ===
+        $idempotency_key = sanitize_text_field(wp_unslash($_POST['idempotency_key'] ?? ''));
+
+        if (empty($idempotency_key) || !preg_match('/^[a-f0-9\-]{36}$/', $idempotency_key)) {
+            $wpdb->query($wpdb->prepare("DO RELEASE_LOCK(%s)", $lock_name));
+            wp_send_json_error(__('Некорректный запрос. Обновите страницу.', 'cashback-plugin'));
+            return;
+        }
+
         // === 3. Check if payout method and account are filled ===
         $payout_method = $this->get_payout_method($user_id);
         $payout_account = $this->get_payout_account($user_id);
@@ -864,6 +873,18 @@ class CashbackWithdrawal
         $table_balance = $wpdb->prefix . 'cashback_user_balance';
         $table_requests = $wpdb->prefix . 'cashback_payout_requests';
 
+        // === 5.1. Early duplicate check — avoid locking balance row unnecessarily ===
+        $existing_request = $wpdb->get_row($wpdb->prepare(
+            "SELECT id, status FROM {$table_requests} WHERE idempotency_key = %s",
+            $idempotency_key
+        ));
+
+        if ($existing_request) {
+            $wpdb->query($wpdb->prepare("DO RELEASE_LOCK(%s)", $lock_name));
+            wp_send_json_success(__('Заявка уже создана.', 'cashback-plugin'));
+            return;
+        }
+
         $wpdb->query('START TRANSACTION');
 
         try {
@@ -896,16 +917,6 @@ class CashbackWithdrawal
             if (bccomp($withdrawal_str, $balance_str, 2) > 0) {
                 throw new Exception('Insufficient available balance after lock');
             }
-
-            // 🔐 КРИТИЧНО: Генерируем криптографически стойкий идемпотентный ключ
-            // Формат: SHA256(user_id + timestamp + nonce + random_bytes)
-            $idempotency_key = hash(
-                'sha256',
-                $user_id .
-                    '_' . microtime(true) .
-                    '_' . wp_create_nonce('cashback_withdrawal_' . $user_id) .
-                    '_' . bin2hex(random_bytes(16))
-            );
 
             // Получаем информацию о способе вывода, аккаунте и банке из профиля пользователя
             $payout_method = $this->get_payout_method($user_id);
@@ -1011,7 +1022,7 @@ class CashbackWithdrawal
             $wpdb->query($wpdb->prepare("DO RELEASE_LOCK(%s)", $lock_name));
 
             // Log unexpected errors (skip expected validation exceptions)
-            $expected_errors = ['Insufficient available balance after lock', 'balance_below_min', 'amount_below_min'];
+            $expected_errors = ['Insufficient available balance after lock', 'balance_below_min', 'amount_below_min', 'Duplicate payout request detected'];
             if (!in_array($error_message, $expected_errors, true)) {
                 wc_get_logger()->error(sprintf(
                     "CashbackWithdrawal error for user %d: %s. Amount: %f",
@@ -1029,6 +1040,8 @@ class CashbackWithdrawal
             } elseif ($error_message === 'amount_below_min') {
                 $min_amt = $this->get_min_payout_amount($user_id);
                 wp_send_json_error(sprintf(__('Введите сумму больше или равно %s', 'cashback-plugin'), wc_price($min_amt)));
+            } elseif ($error_message === 'Duplicate payout request detected') {
+                wp_send_json_success(__('Заявка уже создана.', 'cashback-plugin'));
             } else {
                 wp_send_json_error(__('Ошибка при обработке запроса на вывод. Пожалуйста, попробуйте еще раз.', 'cashback-plugin'));
             }

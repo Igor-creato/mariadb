@@ -104,7 +104,7 @@ class Mariadb_Plugin
             `masked_details` TEXT DEFAULT NULL COMMENT 'Маскированные реквизиты для отображения (JSON)',
             `provider` varchar(100) DEFAULT NULL COMMENT 'Идентификатор провайдера выплат (банк/сервис)',
             `provider_payout_id` varchar(255) DEFAULT NULL COMMENT 'ID операции у провайдера',
-            `idempotency_key` char(64) NOT NULL COMMENT 'Ключ идемпотентности для предотвращения дублирования выплат',
+            `idempotency_key` char(36) NOT NULL COMMENT 'UUID v4 идемпотентный ключ от клиента',
             `attempts` int(11) NOT NULL DEFAULT 0 COMMENT 'Количество попыток отправки выплаты',
             `fail_reason` text DEFAULT NULL COMMENT 'Код/описание ошибки последней попытки',
             `status` enum('waiting','processing','paid','failed','declined','needs_retry') NOT NULL DEFAULT 'waiting',

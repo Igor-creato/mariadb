@@ -1,5 +1,25 @@
 // Frontend JavaScript for the cashback withdrawal functionality
+
+/**
+ * Генерация UUID v4 для идемпотентного ключа.
+ * Использует crypto.randomUUID() если доступен, иначе fallback на Math.random().
+ */
+function generateIdempotencyKey() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  // Fallback: manual UUID v4
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+    var r = (Math.random() * 16) | 0;
+    var v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 jQuery(document).ready(function ($) {
+  // Идемпотентный ключ: генерируется при загрузке, обновляется только после успешного вывода
+  var withdrawalIdempotencyKey = generateIdempotencyKey();
+
   // Переключение вкладок
   $(document).on('click', '.cashback-tab', function () {
     $('.cashback-tab').removeClass('active cashback-tab--error');
@@ -57,6 +77,7 @@ jQuery(document).ready(function ($) {
       action: 'process_cashback_withdrawal',
       withdrawal_amount: amount,
       nonce: cashback_ajax.withdrawal_submit_nonce,
+      idempotency_key: withdrawalIdempotencyKey,
     };
 
     // Отправляем AJAX запрос
@@ -66,6 +87,9 @@ jQuery(document).ready(function ($) {
       data: data,
       success: function (response) {
         if (response.success) {
+          // Обновляем идемпотентный ключ после подтверждённого успеха
+          withdrawalIdempotencyKey = generateIdempotencyKey();
+
           // Успешный вывод
           $('#withdrawal-messages').html(
             '<div class="success-message">' + response.data + '</div>',
