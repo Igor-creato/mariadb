@@ -233,10 +233,10 @@ class Mariadb_Plugin
             `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
             `received_at` datetime(6) NOT NULL DEFAULT current_timestamp(6),
             `payload` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL CHECK (json_valid(`payload`)),
-            `payload_norm` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin GENERATED ALWAYS AS (json_normalize(`payload`)) VIRTUAL CHECK (json_valid(`payload_norm`)),
             `network_slug` varchar(64) DEFAULT NULL,
+            `payload_hash` char(64) GENERATED ALWAYS AS (sha2(json_normalize(`payload`),256)) STORED,
             PRIMARY KEY (`id`),
-            UNIQUE KEY `uk_payload_norm` (`payload_norm`) USING HASH,
+            UNIQUE KEY `uk_payload_hash` (`payload_hash`),
             KEY `idx_received_at` (`received_at`),
             KEY `idx_network_slug` (`network_slug`)
         ) ENGINE=InnoDB {$charset_collate} COMMENT='Сырые уникальные webhooks';";
