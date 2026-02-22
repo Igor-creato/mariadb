@@ -138,7 +138,7 @@ class Mariadb_Plugin
             `uniq_id` varchar(255) DEFAULT NULL,
             `cashback` decimal(10,2) DEFAULT NULL,
             `applied_cashback_rate` decimal(5,2) NOT NULL DEFAULT 60.00 COMMENT 'Процент кэшбэка на момент создания транзакции',
-            `api_verified` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = Admitad подтвердил готовность к снятию ([[[reward_ready]]]). Основной триггер начисления в баланс',
+            `api_verified` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = Транзакция сверена с API. Основной триггер начисления в баланс',
             `action_date` datetime DEFAULT NULL COMMENT 'Реальное время покупки из [[[time]]]. НЕ путать с created_at (время получения хука)',
             `click_time` datetime DEFAULT NULL COMMENT 'Время клика из [[[click_time]]]. Для антифрода: action_date - click_time = 0 → бот',
             `click_id` char(32) DEFAULT NULL COMMENT 'UUID клика из [[[subid1]]], связь с cashback_click_log.click_id',
@@ -160,7 +160,7 @@ class Mariadb_Plugin
     KEY `idx_click_id` (`click_id`),
     KEY `idx_offer_id` (`offer_id`),
 
-    KEY `idx_balance_candidates` (`order_status`,`reward_ready`,`processed_at`,`spam_click`,`cashback`),
+    KEY `idx_balance_candidates` (`order_status`,`api_verified`,`processed_at`,`spam_click`,`cashback`),
 
     CONSTRAINT `fk_transactions_user`
         FOREIGN KEY (`user_id`)
