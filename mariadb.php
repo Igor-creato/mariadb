@@ -545,7 +545,7 @@ class Mariadb_Plugin
             FOR EACH ROW
             --  'Пересчитывает кэшбэк только при изменении comission, используя сохранённую applied_cashback_rate'
             BEGIN
-                IF OLD.comission != NEW.comission THEN
+                IF NOT (OLD.comission <=> NEW.comission) THEN
                     SET NEW.cashback = ROUND(NEW.comission * NEW.applied_cashback_rate / 100, 2);
                 END IF;
             END;",
@@ -555,7 +555,7 @@ class Mariadb_Plugin
             FOR EACH ROW
             --  'Пересчитывает кэшбэк для незарегистрированных пользователей при изменении comission'
             BEGIN
-                IF OLD.comission != NEW.comission THEN
+                IF NOT (OLD.comission <=> NEW.comission) THEN
                     SET NEW.cashback = ROUND(NEW.comission * 0.6, 2);
                 END IF;
             END;",
@@ -600,7 +600,9 @@ class Mariadb_Plugin
                 END IF;
 
                 -- 5. Из declined — только в completed (апелляция через Потерянные заказы)
-                IF OLD.order_status = 'declined' AND NEW.order_status != 'completed' THEN
+                IF OLD.order_status = 'declined' 
+                    AND NEW.order_status != 'completed' 
+                    AND NEW.order_status != 'declined' THEN
                     SIGNAL SQLSTATE '45000'
                     SET MESSAGE_TEXT = 'Из declined возможен переход только в completed.';
                 END IF;
@@ -630,7 +632,9 @@ class Mariadb_Plugin
                     SET MESSAGE_TEXT = 'Перевод в hold возможен только из completed.';
                 END IF;
 
-                IF OLD.order_status = 'declined' AND NEW.order_status != 'completed' THEN
+                IF OLD.order_status = 'declined' 
+                    AND NEW.order_status != 'completed' 
+                    AND NEW.order_status != 'declined' THEN
                     SIGNAL SQLSTATE '45000'
                     SET MESSAGE_TEXT = 'Из declined возможен переход только в completed.';
                 END IF;
@@ -805,11 +809,12 @@ BEGIN
         FROM `{$safe_prefix}cashback_transactions`
         WHERE
             order_status = 'completed'
+            AND api_verified = 1
             AND processed_at IS NULL
             AND cashback IS NOT NULL
             AND cashback > 0
             AND spam_click = 0
-            AND updated_at <= DATE_SUB(NOW(), INTERVAL 1 DAY)
+            AND updated_at <= DATE_SUB(NOW(), INTERVAL 7 DAY)
         FOR UPDATE;
 
         SET v_affected_rows = ROW_COUNT();
