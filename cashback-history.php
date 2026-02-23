@@ -360,6 +360,8 @@ class CashbackHistory
                 return __('Подтвержден', 'cashback-plugin');
             case 'declined':
                 return __('Отклонен', 'cashback-plugin');
+            case 'hold':
+                return __('На проверке', 'cashback-plugin');
             case 'balance':
                 return __('Зачислен на баланс', 'cashback-plugin');
             default:

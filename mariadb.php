@@ -126,24 +126,25 @@ class Mariadb_Plugin
         // Таблица cashback_transactions
         $table2 = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_transactions` (
             `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-            `user_id` bigint(20) unsigned NOT NULL,
-            `order_number` varchar(255) NOT NULL,
+            `user_id` bigint(20) unsigned NOT NULL COMMENT 'id пользователя на сайте',
+            `order_number` varchar(255) NOT NULL COMMENT 'Номер заказа у партнгера', 
             `offer_id` int unsigned DEFAULT NULL COMMENT 'ID партнёрской программы в CPA-сети (advcampaign_id). Стабилен, в отличие от offer_name',
-            `offer_name` varchar(255) DEFAULT NULL,
-            `order_status` enum('waiting','completed','declined','balance') NOT NULL DEFAULT 'waiting',
-            `partner` varchar(255) DEFAULT NULL,
-            `sum_order` decimal(10,2) DEFAULT NULL,
-            `comission` decimal(10,2) DEFAULT NULL,
+            `offer_name` varchar(255) DEFAULT NULL COMMENT 'Название конкретного партнера например Алиэкспресс',
+            `order_status` enum('waiting','completed','declined','hold','balance') NOT NULL DEFAULT 'waiting' COMMENT 'Статусы конверсии (В ожидании, 
+            Подтверждена, Отклонена, Зачислена на баланс)',
+            `partner` varchar(255) DEFAULT NULL COMMENT 'Название CPA',
+            `sum_order` decimal(10,2) DEFAULT NULL COMMENT 'Сумма заказа или покупки',
+            `comission` decimal(10,2) DEFAULT NULL COMMENT 'Комиссия выплачиваемая за покупку',
             `currency` char(3) NOT NULL DEFAULT 'RUB' COMMENT 'Валюта комиссии (ISO 4217). Без неё невозможно корректно сравнивать суммы',
-            `uniq_id` varchar(255) DEFAULT NULL,
-            `cashback` decimal(10,2) DEFAULT NULL,
+            `uniq_id` varchar(255) DEFAULT NULL COMMENT 'Уникальный id конверсии в внутри конкретной CPA, между несколькими могут совпадать',
+            `cashback` decimal(10,2) DEFAULT NULL COMMENT 'Размер выплачиваемого кэшбэка',
             `applied_cashback_rate` decimal(5,2) NOT NULL DEFAULT 60.00 COMMENT 'Процент кэшбэка на момент создания транзакции',
             `api_verified` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = Транзакция сверена с API. Основной триггер начисления в баланс',
-            `action_date` datetime DEFAULT NULL COMMENT 'Реальное время покупки из [[[time]]]. НЕ путать с created_at (время получения хука)',
-            `click_time` datetime DEFAULT NULL COMMENT 'Время клика из [[[click_time]]]. Для антифрода: action_date - click_time = 0 → бот',
-            `click_id` char(32) DEFAULT NULL COMMENT 'UUID клика из [[[subid1]]], связь с cashback_click_log.click_id',
-            `website_id` int unsigned DEFAULT NULL COMMENT 'ID площадки в CPA-сети из [[[website_id]]]',
-            `action_type` varchar(10) DEFAULT NULL COMMENT 'sale/lead из [[[type]]]. Для корректного расчёта при нескольких тарифах',
+            `action_date` datetime DEFAULT NULL COMMENT 'Реальное время покупки. НЕ путать с created_at (время получения хука)',
+            `click_time` datetime DEFAULT NULL COMMENT 'Время клика. Для антифрода: action_date - click_time = 0 → бот',
+            `click_id` char(32) DEFAULT NULL COMMENT 'UUID клика, связь с cashback_click_log.click_id',
+            `website_id` int unsigned DEFAULT NULL COMMENT 'ID площадки в CPA-сети из',
+            `action_type` varchar(10) DEFAULT NULL COMMENT 'sale/lead. Для корректного расчёта при нескольких тарифах',
             `processed_at` datetime DEFAULT NULL COMMENT 'Когда транзакция была учтена в балансе',
             `processed_batch_id` char(36) DEFAULT NULL COMMENT 'UUID батча начисления',
             `idempotency_key` varchar(64) DEFAULT NULL COMMENT 'Ключ идемпотентности для предотвращения дублирования транзакций',
@@ -183,7 +184,7 @@ class Mariadb_Plugin
             `order_number` varchar(255) NOT NULL,
             `offer_id` int unsigned DEFAULT NULL COMMENT 'ID партнёрской программы в CPA-сети (advcampaign_id). Стабилен, в отличие от offer_name',
             `offer_name` varchar(255) DEFAULT NULL,
-            `order_status` enum('waiting','completed','declined','balance') NOT NULL DEFAULT 'waiting',
+            `order_status` enum('waiting','completed','declined','hold','balance') NOT NULL DEFAULT 'waiting',
             `partner` varchar(255) DEFAULT NULL,
             `sum_order` decimal(10,2) DEFAULT NULL,
             `comission` decimal(10,2) DEFAULT NULL,
@@ -192,11 +193,11 @@ class Mariadb_Plugin
             `cashback` decimal(10,2) DEFAULT NULL,
             `applied_cashback_rate` decimal(5,2) NOT NULL DEFAULT 60.00 COMMENT 'Процент кэшбэка на момент создания транзакции',
             `api_verified` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = Транзакция сверена с API. Основной триггер начисления в баланс',
-            `action_date` datetime DEFAULT NULL COMMENT 'Реальное время покупки из [[[time]]]. НЕ путать с created_at (время получения хука)',
-            `click_time` datetime DEFAULT NULL COMMENT 'Время клика из [[[click_time]]]. Для антифрода: action_date - click_time = 0 → бот',
-            `click_id` char(32) DEFAULT NULL COMMENT 'UUID клика из [[[subid1]]], связь с cashback_click_log.click_id',
-            `website_id` int unsigned DEFAULT NULL COMMENT 'ID площадки в CPA-сети из [[[website_id]]]',
-            `action_type` varchar(10) DEFAULT NULL COMMENT 'sale/lead из [[[type]]]. Для корректного расчёта при нескольких тарифах',
+            `action_date` datetime DEFAULT NULL COMMENT 'Реальное время покупки. НЕ путать с created_at (время получения хука)',
+            `click_time` datetime DEFAULT NULL COMMENT 'Время клика. Для антифрода: action_date - click_time = 0 → бот',
+            `click_id` char(32) DEFAULT NULL COMMENT 'UUID клика, связь с cashback_click_log.click_id',
+            `website_id` int unsigned DEFAULT NULL COMMENT 'ID площадки в CPA-сети',
+            `action_type` varchar(10) DEFAULT NULL COMMENT 'sale/lead. Для корректного расчёта при нескольких тарифах',
             `processed_at` datetime DEFAULT NULL COMMENT 'Когда транзакция была учтена в балансе',
             `processed_batch_id` char(36) DEFAULT NULL COMMENT 'UUID батча начисления',
             `idempotency_key` varchar(64) DEFAULT NULL COMMENT 'Ключ идемпотентности для предотвращения дублирования транзакций',
@@ -493,6 +494,8 @@ class Mariadb_Plugin
             "DROP TRIGGER IF EXISTS `{$safe_prefix}calculate_cashback_before_update_unregistered`;",
             "DROP TRIGGER IF EXISTS `{$safe_prefix}cashback_tr_prevent_delete_final_status`;",
             "DROP TRIGGER IF EXISTS `{$safe_prefix}cashback_tr_prevent_update_final_status`;",
+            "DROP TRIGGER IF EXISTS `{$safe_prefix}cashback_tr_validate_status_transition`;",
+            "DROP TRIGGER IF EXISTS `{$safe_prefix}cashback_tr_validate_status_transition_unregistered`;",
             "DROP TRIGGER IF EXISTS `{$safe_prefix}tr_prevent_delete_paid_payout`;",
             "DROP TRIGGER IF EXISTS `{$safe_prefix}tr_prevent_update_paid_payout`;",
             "DROP TRIGGER IF EXISTS `{$safe_prefix}tr_prevent_delete_failed_payout`;",
@@ -568,14 +571,68 @@ class Mariadb_Plugin
                 END IF;
             END;",
 
-            "CREATE TRIGGER `{$safe_prefix}cashback_tr_prevent_update_final_status`
+            "CREATE TRIGGER `{$safe_prefix}cashback_tr_validate_status_transition`
             BEFORE UPDATE ON `{$safe_prefix}cashback_transactions`
             FOR EACH ROW
-            --  'Запрещает изменение транзакций со статусом ''balance'' (финальный статус)'
+            BEGIN
+                -- 1. balance — полная блокировка любых изменений (финальный статус)
+                IF OLD.order_status = 'balance' THEN
+                    SIGNAL SQLSTATE '45000'
+                    SET MESSAGE_TEXT = 'Изменение запрещено: запись с финальным статусом не может быть изменена.';
+                END IF;
+
+                -- 2. Возврат в waiting запрещён из любого состояния
+                IF NEW.order_status = 'waiting' AND OLD.order_status != 'waiting' THEN
+                    SIGNAL SQLSTATE '45000'
+                    SET MESSAGE_TEXT = 'Понижение статуса до waiting запрещено.';
+                END IF;
+
+                -- 3. В balance — только из completed
+                IF NEW.order_status = 'balance' AND OLD.order_status != 'completed' THEN
+                    SIGNAL SQLSTATE '45000'
+                    SET MESSAGE_TEXT = 'Перевод в balance возможен только из completed.';
+                END IF;
+
+                -- 4. В hold — только из completed (рекламодатель вернул подтверждённое на удержание)
+                IF NEW.order_status = 'hold' AND OLD.order_status != 'completed' THEN
+                    SIGNAL SQLSTATE '45000'
+                    SET MESSAGE_TEXT = 'Перевод в hold возможен только из completed.';
+                END IF;
+
+                -- 5. Из declined — только в completed (апелляция через Потерянные заказы)
+                IF OLD.order_status = 'declined' AND NEW.order_status != 'completed' THEN
+                    SIGNAL SQLSTATE '45000'
+                    SET MESSAGE_TEXT = 'Из declined возможен переход только в completed.';
+                END IF;
+            END;",
+
+            "CREATE TRIGGER `{$safe_prefix}cashback_tr_validate_status_transition_unregistered`
+            BEFORE UPDATE ON `{$safe_prefix}cashback_unregistered_transactions`
+            FOR EACH ROW
             BEGIN
                 IF OLD.order_status = 'balance' THEN
                     SIGNAL SQLSTATE '45000'
                     SET MESSAGE_TEXT = 'Изменение запрещено: запись с финальным статусом не может быть изменена.';
+                END IF;
+
+                IF NEW.order_status = 'waiting' AND OLD.order_status != 'waiting' THEN
+                    SIGNAL SQLSTATE '45000'
+                    SET MESSAGE_TEXT = 'Понижение статуса до waiting запрещено.';
+                END IF;
+
+                IF NEW.order_status = 'balance' AND OLD.order_status != 'completed' THEN
+                    SIGNAL SQLSTATE '45000'
+                    SET MESSAGE_TEXT = 'Перевод в balance возможен только из completed.';
+                END IF;
+
+                IF NEW.order_status = 'hold' AND OLD.order_status != 'completed' THEN
+                    SIGNAL SQLSTATE '45000'
+                    SET MESSAGE_TEXT = 'Перевод в hold возможен только из completed.';
+                END IF;
+
+                IF OLD.order_status = 'declined' AND NEW.order_status != 'completed' THEN
+                    SIGNAL SQLSTATE '45000'
+                    SET MESSAGE_TEXT = 'Из declined возможен переход только в completed.';
                 END IF;
             END;",
 

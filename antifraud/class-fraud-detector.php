@@ -455,7 +455,7 @@ class Cashback_Fraud_Detector
              INNER JOIN (
                  SELECT user_id, AVG(cashback) as avg_cashback, COUNT(*) as tx_count
                  FROM `{$tx_table}`
-                 WHERE order_status IN ('completed', 'balance')
+                 WHERE order_status IN ('completed', 'balance', 'hold')
                    AND cashback > 0
                  GROUP BY user_id
                  HAVING tx_count >= 3

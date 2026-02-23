@@ -79,6 +79,8 @@ function cashback_plugin_uninstall(): void
         "{$prefix}calculate_cashback_before_update_unregistered",
         "{$prefix}cashback_tr_prevent_delete_final_status",
         "{$prefix}cashback_tr_prevent_update_final_status",
+        "{$prefix}cashback_tr_validate_status_transition",
+        "{$prefix}cashback_tr_validate_status_transition_unregistered",
         "{$prefix}tr_prevent_delete_paid_payout",
         "{$prefix}tr_prevent_update_paid_payout",
         "{$prefix}tr_prevent_delete_failed_payout",

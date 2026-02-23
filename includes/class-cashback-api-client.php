@@ -661,7 +661,7 @@ class Cashback_API_Client
             // Суммы по локальным
             if ($local_status === 'completed' || $local_status === 'balance') {
                 $local_sums['approved'] += $local_commission;
-            } elseif ($local_status === 'waiting') {
+            } elseif ($local_status === 'waiting' || $local_status === 'hold') {
                 $local_sums['pending'] += $local_commission;
             } elseif ($local_status === 'declined') {
                 $local_sums['declined'] += $local_commission;
