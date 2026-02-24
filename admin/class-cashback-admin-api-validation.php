@@ -789,6 +789,17 @@ class Cashback_Admin_API_Validation
         $action_date_mysql = $this->parse_api_date($date);
         $click_time_mysql  = $this->parse_api_date($click_time);
 
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log(sprintf(
+                '[Cashback API Add TX] POST: date=%s, click_time=%s, website_id=%s | Parsed: action_date=%s, click_time=%s',
+                $_POST['date'] ?? '(empty)',
+                $_POST['click_time'] ?? '(empty)',
+                $_POST['website_id'] ?? '(empty)',
+                $action_date_mysql ?? 'NULL',
+                $click_time_mysql ?? 'NULL'
+            ));
+        }
+
         // Валидация currency (ISO 4217 — 3 заглавные буквы)
         if (!preg_match('/^[A-Z]{3}$/', $currency)) {
             $currency = 'RUB';
@@ -805,7 +816,7 @@ class Cashback_Admin_API_Validation
             'user_id'         => $is_unregistered ? $user_id : (int) $user_id,
             'uniq_id'         => $action_id,
             'order_number'    => $order_id,
-            'partner'         => $network,
+            'partner'         => $network_config['name'] ?? $network,
             'comission'       => $payment,
             'sum_order'       => $cart,
             'order_status'    => $mapped_status,
@@ -1022,11 +1033,24 @@ class Cashback_Admin_API_Validation
             return null;
         }
 
+        // Unix timestamp (10 цифр = секунды, 13 цифр = миллисекунды)
+        if (preg_match('/^\d{10,13}$/', $date_str)) {
+            $timestamp = (int) $date_str;
+            if (strlen($date_str) === 13) {
+                $timestamp = (int) ($timestamp / 1000);
+            }
+            $dt = new DateTime();
+            $dt->setTimestamp($timestamp);
+            $dt->setTimezone(new DateTimeZone(wp_timezone_string()));
+            return $dt->format('Y-m-d H:i:s');
+        }
+
         // ISO 8601 с T-разделителем: "2024-01-15T10:30:00"
         $date_str = str_replace('T', ' ', $date_str);
 
-        // Убираем таймзону если есть: "+03:00", "Z"
+        // Убираем таймзону: "+03:00", " 03:00" (+ → пробел после URL encoding), "Z"
         $date_str = preg_replace('/[+-]\d{2}:\d{2}$/', '', $date_str);
+        $date_str = preg_replace('/\s+\d{2}:\d{2}$/', '', $date_str);
         $date_str = rtrim($date_str, 'Z');
 
         $formats = [

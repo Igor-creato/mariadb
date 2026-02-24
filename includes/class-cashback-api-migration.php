@@ -28,6 +28,7 @@ class Cashback_API_Migration
     public static function run(): void
     {
         self::create_validation_checkpoints_table();
+        self::migrate_checkpoint_columns();
         self::create_sync_log_table();
         self::add_api_columns_to_networks();
         self::add_click_id_to_transactions();
@@ -52,14 +53,20 @@ class Cashback_API_Migration
             `user_id` bigint(20) unsigned NOT NULL,
             `network_slug` varchar(100) NOT NULL COMMENT 'Slug CPA-сети (admitad, epn)',
             `last_validated_date` date NOT NULL COMMENT 'До какой даты данные проверены',
-            `admitad_sum_approved` decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'Сумма approved по API',
-            `admitad_sum_pending` decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'Сумма pending по API',
-            `admitad_sum_declined` decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'Сумма declined по API',
-            `admitad_actions_count` int(11) NOT NULL DEFAULT 0 COMMENT 'Кол-во действий в API',
-            `local_commission_sum` decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'Сумма комиссий локально',
+            `api_sum_approved` decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'Сумма approved по API',
+            `api_sum_pending` decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'Сумма pending по API',
+            `api_sum_declined` decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'Сумма declined по API',
+            `api_actions_count` int(11) NOT NULL DEFAULT 0 COMMENT 'Кол-во действий в API',
+            `local_sum_approved` decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'Сумма approved локально',
+            `local_sum_pending` decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'Сумма pending локально',
+            `local_sum_declined` decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'Сумма declined локально',
             `local_transactions_count` int(11) NOT NULL DEFAULT 0 COMMENT 'Кол-во транзакций локально',
             `validation_status` enum('match','mismatch','pending','error') NOT NULL DEFAULT 'pending',
             `discrepancy_amount` decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'Разница между API и локальными данными',
+            `matched_count` int(11) NOT NULL DEFAULT 0 COMMENT 'Кол-во совпавших транзакций',
+            `mismatch_count` int(11) NOT NULL DEFAULT 0 COMMENT 'Кол-во расхождений',
+            `missing_local_count` int(11) NOT NULL DEFAULT 0 COMMENT 'Есть в API, нет локально',
+            `missing_api_count` int(11) NOT NULL DEFAULT 0 COMMENT 'Есть локально, нет в API',
             `validated_at` datetime DEFAULT NULL COMMENT 'Когда проводилась валидация',
             `validated_by` bigint(20) unsigned DEFAULT NULL COMMENT 'Кто инициировал валидацию (admin user_id)',
             PRIMARY KEY (`id`),
@@ -70,6 +77,62 @@ class Cashback_API_Migration
 
         require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
         dbDelta($table);
+    }
+
+    /**
+     * Миграция колонок таблицы чекпоинтов
+     *
+     * Переименовывает admitad_* → api_*, заменяет local_commission_sum
+     * на детализированные колонки, добавляет счётчики.
+     */
+    private static function migrate_checkpoint_columns(): void
+    {
+        global $wpdb;
+        $table = $wpdb->prefix . 'cashback_validation_checkpoints';
+
+        // Переименование admitad_* → api_*
+        $renames = [
+            'admitad_sum_approved'  => ['api_sum_approved', "decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'Сумма approved по API'"],
+            'admitad_sum_pending'   => ['api_sum_pending', "decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'Сумма pending по API'"],
+            'admitad_sum_declined'  => ['api_sum_declined', "decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'Сумма declined по API'"],
+            'admitad_actions_count' => ['api_actions_count', "int(11) NOT NULL DEFAULT 0 COMMENT 'Кол-во действий в API'"],
+        ];
+
+        foreach ($renames as $old_col => [$new_col, $definition]) {
+            if (self::column_exists($table, $old_col) && !self::column_exists($table, $new_col)) {
+                $wpdb->query("ALTER TABLE `{$table}` CHANGE `{$old_col}` `{$new_col}` {$definition}");
+                if ($wpdb->last_error) {
+                    error_log("Cashback API Migration Error: Failed to rename {$old_col} → {$new_col}: " . $wpdb->last_error);
+                }
+            }
+        }
+
+        // Замена local_commission_sum → local_sum_approved + добавление pending/declined
+        if (self::column_exists($table, 'local_commission_sum') && !self::column_exists($table, 'local_sum_approved')) {
+            $wpdb->query("ALTER TABLE `{$table}` CHANGE `local_commission_sum` `local_sum_approved` decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'Сумма approved локально'");
+            if ($wpdb->last_error) {
+                error_log("Cashback API Migration Error: Failed to rename local_commission_sum: " . $wpdb->last_error);
+            }
+        }
+
+        // Новые колонки
+        $new_columns = [
+            'local_sum_pending'  => "ALTER TABLE `{$table}` ADD COLUMN `local_sum_pending` decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'Сумма pending локально' AFTER `local_sum_approved`",
+            'local_sum_declined' => "ALTER TABLE `{$table}` ADD COLUMN `local_sum_declined` decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'Сумма declined локально' AFTER `local_sum_pending`",
+            'matched_count'      => "ALTER TABLE `{$table}` ADD COLUMN `matched_count` int(11) NOT NULL DEFAULT 0 COMMENT 'Кол-во совпавших транзакций' AFTER `discrepancy_amount`",
+            'mismatch_count'     => "ALTER TABLE `{$table}` ADD COLUMN `mismatch_count` int(11) NOT NULL DEFAULT 0 COMMENT 'Кол-во расхождений' AFTER `matched_count`",
+            'missing_local_count' => "ALTER TABLE `{$table}` ADD COLUMN `missing_local_count` int(11) NOT NULL DEFAULT 0 COMMENT 'Есть в API, нет локально' AFTER `mismatch_count`",
+            'missing_api_count'  => "ALTER TABLE `{$table}` ADD COLUMN `missing_api_count` int(11) NOT NULL DEFAULT 0 COMMENT 'Есть локально, нет в API' AFTER `missing_local_count`",
+        ];
+
+        foreach ($new_columns as $col_name => $alter_sql) {
+            if (!self::column_exists($table, $col_name)) {
+                $wpdb->query($alter_sql);
+                if ($wpdb->last_error) {
+                    error_log("Cashback API Migration Error: Failed to add {$col_name}: " . $wpdb->last_error);
+                }
+            }
+        }
     }
 
     /**

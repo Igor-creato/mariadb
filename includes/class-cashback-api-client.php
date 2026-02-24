@@ -599,6 +599,12 @@ class Cashback_API_Client
         // Множество сматченных click_id для обратной проверки
         $matched_click_ids = [];
 
+        // Debug: логируем ключи первого action из API для диагностики маппинга
+        if (defined('WP_DEBUG') && WP_DEBUG && !empty($api_actions)) {
+            error_log('[Cashback API Validate] First action keys: ' . implode(', ', array_keys($api_actions[0])));
+            error_log('[Cashback API Validate] First action data: ' . wp_json_encode($api_actions[0]));
+        }
+
         foreach ($api_actions as $action) {
             $api_click_id = (string) ($action[$click_field] ?? '');
             $api_status   = strtolower($action['status'] ?? 'pending');
@@ -646,9 +652,9 @@ class Cashback_API_Client
                     'campaign'       => $action['advcampaign_name'] ?? '',
                     'campaign_id'    => $action['advcampaign_id'] ?? '',
                     'currency'       => $action['currency'] ?? 'RUB',
-                    'click_time'     => $action['click_date'] ?? '',
+                    'click_time'     => $action['click_time'] ?? $action['click_date'] ?? $action['closing_date'] ?? '',
                     'action_type'    => $action['action_type'] ?? '',
-                    'website_id'     => $action['website_id'] ?? ($network['api_website_id'] ?? ''),
+                    'website_id'     => $action['website_id'] ?? $action['website'] ?? ($network['api_website_id'] ?? ''),
                 ];
                 continue;
             }
