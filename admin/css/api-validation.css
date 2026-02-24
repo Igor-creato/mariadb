@@ -187,3 +187,46 @@ textarea.code[name="api_status_map"] {
     padding: 10px 0;
 }
 
+/* Action buttons in validation result tables */
+.validation-actions {
+    white-space: nowrap;
+}
+
+.validation-actions .button-small {
+    font-size: 11px !important;
+    padding: 2px 8px !important;
+    min-height: 24px !important;
+    line-height: 20px !important;
+    margin: 1px 2px !important;
+}
+
+/* Inline edit inputs */
+.validation-tab-content .edit-input {
+    width: 100px;
+    padding: 2px 4px;
+    font-size: 12px;
+    border: 1px solid #0073aa;
+    border-radius: 3px;
+}
+
+.validation-tab-content select.edit-input {
+    width: auto;
+    min-width: 90px;
+}
+
+/* Row in editing mode */
+.validation-tab-content tr.editing {
+    background-color: #fff8e5 !important;
+}
+
+/* Smooth background transition for flash effect */
+.validation-tab-content tr {
+    transition: background-color 0.3s ease;
+}
+
+/* Disabled overwrite button for balance rows */
+.cashback-overwrite-tx-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+

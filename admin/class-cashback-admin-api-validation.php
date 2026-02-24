@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Админ-страница API-валидации кэшбэка
  *
@@ -48,6 +49,11 @@ class Cashback_Admin_API_Validation
         add_action('wp_ajax_cashback_manual_sync', [$this, 'ajax_manual_sync']);
         add_action('wp_ajax_cashback_get_sync_log', [$this, 'ajax_get_sync_log']);
         add_action('wp_ajax_cashback_get_validation_status', [$this, 'ajax_get_validation_status']);
+
+        // AJAX обработчики действий из таблиц валидации
+        add_action('wp_ajax_cashback_edit_transaction', [$this, 'ajax_edit_transaction']);
+        add_action('wp_ajax_cashback_add_transaction', [$this, 'ajax_add_transaction']);
+        add_action('wp_ajax_cashback_overwrite_transaction', [$this, 'ajax_overwrite_transaction']);
 
         // Подключение JS/CSS только на наших страницах
         add_action('admin_enqueue_scripts', [$this, 'enqueue_assets']);
@@ -112,16 +118,19 @@ class Cashback_Admin_API_Validation
             'ajaxUrl' => admin_url('admin-ajax.php'),
             'nonce'   => wp_create_nonce('cashback_api_validation'),
             'i18n'    => [
-                'validating'      => 'Проверка...',
-                'validate'        => 'Проверить',
-                'match'           => '✅ Данные совпадают',
-                'mismatch'        => '⚠️ Обнаружены расхождения',
-                'error'           => '❌ Ошибка проверки',
-                'syncing'         => 'Синхронизация...',
-                'sync_complete'   => 'Синхронизация завершена',
-                'saving'          => 'Сохранение...',
-                'saved'           => 'Сохранено',
-                'confirm_sync'    => 'Запустить синхронизацию статусов?',
+                'validating'        => 'Проверка...',
+                'validate'          => 'Проверить',
+                'match'             => '✅ Данные совпадают',
+                'mismatch'          => '⚠️ Обнаружены расхождения',
+                'error'             => '❌ Ошибка проверки',
+                'syncing'           => 'Синхронизация...',
+                'sync_complete'     => 'Синхронизация завершена',
+                'saving'            => 'Сохранение...',
+                'saved'             => 'Сохранено',
+                'confirm_sync'      => 'Запустить синхронизацию статусов?',
+                'adding'            => 'Добавление...',
+                'confirm_overwrite' => 'Перезаписать локальные данные данными из API?',
+                'confirm_delete'    => 'Удалить эту строку из результатов?',
             ],
         ]);
 
@@ -147,21 +156,21 @@ class Cashback_Admin_API_Validation
         }
 
         $active_tab = sanitize_text_field($_GET['tab'] ?? 'settings');
-        ?>
+?>
         <div class="wrap">
             <h1>API Валидация кэшбэка</h1>
 
             <nav class="nav-tab-wrapper">
                 <a href="?page=<?php echo self::PAGE_SLUG; ?>&tab=settings"
-                   class="nav-tab <?php echo $active_tab === 'settings' ? 'nav-tab-active' : ''; ?>">
+                    class="nav-tab <?php echo $active_tab === 'settings' ? 'nav-tab-active' : ''; ?>">
                     Настройки API
                 </a>
                 <a href="?page=<?php echo self::PAGE_SLUG; ?>&tab=validation"
-                   class="nav-tab <?php echo $active_tab === 'validation' ? 'nav-tab-active' : ''; ?>">
+                    class="nav-tab <?php echo $active_tab === 'validation' ? 'nav-tab-active' : ''; ?>">
                     Проверка пользователя
                 </a>
                 <a href="?page=<?php echo self::PAGE_SLUG; ?>&tab=sync"
-                   class="nav-tab <?php echo $active_tab === 'sync' ? 'nav-tab-active' : ''; ?>">
+                    class="nav-tab <?php echo $active_tab === 'sync' ? 'nav-tab-active' : ''; ?>">
                     Синхронизация
                 </a>
             </nav>
@@ -182,7 +191,7 @@ class Cashback_Admin_API_Validation
                 ?>
             </div>
         </div>
-        <?php
+    <?php
     }
 
     /**
@@ -197,7 +206,7 @@ class Cashback_Admin_API_Validation
             ARRAY_A
         );
 
-        ?>
+    ?>
         <div id="cashback-api-settings">
             <?php foreach ($networks as $network): ?>
                 <div class="cashback-network-card" data-network-id="<?php echo esc_attr($network['id']); ?>">
@@ -215,37 +224,37 @@ class Cashback_Admin_API_Validation
                             <th>API Base URL</th>
                             <td>
                                 <input type="url" class="regular-text api-field"
-                                       name="api_base_url"
-                                       value="<?php echo esc_attr($network['api_base_url'] ?? ''); ?>"
-                                       placeholder="https://api.admitad.com">
+                                    name="api_base_url"
+                                    value="<?php echo esc_attr($network['api_base_url'] ?? ''); ?>"
+                                    placeholder="https://api.admitad.com">
                             </td>
                         </tr>
                         <tr>
                             <th>Token Endpoint</th>
                             <td>
                                 <input type="text" class="regular-text api-field"
-                                       name="api_token_endpoint"
-                                       value="<?php echo esc_attr($network['api_token_endpoint'] ?? ''); ?>"
-                                       placeholder="/token/">
+                                    name="api_token_endpoint"
+                                    value="<?php echo esc_attr($network['api_token_endpoint'] ?? ''); ?>"
+                                    placeholder="/token/">
                             </td>
                         </tr>
                         <tr>
                             <th>Actions Endpoint</th>
                             <td>
                                 <input type="text" class="regular-text api-field"
-                                       name="api_actions_endpoint"
-                                       value="<?php echo esc_attr($network['api_actions_endpoint'] ?? ''); ?>"
-                                       placeholder="/statistics/actions/">
+                                    name="api_actions_endpoint"
+                                    value="<?php echo esc_attr($network['api_actions_endpoint'] ?? ''); ?>"
+                                    placeholder="/statistics/actions/">
                             </td>
                         </tr>
                         <tr>
                             <th>Client ID</th>
                             <td>
                                 <input type="text" class="regular-text api-credential"
-                                       name="client_id"
-                                       value=""
-                                       placeholder="<?php echo !empty($network['api_credentials']) ? '••••••• (сохранён)' : 'Введите Client ID'; ?>"
-                                       autocomplete="off">
+                                    name="client_id"
+                                    value=""
+                                    placeholder="<?php echo !empty($network['api_credentials']) ? '••••••• (сохранён)' : 'Введите Client ID'; ?>"
+                                    autocomplete="off">
                                 <p class="description">Credentials хранятся зашифрованными (AES-256-CBC)</p>
                             </td>
                         </tr>
@@ -253,19 +262,19 @@ class Cashback_Admin_API_Validation
                             <th>Client Secret</th>
                             <td>
                                 <input type="password" class="regular-text api-credential"
-                                       name="client_secret"
-                                       value=""
-                                       placeholder="<?php echo !empty($network['api_credentials']) ? '••••••• (сохранён)' : 'Введите Client Secret'; ?>"
-                                       autocomplete="off">
+                                    name="client_secret"
+                                    value=""
+                                    placeholder="<?php echo !empty($network['api_credentials']) ? '••••••• (сохранён)' : 'Введите Client Secret'; ?>"
+                                    autocomplete="off">
                             </td>
                         </tr>
                         <tr>
                             <th>Website ID</th>
                             <td>
                                 <input type="text" class="regular-text api-field"
-                                       name="api_website_id"
-                                       value="<?php echo esc_attr($network['api_website_id'] ?? ''); ?>"
-                                       placeholder="ID площадки в CPA-сети">
+                                    name="api_website_id"
+                                    value="<?php echo esc_attr($network['api_website_id'] ?? ''); ?>"
+                                    placeholder="ID площадки в CPA-сети">
                                 <p class="description">Для фильтрации действий по конкретной площадке</p>
                             </td>
                         </tr>
@@ -273,9 +282,9 @@ class Cashback_Admin_API_Validation
                             <th>Поле user_id в API</th>
                             <td>
                                 <input type="text" class="regular-text api-field"
-                                       name="api_user_field"
-                                       value="<?php echo esc_attr($network['api_user_field'] ?? ''); ?>"
-                                       placeholder="subid">
+                                    name="api_user_field"
+                                    value="<?php echo esc_attr($network['api_user_field'] ?? ''); ?>"
+                                    placeholder="subid">
                                 <p class="description">Admitad: <code>subid</code>, EPN: <code>sub</code></p>
                             </td>
                         </tr>
@@ -283,9 +292,9 @@ class Cashback_Admin_API_Validation
                             <th>Поле click_id в API</th>
                             <td>
                                 <input type="text" class="regular-text api-field"
-                                       name="api_click_field"
-                                       value="<?php echo esc_attr($network['api_click_field'] ?? ''); ?>"
-                                       placeholder="subid1">
+                                    name="api_click_field"
+                                    value="<?php echo esc_attr($network['api_click_field'] ?? ''); ?>"
+                                    placeholder="subid1">
                                 <p class="description">Admitad: <code>subid1</code>, EPN: <code>click_id</code></p>
                             </td>
                         </tr>
@@ -293,16 +302,15 @@ class Cashback_Admin_API_Validation
                             <th>Маппинг статусов</th>
                             <td>
                                 <textarea class="large-text code api-field" name="api_status_map" rows="6"
-                                    placeholder='{"pending":"waiting","approved":"completed","declined":"declined"}'
-                                ><?php echo esc_textarea($network['api_status_map'] ?? ''); ?></textarea>
-                                <p class="description">JSON: ключ = статус CPA-сети, значение = локальный статус (waiting/completed/declined)</p>
+                                    placeholder='{"pending":"hold","approved":"completed","declined":"declined"}'><?php echo esc_textarea($network['api_status_map'] ?? ''); ?></textarea>
+                                <p class="description">JSON: ключ = статус CPA-сети, значение = локальный статус (waiting/hold/completed/declined)</p>
                             </td>
                         </tr>
                     </table>
 
                     <p>
                         <button type="button" class="button button-primary cashback-save-network-btn"
-                                data-network-id="<?php echo esc_attr($network['id']); ?>">
+                            data-network-id="<?php echo esc_attr($network['id']); ?>">
                             Сохранить настройки
                         </button>
                         <span class="cashback-save-status"></span>
@@ -317,7 +325,7 @@ class Cashback_Admin_API_Validation
                 </div>
             <?php endif; ?>
         </div>
-        <?php
+    <?php
     }
 
     /**
@@ -325,7 +333,7 @@ class Cashback_Admin_API_Validation
      */
     private function render_validation_tab(): void
     {
-        ?>
+    ?>
         <div id="cashback-validation-tab">
             <h2>Проверка данных пользователя по API</h2>
             <p class="description">
@@ -338,7 +346,7 @@ class Cashback_Admin_API_Validation
                     <th>User ID</th>
                     <td>
                         <input type="number" id="cashback-validate-user-id" class="regular-text"
-                               min="1" placeholder="ID пользователя WordPress">
+                            min="1" placeholder="ID пользователя WordPress">
                     </td>
                 </tr>
                 <tr>
@@ -349,7 +357,7 @@ class Cashback_Admin_API_Validation
                             $client = Cashback_API_Client::get_instance();
                             $networks = $client->get_all_active_networks();
                             foreach ($networks as $net):
-                                ?>
+                            ?>
                                 <option value="<?php echo esc_attr($net['slug']); ?>">
                                     <?php echo esc_html($net['name']); ?>
                                 </option>
@@ -379,7 +387,7 @@ class Cashback_Admin_API_Validation
                 <!-- Результат валидации подставляется через JS -->
             </div>
         </div>
-        <?php
+    <?php
     }
 
     /**
@@ -388,7 +396,7 @@ class Cashback_Admin_API_Validation
     private function render_sync_tab(): void
     {
         $last_sync = get_option('cashback_last_sync_result', null);
-        ?>
+    ?>
         <div id="cashback-sync-tab">
             <h2>Фоновая синхронизация статусов</h2>
             <p class="description">
@@ -422,7 +430,7 @@ class Cashback_Admin_API_Validation
                                             <?php endif; ?>
                                         </td>
                                     </tr>
-                                <?php endforeach;
+                            <?php endforeach;
                             endif; ?>
                         </tbody>
                     </table>
@@ -465,7 +473,7 @@ class Cashback_Admin_API_Validation
                 <tbody></tbody>
             </table>
         </div>
-        <?php
+    <?php
     }
 
     // =========================================================================
@@ -663,6 +671,288 @@ class Cashback_Admin_API_Validation
     }
 
     // =========================================================================
+    // AJAX: Действия из таблиц валидации
+    // =========================================================================
+
+    /**
+     * AJAX: Редактирование транзакции (таблица «Есть на сайте, нет в API»)
+     */
+    public function ajax_edit_transaction(): void
+    {
+        check_ajax_referer('cashback_api_validation', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Недостаточно прав']);
+        }
+
+        global $wpdb;
+
+        $transaction_id = absint($_POST['transaction_id'] ?? 0);
+        $order_status   = sanitize_text_field($_POST['order_status'] ?? '');
+        $comission      = floatval($_POST['comission'] ?? 0);
+        $sum_order      = floatval($_POST['sum_order'] ?? 0);
+
+        if ($transaction_id < 1) {
+            wp_send_json_error(['message' => 'Неверный ID транзакции']);
+        }
+
+        $allowed_statuses = ['waiting', 'completed', 'declined', 'hold'];
+        if (!in_array($order_status, $allowed_statuses, true)) {
+            wp_send_json_error(['message' => 'Недопустимый статус: ' . $order_status]);
+        }
+
+        if ($comission < 0) {
+            wp_send_json_error(['message' => 'Комиссия не может быть отрицательной']);
+        }
+
+        $table = $wpdb->prefix . 'cashback_transactions';
+
+        // Проверяем существование и текущий статус
+        $current = $wpdb->get_row($wpdb->prepare(
+            "SELECT id, order_status FROM {$table} WHERE id = %d",
+            $transaction_id
+        ));
+
+        if (!$current) {
+            wp_send_json_error(['message' => 'Транзакция не найдена']);
+        }
+
+        if ($current->order_status === 'balance') {
+            wp_send_json_error(['message' => 'Нельзя редактировать транзакцию со статусом «balance»']);
+        }
+
+        $updated = $wpdb->update(
+            $table,
+            [
+                'order_status' => $order_status,
+                'comission'    => $comission,
+                'sum_order'    => $sum_order,
+            ],
+            ['id' => $transaction_id],
+            ['%s', '%f', '%f'],
+            ['%d']
+        );
+
+        if ($updated === false || $wpdb->last_error) {
+            wp_send_json_error(['message' => 'Ошибка обновления: ' . $wpdb->last_error]);
+        }
+
+        $this->log_audit('edit_transaction', $transaction_id, [
+            'order_status' => $order_status,
+            'comission'    => $comission,
+            'sum_order'    => $sum_order,
+        ]);
+
+        wp_send_json_success(['message' => 'Транзакция обновлена']);
+    }
+
+    /**
+     * AJAX: Добавление транзакции из API (таблица «Есть в API, нет на сайте»)
+     */
+    public function ajax_add_transaction(): void
+    {
+        check_ajax_referer('cashback_api_validation', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Недостаточно прав']);
+        }
+
+        global $wpdb;
+
+        $user_id     = sanitize_text_field($_POST['user_id'] ?? '');
+        $network     = sanitize_text_field($_POST['network'] ?? '');
+        $action_id   = sanitize_text_field($_POST['action_id'] ?? '');
+        $click_id    = sanitize_text_field($_POST['click_id'] ?? '');
+        $order_id    = sanitize_text_field($_POST['order_id'] ?? '');
+        $status      = sanitize_text_field($_POST['status'] ?? '');
+        $payment     = floatval($_POST['payment'] ?? 0);
+        $cart        = floatval($_POST['cart'] ?? 0);
+        $date        = sanitize_text_field($_POST['date'] ?? '');
+        $campaign    = sanitize_text_field($_POST['campaign'] ?? '');
+        $campaign_id = sanitize_text_field($_POST['campaign_id'] ?? '');
+        $currency    = sanitize_text_field($_POST['currency'] ?? 'RUB');
+        $click_time  = sanitize_text_field($_POST['click_time'] ?? '');
+        $action_type = sanitize_text_field($_POST['action_type'] ?? '');
+        $website_id  = sanitize_text_field($_POST['website_id'] ?? '');
+
+        if (empty($user_id) || empty($network) || empty($action_id)) {
+            wp_send_json_error(['message' => 'Обязательные поля: user_id, network, action_id']);
+        }
+
+        // Маппинг статуса API → локальный через конфиг сети
+        $client = Cashback_API_Client::get_instance();
+        $network_config = $client->get_network_config($network);
+        $status_map = $network_config['status_map'] ?? [];
+        $mapped_status = $status_map[strtolower($status)] ?? 'waiting';
+
+        // Конвертация дат в MySQL DATETIME формат (Y-m-d H:i:s)
+        $action_date_mysql = $this->parse_api_date($date);
+        $click_time_mysql  = $this->parse_api_date($click_time);
+
+        // Валидация currency (ISO 4217 — 3 заглавные буквы)
+        if (!preg_match('/^[A-Z]{3}$/', $currency)) {
+            $currency = 'RUB';
+        }
+
+        // Генерация idempotency_key
+        $idempotency_key = hash('sha256', 'api_add_' . $action_id . '_' . $network . '_' . bin2hex(random_bytes(16)));
+
+        // Определение таблицы
+        $is_unregistered = !is_numeric($user_id) || strtolower($user_id) === 'unregistered';
+        $table = $wpdb->prefix . ($is_unregistered ? 'cashback_unregistered_transactions' : 'cashback_transactions');
+
+        $data = [
+            'user_id'         => $is_unregistered ? $user_id : (int) $user_id,
+            'uniq_id'         => $action_id,
+            'order_number'    => $order_id,
+            'partner'         => $network,
+            'comission'       => $payment,
+            'sum_order'       => $cart,
+            'order_status'    => $mapped_status,
+            'offer_id'        => $campaign_id !== '' ? (int) $campaign_id : null,
+            'offer_name'      => $campaign,
+            'currency'        => $currency,
+            'action_date'     => $action_date_mysql,
+            'click_time'      => $click_time_mysql,
+            'click_id'        => $click_id ?: null,
+            'website_id'      => $website_id !== '' ? (int) $website_id : null,
+            'action_type'     => $action_type ?: null,
+            'api_verified'    => 1,
+            'idempotency_key' => $idempotency_key,
+        ];
+
+        $formats = [
+            $is_unregistered ? '%s' : '%d',  // user_id
+            '%s',  // uniq_id
+            '%s',  // order_number
+            '%s',  // partner
+            '%f',  // comission
+            '%f',  // sum_order
+            '%s',  // order_status
+            '%d',  // offer_id
+            '%s',  // offer_name
+            '%s',  // currency
+            '%s',  // action_date
+            '%s',  // click_time
+            '%s',  // click_id
+            '%d',  // website_id
+            '%s',  // action_type
+            '%d',  // api_verified
+            '%s',  // idempotency_key
+        ];
+
+        // Удаляем NULL-значения и их форматы, чтобы $wpdb->insert корректно работал
+        $clean_data = [];
+        $clean_formats = [];
+        $i = 0;
+        foreach ($data as $key => $value) {
+            if ($value !== null) {
+                $clean_data[$key] = $value;
+                $clean_formats[] = $formats[$i];
+            }
+            $i++;
+        }
+
+        $inserted = $wpdb->insert($table, $clean_data, $clean_formats);
+
+        if ($inserted === false || $wpdb->last_error) {
+            $error = $wpdb->last_error;
+            if (strpos($error, 'Duplicate') !== false) {
+                wp_send_json_error(['message' => 'Транзакция уже существует (дубликат uniq_id/partner)']);
+            }
+            wp_send_json_error(['message' => 'Ошибка вставки: ' . $error]);
+        }
+
+        $insert_id = $wpdb->insert_id;
+
+        $this->log_audit('add_transaction', $insert_id, [
+            'user_id'      => $user_id,
+            'network'      => $network,
+            'action_id'    => $action_id,
+            'table'        => $is_unregistered ? 'unregistered' : 'transactions',
+        ]);
+
+        wp_send_json_success([
+            'message'   => 'Транзакция добавлена',
+            'insert_id' => $insert_id,
+        ]);
+    }
+
+    /**
+     * AJAX: Перезапись транзакции данными API (таблица «Расхождения»)
+     */
+    public function ajax_overwrite_transaction(): void
+    {
+        check_ajax_referer('cashback_api_validation', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Недостаточно прав']);
+        }
+
+        global $wpdb;
+
+        $local_id    = absint($_POST['local_id'] ?? 0);
+        $network     = sanitize_text_field($_POST['network'] ?? '');
+        $api_status  = sanitize_text_field($_POST['api_status'] ?? '');
+        $api_payment = floatval($_POST['api_payment'] ?? 0);
+        $api_cart    = floatval($_POST['api_cart'] ?? 0);
+
+        if ($local_id < 1 || empty($network)) {
+            wp_send_json_error(['message' => 'Неверные параметры']);
+        }
+
+        $table = $wpdb->prefix . 'cashback_transactions';
+
+        // Проверяем существование и текущий статус
+        $current = $wpdb->get_row($wpdb->prepare(
+            "SELECT id, order_status, comission, sum_order FROM {$table} WHERE id = %d",
+            $local_id
+        ));
+
+        if (!$current) {
+            wp_send_json_error(['message' => 'Транзакция не найдена']);
+        }
+
+        if ($current->order_status === 'balance') {
+            wp_send_json_error(['message' => 'Нельзя перезаписать транзакцию со статусом «balance»']);
+        }
+
+        // Маппинг статуса API → локальный
+        $client = Cashback_API_Client::get_instance();
+        $network_config = $client->get_network_config($network);
+        $status_map = $network_config['status_map'] ?? [];
+        $mapped_status = $status_map[strtolower($api_status)] ?? 'waiting';
+
+        $updated = $wpdb->update(
+            $table,
+            [
+                'order_status' => $mapped_status,
+                'comission'    => $api_payment,
+                'sum_order'    => $api_cart,
+                'api_verified' => 1,
+            ],
+            ['id' => $local_id],
+            ['%s', '%f', '%f', '%d'],
+            ['%d']
+        );
+
+        if ($updated === false || $wpdb->last_error) {
+            wp_send_json_error(['message' => 'Ошибка обновления: ' . $wpdb->last_error]);
+        }
+
+        $this->log_audit('overwrite_transaction', $local_id, [
+            'old_status'    => $current->order_status,
+            'new_status'    => $mapped_status,
+            'old_comission' => $current->comission,
+            'new_comission' => $api_payment,
+            'old_sum_order' => $current->sum_order,
+            'new_sum_order' => $api_cart,
+        ]);
+
+        wp_send_json_success(['message' => 'Транзакция перезаписана данными API']);
+    }
+
+    // =========================================================================
     // Кнопка валидации для страницы выплат (payouts)
     // =========================================================================
 
@@ -676,15 +966,15 @@ class Cashback_Admin_API_Validation
      */
     public function render_validate_button(int $user_id): void
     {
-        ?>
+    ?>
         <button type="button"
-                class="button cashback-inline-validate-btn"
-                data-user-id="<?php echo esc_attr($user_id); ?>"
-                title="Проверить данные через API CPA-сети">
+            class="button cashback-inline-validate-btn"
+            data-user-id="<?php echo esc_attr($user_id); ?>"
+            title="Проверить данные через API CPA-сети">
             🔍 Проверить
         </button>
         <span class="cashback-inline-validate-status" data-user-id="<?php echo esc_attr($user_id); ?>"></span>
-        <?php
+<?php
     }
 
     // =========================================================================
@@ -710,6 +1000,52 @@ class Cashback_Admin_API_Validation
                 'details'     => wp_json_encode($details),
             ]
         );
+    }
+
+    /**
+     * Конвертация даты из API в MySQL DATETIME формат
+     *
+     * Поддерживает форматы Admitad/EPN:
+     * - "2024-01-15T10:30:00"  (ISO 8601)
+     * - "2024-01-15 10:30:00"  (MySQL-like)
+     * - "15.01.2024 10:30:00"  (RU формат)
+     * - "15.01.2024"           (только дата)
+     * - "2024-01-15"           (ISO дата)
+     *
+     * @param string $date_str Дата из API
+     * @return string|null MySQL DATETIME или null
+     */
+    private function parse_api_date(string $date_str): ?string
+    {
+        $date_str = trim($date_str);
+        if ($date_str === '') {
+            return null;
+        }
+
+        // ISO 8601 с T-разделителем: "2024-01-15T10:30:00"
+        $date_str = str_replace('T', ' ', $date_str);
+
+        // Убираем таймзону если есть: "+03:00", "Z"
+        $date_str = preg_replace('/[+-]\d{2}:\d{2}$/', '', $date_str);
+        $date_str = rtrim($date_str, 'Z');
+
+        $formats = [
+            'Y-m-d H:i:s',  // 2024-01-15 10:30:00
+            'Y-m-d H:i',    // 2024-01-15 10:30
+            'Y-m-d',         // 2024-01-15
+            'd.m.Y H:i:s',  // 15.01.2024 10:30:00
+            'd.m.Y H:i',    // 15.01.2024 10:30
+            'd.m.Y',         // 15.01.2024
+        ];
+
+        foreach ($formats as $format) {
+            $dt = DateTime::createFromFormat($format, $date_str);
+            if ($dt !== false) {
+                return $dt->format('Y-m-d H:i:s');
+            }
+        }
+
+        return null;
     }
 
     /**

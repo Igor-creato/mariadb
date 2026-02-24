@@ -636,14 +636,19 @@ class Cashback_API_Client
 
             if (!$local_tx) {
                 $missing_local[] = [
-                    'action_id'   => $action['action_id'] ?? '',
-                    'click_id'    => $api_click_id,
-                    'order_id'    => $action['order_id'] ?? '',
-                    'status'      => $api_status,
-                    'payment'     => $api_payment,
-                    'cart'        => $api_cart,
-                    'date'        => $action['action_date'] ?? '',
-                    'campaign'    => $action['advcampaign_name'] ?? '',
+                    'action_id'      => $action['action_id'] ?? '',
+                    'click_id'       => $api_click_id,
+                    'order_id'       => $action['order_id'] ?? '',
+                    'status'         => $api_status,
+                    'payment'        => $api_payment,
+                    'cart'           => $api_cart,
+                    'date'           => $action['action_date'] ?? '',
+                    'campaign'       => $action['advcampaign_name'] ?? '',
+                    'campaign_id'    => $action['advcampaign_id'] ?? '',
+                    'currency'       => $action['currency'] ?? 'RUB',
+                    'click_time'     => $action['click_date'] ?? '',
+                    'action_type'    => $action['action_type'] ?? '',
+                    'website_id'     => $action['website_id'] ?? ($network['api_website_id'] ?? ''),
                 ];
                 continue;
             }
@@ -734,6 +739,7 @@ class Cashback_API_Client
                 'order_number' => $tx['order_number'],
                 'status'       => $tx['order_status'],
                 'commission'   => (float) $tx['comission'],
+                'sum_order'    => (float) ($tx['sum_order'] ?? 0),
                 'created'      => $tx['created_at'],
             ];
         }

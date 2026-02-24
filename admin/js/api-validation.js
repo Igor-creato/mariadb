@@ -124,7 +124,7 @@
             html += '<div class="validation-tab-content" id="tab-mismatched">';
             if (mismatchedCount > 0) {
                 html += '<table class="widefat striped">';
-                html += '<thead><tr><th>Action ID</th><th>Uniq ID</th><th>API статус</th><th>Локальный статус</th><th>API сумма</th><th>Локальная сумма</th><th>Проблема</th></tr></thead>';
+                html += '<thead><tr><th>Action ID</th><th>Uniq ID</th><th>API статус</th><th>Локальный статус</th><th>API сумма</th><th>Локальная сумма</th><th>Проблема</th><th>Действия</th></tr></thead>';
                 html += '<tbody>';
                 data.mismatched.forEach(function (m) {
                     const problems = [];
@@ -134,6 +134,7 @@
 
                     const statusCls = m.status_mismatch ? ' class="cell-mismatch"' : '';
                     const sumCls = m.commission_mismatch ? ' class="cell-mismatch"' : '';
+                    const isBalance = m.local_status === 'balance';
 
                     html += `<tr>
                         <td><code>${escHtml(m.action_id)}</code></td>
@@ -143,6 +144,15 @@
                         <td${sumCls}>${formatMoney(m.api_payment)}</td>
                         <td${sumCls}>${formatMoney(m.local_commission)}</td>
                         <td style="color:red; font-weight:bold;">${problems.join(', ')}</td>
+                        <td class="validation-actions">
+                            <button type="button" class="button button-small button-primary cashback-overwrite-tx-btn"
+                                data-local-id="${m.local_id}"
+                                data-api-status="${escHtml(m.api_status)}"
+                                data-api-payment="${m.api_payment}"
+                                data-api-cart="${m.api_cart}"
+                                ${isBalance ? 'disabled title="Нельзя изменить транзакцию со статусом balance"' : ''}>Перезаписать</button>
+                            <button type="button" class="button button-small cashback-remove-row-btn">Удалить</button>
+                        </td>
                     </tr>`;
                 });
                 html += '</tbody></table>';
@@ -155,7 +165,7 @@
             html += '<div class="validation-tab-content" id="tab-missing-local" style="display:none;">';
             if (missingLocalCount > 0) {
                 html += '<table class="widefat striped">';
-                html += '<thead><tr><th>Action ID</th><th>Order ID</th><th>Статус</th><th>Сумма</th><th>Дата</th><th>Магазин</th></tr></thead>';
+                html += '<thead><tr><th>Action ID</th><th>Order ID</th><th>Статус</th><th>Комиссия</th><th>Сумма заказа</th><th>Дата</th><th>Магазин</th><th>Действия</th></tr></thead>';
                 html += '<tbody>';
                 data.missing_local.forEach(function (m) {
                     html += `<tr>
@@ -163,8 +173,25 @@
                         <td>${escHtml(m.order_id)}</td>
                         <td>${escHtml(m.status)}</td>
                         <td>${formatMoney(m.payment)}</td>
+                        <td>${formatMoney(m.cart)}</td>
                         <td>${escHtml(m.date)}</td>
                         <td>${escHtml(m.campaign || '')}</td>
+                        <td class="validation-actions">
+                            <button type="button" class="button button-small button-primary cashback-add-tx-btn"
+                                data-action-id="${escHtml(m.action_id)}"
+                                data-click-id="${escHtml(m.click_id || '')}"
+                                data-order-id="${escHtml(m.order_id || '')}"
+                                data-status="${escHtml(m.status)}"
+                                data-payment="${m.payment}"
+                                data-cart="${m.cart}"
+                                data-date="${escHtml(m.date || '')}"
+                                data-campaign="${escHtml(m.campaign || '')}"
+                                data-campaign-id="${escHtml(m.campaign_id || '')}"
+                                data-currency="${escHtml(m.currency || 'RUB')}"
+                                data-click-time="${escHtml(m.click_time || '')}"
+                                data-action-type="${escHtml(m.action_type || '')}"
+                                data-website-id="${escHtml(m.website_id || '')}">Добавить</button>
+                        </td>
                     </tr>`;
                 });
                 html += '</tbody></table>';
@@ -177,16 +204,21 @@
             html += '<div class="validation-tab-content" id="tab-missing-api" style="display:none;">';
             if (missingApiCount > 0) {
                 html += '<table class="widefat striped">';
-                html += '<thead><tr><th>Local ID</th><th>Uniq ID</th><th>Click ID</th><th>Статус</th><th>Комиссия</th><th>Создано</th></tr></thead>';
+                html += '<thead><tr><th>Local ID</th><th>Uniq ID</th><th>Click ID</th><th>Статус</th><th>Комиссия</th><th>Сумма заказа</th><th>Создано</th><th>Действия</th></tr></thead>';
                 html += '<tbody>';
                 data.missing_api.forEach(function (m) {
-                    html += `<tr>
+                    html += `<tr data-local-id="${m.local_id}">
                         <td>#${m.local_id}</td>
                         <td><code>${escHtml(m.uniq_id || '—')}</code></td>
                         <td><code>${escHtml(m.click_id || '—')}</code></td>
-                        <td>${escHtml(m.status)}</td>
-                        <td>${formatMoney(m.commission)}</td>
+                        <td class="editable-cell" data-field="order_status" data-value="${escHtml(m.status)}">${escHtml(m.status)}</td>
+                        <td class="editable-cell" data-field="comission" data-value="${m.commission}">${formatMoney(m.commission)}</td>
+                        <td class="editable-cell" data-field="sum_order" data-value="${m.sum_order || 0}">${formatMoney(m.sum_order)}</td>
                         <td>${escHtml(m.created)}</td>
+                        <td class="validation-actions">
+                            <button type="button" class="button button-small cashback-edit-tx-btn"
+                                data-local-id="${m.local_id}">Редактировать</button>
+                        </td>
                     </tr>`;
                 });
                 html += '</tbody></table>';
@@ -424,6 +456,218 @@
             },
         });
     });
+
+    // =========================================================================
+    // Действия из таблиц валидации
+    // =========================================================================
+
+    // --- Редактирование транзакции (таблица «Есть на сайте, нет в API») ---
+
+    $(document).on('click', '.cashback-edit-tx-btn', function () {
+        const $btn = $(this);
+        const $row = $btn.closest('tr');
+
+        // Отмена редактирования
+        if ($row.hasClass('editing')) {
+            $row.removeClass('editing');
+            $row.find('.editable-cell').each(function () {
+                const $cell = $(this);
+                const field = $cell.data('field');
+                const original = $cell.data('value');
+                $cell.html(field === 'order_status' ? escHtml(original) : formatMoney(original));
+            });
+            $btn.text('Редактировать');
+            $row.find('.cashback-save-tx-btn').remove();
+            return;
+        }
+
+        $row.addClass('editing');
+        $btn.text('Отмена');
+
+        // Превращаем ячейки в поля ввода
+        $row.find('.editable-cell').each(function () {
+            const $cell = $(this);
+            const field = $cell.data('field');
+            const value = $cell.data('value');
+
+            if (field === 'order_status') {
+                const statuses = ['waiting', 'completed', 'declined', 'hold'];
+                let select = '<select class="edit-input" data-field="' + field + '">';
+                statuses.forEach(function (s) {
+                    select += '<option value="' + s + '"' + (s === value ? ' selected' : '') + '>' + s + '</option>';
+                });
+                select += '</select>';
+                $cell.html(select);
+            } else {
+                $cell.html('<input type="number" step="0.01" min="0" class="edit-input" data-field="' + field + '" value="' + value + '">');
+            }
+        });
+
+        // Добавляем кнопку «Сохранить»
+        $btn.after('<button type="button" class="button button-small button-primary cashback-save-tx-btn" style="margin-left:4px;">Сохранить</button>');
+    });
+
+    // Сохранение редактированной транзакции
+    $(document).on('click', '.cashback-save-tx-btn', function () {
+        const $btn = $(this);
+        const $row = $btn.closest('tr');
+        const localId = $row.data('local-id');
+
+        const postData = {
+            action: 'cashback_edit_transaction',
+            nonce: config.nonce,
+            transaction_id: localId,
+        };
+
+        $row.find('.edit-input').each(function () {
+            postData[$(this).data('field')] = $(this).val();
+        });
+
+        $btn.prop('disabled', true).text(i18n.saving || 'Сохранение...');
+
+        $.ajax({
+            url: config.ajaxUrl,
+            method: 'POST',
+            data: postData,
+            success: function (response) {
+                if (response.success) {
+                    // Обновляем значения ячеек
+                    $row.find('.edit-input').each(function () {
+                        const $input = $(this);
+                        const $cell = $input.closest('.editable-cell');
+                        const field = $input.data('field');
+                        const newVal = $input.val();
+                        $cell.data('value', newVal);
+                        $cell.html(field === 'order_status' ? escHtml(newVal) : formatMoney(newVal));
+                    });
+                    $row.removeClass('editing');
+                    $row.find('.cashback-edit-tx-btn').text('Редактировать');
+                    $btn.remove();
+                    flashRow($row, '#dff0d8');
+                } else {
+                    alert(response.data?.message || 'Ошибка сохранения');
+                    $btn.prop('disabled', false).text('Сохранить');
+                }
+            },
+            error: function () {
+                alert('Ошибка сети');
+                $btn.prop('disabled', false).text('Сохранить');
+            },
+        });
+    });
+
+    // --- Добавление транзакции из API (таблица «Есть в API, нет на сайте») ---
+
+    $(document).on('click', '.cashback-add-tx-btn', function () {
+        const $btn = $(this);
+        const $row = $btn.closest('tr');
+        const userId = $('#cashback-validate-user-id').val();
+        const network = $('#cashback-validate-network').val();
+
+        $btn.prop('disabled', true).text(i18n.adding || 'Добавление...');
+
+        $.ajax({
+            url: config.ajaxUrl,
+            method: 'POST',
+            data: {
+                action: 'cashback_add_transaction',
+                nonce: config.nonce,
+                user_id: userId,
+                network: network,
+                action_id: $btn.data('action-id'),
+                click_id: $btn.data('click-id'),
+                order_id: $btn.data('order-id'),
+                status: $btn.data('status'),
+                payment: $btn.data('payment'),
+                cart: $btn.data('cart'),
+                date: $btn.data('date'),
+                campaign: $btn.data('campaign'),
+                campaign_id: $btn.data('campaign-id'),
+                currency: $btn.data('currency'),
+                click_time: $btn.data('click-time'),
+                action_type: $btn.data('action-type'),
+                website_id: $btn.data('website-id'),
+            },
+            success: function (response) {
+                if (response.success) {
+                    $btn.replaceWith('<span style="color:green;">Добавлено #' + (response.data.insert_id || '') + '</span>');
+                    flashRow($row, '#dff0d8');
+                } else {
+                    alert(response.data?.message || 'Ошибка добавления');
+                    $btn.prop('disabled', false).text('Добавить');
+                }
+            },
+            error: function () {
+                alert('Ошибка сети');
+                $btn.prop('disabled', false).text('Добавить');
+            },
+        });
+    });
+
+    // --- Перезапись транзакции данными API (таблица «Расхождения») ---
+
+    $(document).on('click', '.cashback-overwrite-tx-btn', function () {
+        const $btn = $(this);
+        const $row = $btn.closest('tr');
+        const network = $('#cashback-validate-network').val();
+
+        if (!confirm(i18n.confirm_overwrite || 'Перезаписать локальные данные данными из API?')) {
+            return;
+        }
+
+        $btn.prop('disabled', true).text(i18n.saving || 'Сохранение...');
+
+        $.ajax({
+            url: config.ajaxUrl,
+            method: 'POST',
+            data: {
+                action: 'cashback_overwrite_transaction',
+                nonce: config.nonce,
+                local_id: $btn.data('local-id'),
+                network: network,
+                api_status: $btn.data('api-status'),
+                api_payment: $btn.data('api-payment'),
+                api_cart: $btn.data('api-cart'),
+            },
+            success: function (response) {
+                if (response.success) {
+                    $btn.replaceWith('<span style="color:green;">Перезаписано</span>');
+                    $row.find('.cashback-remove-row-btn').remove();
+                    flashRow($row, '#dff0d8');
+                } else {
+                    alert(response.data?.message || 'Ошибка перезаписи');
+                    $btn.prop('disabled', false).text('Перезаписать');
+                }
+            },
+            error: function () {
+                alert('Ошибка сети');
+                $btn.prop('disabled', false).text('Перезаписать');
+            },
+        });
+    });
+
+    // --- Удаление строки из результатов (только UI) ---
+
+    $(document).on('click', '.cashback-remove-row-btn', function () {
+        const $row = $(this).closest('tr');
+
+        if (!confirm(i18n.confirm_delete || 'Удалить эту строку из результатов?')) {
+            return;
+        }
+
+        $row.fadeOut(300, function () {
+            $(this).remove();
+        });
+    });
+
+    // --- Подсветка строки после успешного действия ---
+
+    function flashRow($row, color) {
+        $row.css('background-color', color);
+        setTimeout(function () {
+            $row.css('background-color', '');
+        }, 2000);
+    }
 
     // =========================================================================
     // Утилиты
