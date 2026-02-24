@@ -205,7 +205,8 @@ class Mariadb_Plugin
             `created_at` timestamp NULL DEFAULT current_timestamp(),
             `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
             PRIMARY KEY (`id`),
-            UNIQUE KEY `unique_uniq_partner` (`uniq_id`,`partner`)
+            UNIQUE KEY `unique_uniq_partner` (`uniq_id`,`partner`),
+            UNIQUE KEY `idx_idempotency_key` (`idempotency_key`)
         ) ENGINE=InnoDB {$charset_collate} COMMENT='Вэбхуки принятые от неавторизованных пользователей';";
 
         // Таблица cashback_user_balance
