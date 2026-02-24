@@ -110,7 +110,7 @@ class Cashback_Admin_API_Validation
             'cashback-api-validation',
             plugin_dir_url(dirname(__FILE__)) . 'admin/js/api-validation.js',
             ['jquery'],
-            '5.0.0',
+            '5.1.0',
             true
         );
 
@@ -138,7 +138,7 @@ class Cashback_Admin_API_Validation
             'cashback-api-validation',
             plugin_dir_url(dirname(__FILE__)) . 'admin/css/api-validation.css',
             [],
-            '5.0.0'
+            '5.1.0'
         );
     }
 
@@ -346,7 +346,8 @@ class Cashback_Admin_API_Validation
                     <th>User ID</th>
                     <td>
                         <input type="number" id="cashback-validate-user-id" class="regular-text"
-                            min="1" placeholder="ID пользователя WordPress">
+                            min="0" placeholder="ID пользователя WordPress">
+                        <p class="description">0 = проверка незарегистрированных транзакций</p>
                     </td>
                 </tr>
                 <tr>
@@ -491,22 +492,27 @@ class Cashback_Admin_API_Validation
             wp_send_json_error(['message' => 'Недостаточно прав']);
         }
 
-        $user_id = (int) ($_POST['user_id'] ?? 0);
+        $user_id = (int) ($_POST['user_id'] ?? -1);
         $network = sanitize_text_field($_POST['network'] ?? 'admitad');
         $full    = !empty($_POST['full_check']);
 
-        if ($user_id < 1) {
+        if ($user_id < 0) {
             wp_send_json_error(['message' => 'Укажите корректный User ID']);
         }
 
-        // Проверяем существование пользователя
-        $user = get_user_by('id', $user_id);
-        if (!$user) {
-            wp_send_json_error(['message' => "Пользователь #{$user_id} не найден"]);
-        }
-
         $client = Cashback_API_Client::get_instance();
-        $result = $client->validate_user($user_id, $network, !$full);
+
+        if ($user_id === 0) {
+            // Проверка незарегистрированных транзакций
+            $result = $client->validate_unregistered($network, !$full);
+        } else {
+            // Проверяем существование пользователя
+            $user = get_user_by('id', $user_id);
+            if (!$user) {
+                wp_send_json_error(['message' => "Пользователь #{$user_id} не найден"]);
+            }
+            $result = $client->validate_user($user_id, $network, !$full);
+        }
 
         // Логируем в аудит
         $this->log_audit('api_validation', $user_id, $result);
@@ -687,10 +693,11 @@ class Cashback_Admin_API_Validation
 
         global $wpdb;
 
-        $transaction_id = absint($_POST['transaction_id'] ?? 0);
-        $order_status   = sanitize_text_field($_POST['order_status'] ?? '');
-        $comission      = floatval($_POST['comission'] ?? 0);
-        $sum_order      = floatval($_POST['sum_order'] ?? 0);
+        $transaction_id  = absint($_POST['transaction_id'] ?? 0);
+        $order_status    = sanitize_text_field($_POST['order_status'] ?? '');
+        $comission       = floatval($_POST['comission'] ?? 0);
+        $sum_order       = floatval($_POST['sum_order'] ?? 0);
+        $is_unregistered = (int) ($_POST['user_id'] ?? -1) === 0;
 
         if ($transaction_id < 1) {
             wp_send_json_error(['message' => 'Неверный ID транзакции']);
@@ -705,7 +712,7 @@ class Cashback_Admin_API_Validation
             wp_send_json_error(['message' => 'Комиссия не может быть отрицательной']);
         }
 
-        $table = $wpdb->prefix . 'cashback_transactions';
+        $table = $wpdb->prefix . ($is_unregistered ? 'cashback_unregistered_transactions' : 'cashback_transactions');
 
         // Проверяем существование и текущий статус
         $current = $wpdb->get_row($wpdb->prepare(
@@ -775,7 +782,7 @@ class Cashback_Admin_API_Validation
         $action_type = sanitize_text_field($_POST['action_type'] ?? '');
         $website_id  = sanitize_text_field($_POST['website_id'] ?? '');
 
-        if (empty($user_id) || empty($network) || empty($action_id)) {
+        if (($user_id === '') || empty($network) || empty($action_id)) {
             wp_send_json_error(['message' => 'Обязательные поля: user_id, network, action_id']);
         }
 
@@ -809,7 +816,7 @@ class Cashback_Admin_API_Validation
         $idempotency_key = hash('sha256', 'api_add_' . $action_id . '_' . $network . '_' . bin2hex(random_bytes(16)));
 
         // Определение таблицы
-        $is_unregistered = !is_numeric($user_id) || strtolower($user_id) === 'unregistered';
+        $is_unregistered = !is_numeric($user_id) || (int) $user_id === 0 || strtolower($user_id) === 'unregistered';
         $table = $wpdb->prefix . ($is_unregistered ? 'cashback_unregistered_transactions' : 'cashback_transactions');
 
         $data = [
@@ -902,17 +909,18 @@ class Cashback_Admin_API_Validation
 
         global $wpdb;
 
-        $local_id    = absint($_POST['local_id'] ?? 0);
-        $network     = sanitize_text_field($_POST['network'] ?? '');
-        $api_status  = sanitize_text_field($_POST['api_status'] ?? '');
-        $api_payment = floatval($_POST['api_payment'] ?? 0);
-        $api_cart    = floatval($_POST['api_cart'] ?? 0);
+        $local_id       = absint($_POST['local_id'] ?? 0);
+        $network        = sanitize_text_field($_POST['network'] ?? '');
+        $api_status     = sanitize_text_field($_POST['api_status'] ?? '');
+        $api_payment    = floatval($_POST['api_payment'] ?? 0);
+        $api_cart       = floatval($_POST['api_cart'] ?? 0);
+        $is_unregistered = (int) ($_POST['user_id'] ?? -1) === 0;
 
         if ($local_id < 1 || empty($network)) {
             wp_send_json_error(['message' => 'Неверные параметры']);
         }
 
-        $table = $wpdb->prefix . 'cashback_transactions';
+        $table = $wpdb->prefix . ($is_unregistered ? 'cashback_unregistered_transactions' : 'cashback_transactions');
 
         // Проверяем существование и текущий статус
         $current = $wpdb->get_row($wpdb->prepare(

@@ -695,6 +695,7 @@ class Cashback_API_Client
 
             if ($status_match && $commission_match && $cart_match) {
                 $matched[] = [
+                    'local_id'         => (int) $local_tx['id'],
                     'click_id'         => $api_click_id,
                     'api_status'       => $api_status,
                     'local_status'     => $local_status,
@@ -750,6 +751,19 @@ class Cashback_API_Client
             ];
         }
 
+        // ─── Обновляем api_verified для всех сматченных транзакций ───
+        $matched_ids = array_column($matched, 'local_id');
+        if (!empty($matched_ids)) {
+            // Батчами по 500 чтобы не превысить лимит SQL
+            foreach (array_chunk($matched_ids, 500) as $chunk) {
+                $placeholders = implode(',', array_fill(0, count($chunk), '%d'));
+                $wpdb->query($wpdb->prepare(
+                    "UPDATE {$this->transactions_table} SET api_verified = 1 WHERE id IN ({$placeholders}) AND api_verified = 0",
+                    ...$chunk
+                ));
+            }
+        }
+
         // ─── Результат ───
         $has_issues    = !empty($mismatched) || !empty($missing_local) || !empty($missing_api);
         $total_checked = count($api_actions);
@@ -780,6 +794,354 @@ class Cashback_API_Client
         return [
             'success'         => true,
             'user_id'         => $user_id,
+            'network'         => $network_slug,
+            'status'          => $validation_status,
+            'date_range'      => ['start' => $date_start, 'end' => $date_end],
+            'api_total'       => $total_checked,
+            'local_total'     => count($local_transactions),
+            'matched_count'   => count($matched),
+            'mismatch_count'  => count($mismatched),
+            'missing_local'   => $missing_local,
+            'missing_api'     => $missing_api,
+            'mismatched'      => $mismatched,
+            'sums' => [
+                'api_approved'    => $api_sums['approved'],
+                'api_pending'     => $api_sums['pending'],
+                'api_declined'    => $api_sums['declined'],
+                'local_approved'  => $local_sums['approved'],
+                'local_pending'   => $local_sums['pending'],
+                'local_declined'  => $local_sums['declined'],
+                'discrepancy'     => $discrepancy,
+            ],
+        ];
+    }
+
+    // =========================================================================
+    // Validation — unregistered transactions
+    // =========================================================================
+
+    /**
+     * Валидация незарегистрированных транзакций по API
+     *
+     * Аналог validate_user(), но работает с таблицей cashback_unregistered_transactions.
+     * Загружает ВСЕ локальные незарегистрированные транзакции и сопоставляет их
+     * с данными API по click_id / order_number.
+     *
+     * @param string $network_slug Slug сети (admitad, epn)
+     * @param bool   $use_checkpoint Использовать инкрементальный чекпоинт
+     * @return array Результат валидации
+     */
+    public function validate_unregistered(string $network_slug = 'admitad', bool $use_checkpoint = true): array
+    {
+        global $wpdb;
+
+        $network = $this->get_network_config($network_slug);
+        if (!$network || empty($network['credentials'])) {
+            return [
+                'success'    => false,
+                'error'      => 'Сеть не найдена или API не настроен: ' . $network_slug,
+                'user_id'    => 0,
+                'network'    => $network_slug,
+            ];
+        }
+
+        // ─── Определяем дату начала ───
+        $date_start = '01.01.2020';
+
+        if ($use_checkpoint) {
+            // user_id = 0 для чекпоинта незарегистрированных
+            $checkpoint = $this->get_checkpoint(0, $network_slug);
+            if ($checkpoint && !empty($checkpoint['last_validated_date'])) {
+                $dt = new DateTime($checkpoint['last_validated_date']);
+                $dt->modify('-7 days');
+                $date_start = $dt->format('d.m.Y');
+            }
+        }
+
+        $date_end = (new DateTime())->format('d.m.Y');
+
+        // ─── Локальные незарегистрированные транзакции ───
+        $local_start = DateTime::createFromFormat('d.m.Y', $date_start)->format('Y-m-d');
+        $network_name = $network['name'] ?? '';
+
+        $local_transactions = $wpdb->get_results($wpdb->prepare(
+            "SELECT t.id, t.click_id, t.uniq_id, t.order_number, t.offer_name,
+                    t.comission, t.cashback, t.order_status, t.partner,
+                    t.sum_order, t.created_at, t.updated_at, t.user_id
+             FROM {$this->unregistered_table} t
+             WHERE (LOWER(t.partner) = LOWER(%s) OR LOWER(t.partner) = LOWER(%s))
+               AND t.created_at >= %s
+             ORDER BY t.created_at",
+            $network_slug,
+            $network_name,
+            $local_start
+        ), ARRAY_A);
+
+        if (empty($local_transactions)) {
+            // Нет локальных транзакций — нечего проверять
+            $this->update_checkpoint(0, $network_slug, [
+                'last_validated_date'      => (new DateTime())->format('Y-m-d'),
+                'api_actions_count'        => 0,
+                'local_transactions_count' => 0,
+                'validation_status'        => 'match',
+                'matched_count'            => 0,
+                'mismatch_count'           => 0,
+                'missing_local_count'      => 0,
+                'missing_api_count'        => 0,
+            ]);
+
+            return [
+                'success'         => true,
+                'user_id'         => 0,
+                'network'         => $network_slug,
+                'status'          => 'match',
+                'date_range'      => ['start' => $date_start, 'end' => $date_end],
+                'api_total'       => 0,
+                'local_total'     => 0,
+                'matched_count'   => 0,
+                'mismatch_count'  => 0,
+                'missing_local'   => [],
+                'missing_api'     => [],
+                'mismatched'      => [],
+                'sums'            => [
+                    'api_approved'   => 0, 'api_pending'   => 0, 'api_declined'   => 0,
+                    'local_approved' => 0, 'local_pending' => 0, 'local_declined' => 0,
+                    'discrepancy'    => 0,
+                ],
+            ];
+        }
+
+        // ─── Индексы для матчинга ───
+        $local_by_click_id = [];
+        $local_by_order_number = [];
+
+        foreach ($local_transactions as $tx) {
+            if (!empty($tx['click_id'])) {
+                $local_by_click_id[$tx['click_id']] = $tx;
+            }
+            if (!empty($tx['order_number'])) {
+                $local_by_order_number[$tx['order_number']] = $tx;
+            }
+        }
+
+        // ─── Запрос к API ───
+        // В БД user_id хранится как '0', но в API subid = 'unregistered'.
+        // Запрашиваем API с subid = 'unregistered' (литеральное значение из партнёрской ссылки).
+        $user_field = $network['api_user_field'] ?? 'subid2';
+
+        $api_params = [
+            $user_field  => 'unregistered',
+            'date_start' => $date_start,
+            'date_end'   => $date_end,
+        ];
+
+        if (!empty($network['api_website_id'])) {
+            $api_params['website'] = $network['api_website_id'];
+        }
+
+        $api_result = $this->fetch_all_admitad_actions($network['credentials'], $api_params, 20, $network);
+
+        $api_actions = [];
+        if ($api_result['success'] && !empty($api_result['actions'])) {
+            $api_actions = $api_result['actions'];
+        } elseif (!$api_result['success']) {
+            return [
+                'success'    => false,
+                'error'      => 'API error: ' . $api_result['error'],
+                'user_id'    => 0,
+                'network'    => $network_slug,
+            ];
+        }
+
+        // ─── Маппинг статусов ───
+        $status_map = $network['status_map'];
+        $click_field = $network['api_click_field'] ?? 'subid1';
+
+        // ─── Сравнение ───
+        $matched       = [];
+        $mismatched    = [];
+        $missing_local = [];
+
+        $api_sums   = ['approved' => 0.0, 'pending' => 0.0, 'declined' => 0.0];
+        $local_sums = ['approved' => 0.0, 'pending' => 0.0, 'declined' => 0.0];
+
+        $matched_click_ids = [];
+
+        foreach ($api_actions as $action) {
+            $api_click_id  = (string) ($action[$click_field] ?? '');
+            $api_status    = strtolower($action['status'] ?? 'pending');
+            $api_payment   = (float) ($action['payment'] ?? 0);
+            $api_cart      = (float) ($action['cart'] ?? 0);
+            $mapped_status = $status_map[$api_status] ?? 'waiting';
+
+            // Подсчёт сумм по API
+            if ($mapped_status === 'completed' || $mapped_status === 'balance') {
+                $api_sums['approved'] += $api_payment;
+            } elseif ($mapped_status === 'waiting') {
+                $api_sums['pending'] += $api_payment;
+            } elseif ($mapped_status === 'declined') {
+                $api_sums['declined'] += $api_payment;
+            }
+
+            // ─── МАТЧИНГ ───
+            $local_tx = null;
+
+            // 1. Основной ключ: click_id
+            if ($api_click_id !== '' && isset($local_by_click_id[$api_click_id])) {
+                $local_tx = $local_by_click_id[$api_click_id];
+            }
+
+            // 2. Fallback: order_id → order_number
+            if (!$local_tx) {
+                $order_id = (string) ($action['order_id'] ?? '');
+                if ($order_id !== '' && isset($local_by_order_number[$order_id])) {
+                    $local_tx = $local_by_order_number[$order_id];
+                }
+            }
+
+            if (!$local_tx) {
+                $missing_local[] = [
+                    'action_id'      => $action['action_id'] ?? '',
+                    'click_id'       => $api_click_id,
+                    'order_id'       => $action['order_id'] ?? '',
+                    'status'         => $api_status,
+                    'payment'        => $api_payment,
+                    'cart'           => $api_cart,
+                    'date'           => $action['action_date'] ?? '',
+                    'campaign'       => $action['advcampaign_name'] ?? '',
+                    'campaign_id'    => $action['advcampaign_id'] ?? '',
+                    'currency'       => $action['currency'] ?? 'RUB',
+                    'click_time'     => $action['click_time'] ?? $action['click_date'] ?? $action['closing_date'] ?? '',
+                    'action_type'    => $action['action_type'] ?? '',
+                    'website_id'     => $action['website_id'] ?? $action['website'] ?? ($network['api_website_id'] ?? ''),
+                ];
+                continue;
+            }
+
+            // Запоминаем что эта локальная транзакция сматчена
+            if (!empty($local_tx['click_id'])) {
+                $matched_click_ids[$local_tx['click_id']] = true;
+            }
+
+            // ─── СРАВНЕНИЕ ───
+            $local_status     = $local_tx['order_status'];
+            $local_commission = (float) $local_tx['comission'];
+            $local_cart       = (float) ($local_tx['sum_order'] ?? 0);
+
+            // Суммы по локальным
+            if ($local_status === 'completed' || $local_status === 'balance') {
+                $local_sums['approved'] += $local_commission;
+            } elseif ($local_status === 'waiting' || $local_status === 'hold') {
+                $local_sums['pending'] += $local_commission;
+            } elseif ($local_status === 'declined') {
+                $local_sums['declined'] += $local_commission;
+            }
+
+            $approved_statuses = ['completed', 'balance'];
+            $status_match = ($local_status === $mapped_status)
+                || (in_array($local_status, $approved_statuses, true)
+                    && in_array($mapped_status, $approved_statuses, true));
+
+            $commission_match = abs($api_payment - $local_commission) < 0.02;
+
+            $cart_match = ($api_cart == 0 || $local_cart == 0)
+                || abs($api_cart - $local_cart) < 0.02;
+
+            if ($status_match && $commission_match && $cart_match) {
+                $matched[] = [
+                    'local_id'         => (int) $local_tx['id'],
+                    'click_id'         => $api_click_id,
+                    'api_status'       => $api_status,
+                    'local_status'     => $local_status,
+                    'api_payment'      => $api_payment,
+                    'local_commission' => $local_commission,
+                ];
+            } else {
+                $mismatched[] = [
+                    'uniq_id'            => $local_tx['uniq_id'] ?? '',
+                    'click_id'           => $api_click_id,
+                    'local_id'           => $local_tx['id'],
+                    'api_status'         => $api_status,
+                    'local_status'       => $local_status,
+                    'mapped_api_status'  => $mapped_status,
+                    'api_payment'        => $api_payment,
+                    'local_commission'   => $local_commission,
+                    'api_cart'           => $api_cart,
+                    'local_cart'         => $local_cart,
+                    'status_mismatch'    => !$status_match,
+                    'commission_mismatch' => !$commission_match,
+                    'cart_mismatch'      => !$cart_match,
+                    'action_id'          => $action['action_id'] ?? '',
+                    'order_id'           => $action['order_id'] ?? '',
+                ];
+            }
+        }
+
+        // ─── Обратная проверка: транзакции есть у нас, но нет в API ───
+        $missing_api = [];
+        foreach ($local_transactions as $tx) {
+            if (!empty($tx['click_id']) && isset($matched_click_ids[$tx['click_id']])) {
+                continue;
+            }
+            if ($tx['order_status'] === 'balance') {
+                continue;
+            }
+            if (empty($tx['click_id'])) {
+                continue;
+            }
+
+            $missing_api[] = [
+                'local_id'     => $tx['id'],
+                'uniq_id'      => $tx['uniq_id'] ?? '',
+                'click_id'     => $tx['click_id'],
+                'order_number' => $tx['order_number'],
+                'status'       => $tx['order_status'],
+                'commission'   => (float) $tx['comission'],
+                'sum_order'    => (float) ($tx['sum_order'] ?? 0),
+                'created'      => $tx['created_at'],
+            ];
+        }
+
+        // ─── Обновляем api_verified для всех сматченных транзакций ───
+        $matched_ids = array_column($matched, 'local_id');
+        if (!empty($matched_ids)) {
+            foreach (array_chunk($matched_ids, 500) as $chunk) {
+                $placeholders = implode(',', array_fill(0, count($chunk), '%d'));
+                $wpdb->query($wpdb->prepare(
+                    "UPDATE {$this->unregistered_table} SET api_verified = 1 WHERE id IN ({$placeholders}) AND api_verified = 0",
+                    ...$chunk
+                ));
+            }
+        }
+
+        // ─── Результат ───
+        $has_issues        = !empty($mismatched) || !empty($missing_local) || !empty($missing_api);
+        $total_checked     = count($api_actions);
+        $validation_status = $has_issues ? 'mismatch' : 'match';
+        $discrepancy       = abs($api_sums['approved'] - $local_sums['approved']);
+
+        // Обновляем чекпоинт (user_id = 0 для незарегистрированных)
+        $this->update_checkpoint(0, $network_slug, [
+            'last_validated_date'      => (new DateTime())->format('Y-m-d'),
+            'api_sum_approved'         => $api_sums['approved'],
+            'api_sum_pending'          => $api_sums['pending'],
+            'api_sum_declined'         => $api_sums['declined'],
+            'api_actions_count'        => $total_checked,
+            'local_sum_approved'       => $local_sums['approved'],
+            'local_sum_pending'        => $local_sums['pending'],
+            'local_sum_declined'       => $local_sums['declined'],
+            'local_transactions_count' => count($local_transactions),
+            'validation_status'        => $validation_status,
+            'discrepancy_amount'       => $discrepancy,
+            'matched_count'            => count($matched),
+            'mismatch_count'           => count($mismatched),
+            'missing_local_count'      => count($missing_local),
+            'missing_api_count'        => count($missing_api),
+        ]);
+
+        return [
+            'success'         => true,
+            'user_id'         => 0,
             'network'         => $network_slug,
             'status'          => $validation_status,
             'date_range'      => ['start' => $date_start, 'end' => $date_end],

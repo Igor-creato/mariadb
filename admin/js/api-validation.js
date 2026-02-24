@@ -27,8 +27,8 @@
         const network = $('#cashback-validate-network').val();
         const fullCheck = $('#cashback-validate-full').is(':checked');
 
-        if (!userId || userId < 1) {
-            alert('Укажите корректный User ID');
+        if (userId === '' || userId === null || userId === undefined || userId < 0) {
+            alert('Укажите корректный User ID (0 = незарегистрированные)');
             return;
         }
 
@@ -80,7 +80,8 @@
         html += '<table class="widefat fixed" style="max-width:700px;">';
         html += '<thead><tr><th colspan="2">Сводка проверки</th></tr></thead>';
         html += '<tbody>';
-        html += `<tr><td>Пользователь</td><td><strong>#${data.user_id}</strong></td></tr>`;
+        const userLabel = data.user_id === 0 ? 'Незарегистрированные' : `#${data.user_id}`;
+        html += `<tr><td>Пользователь</td><td><strong>${userLabel}</strong></td></tr>`;
         html += `<tr><td>Сеть</td><td>${escHtml(data.network)}</td></tr>`;
         html += `<tr><td>Период</td><td>${escHtml(data.date_range?.start || '')} — ${escHtml(data.date_range?.end || '')}</td></tr>`;
         html += `<tr><td>Действий в API</td><td>${data.api_total || 0}</td></tr>`;
@@ -517,6 +518,7 @@
             action: 'cashback_edit_transaction',
             nonce: config.nonce,
             transaction_id: localId,
+            user_id: $('#cashback-validate-user-id').val(),
         };
 
         $row.find('.edit-input').each(function () {
@@ -628,6 +630,7 @@
                 api_status: $btn.data('api-status'),
                 api_payment: $btn.data('api-payment'),
                 api_cart: $btn.data('api-cart'),
+                user_id: $('#cashback-validate-user-id').val(),
             },
             success: function (response) {
                 if (response.success) {
