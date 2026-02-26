@@ -1442,6 +1442,7 @@ class Cashback_API_Client
                 $api_status    = strtolower($action['status'] ?? 'pending');
                 $mapped_status = $status_map[$api_status] ?? 'waiting';
                 $api_payment   = (float) ($action['payment'] ?? 0);
+                $api_cart      = (float) ($action['cart'] ?? 0);
 
                 // ─── Матчинг: cashback_transactions ───
                 $local = null;
@@ -1461,7 +1462,7 @@ class Cashback_API_Client
 
                 // ─── Если найдено в cashback_transactions — обновляем ───
                 if ($local) {
-                    $this->sync_update_local($wpdb, $this->transactions_table, $local, $mapped_status, $api_payment, $slug, $api_click_id, $action, $updated, $skipped);
+                    $this->sync_update_local($wpdb, $this->transactions_table, $local, $mapped_status, $api_payment, $api_cart, $slug, $api_click_id, $action, $updated, $skipped);
                     continue;
                 }
 
@@ -1481,7 +1482,7 @@ class Cashback_API_Client
 
                 // ─── Если найдено в unregistered — обновляем ───
                 if ($unreg) {
-                    $this->sync_update_local($wpdb, $this->unregistered_table, $unreg, $mapped_status, $api_payment, $slug, $api_click_id, $action, $updated, $skipped);
+                    $this->sync_update_local($wpdb, $this->unregistered_table, $unreg, $mapped_status, $api_payment, $api_cart, $slug, $api_click_id, $action, $updated, $skipped);
                     continue;
                 }
 
@@ -1550,9 +1551,10 @@ class Cashback_API_Client
      *
      * @param wpdb   $wpdb
      * @param string $table        Таблица для UPDATE
-     * @param array  $local        Локальная запись (id, order_status, comission)
+     * @param array  $local        Локальная запись (id, order_status, comission, sum_order)
      * @param string $mapped_status Статус из API после маппинга
      * @param float  $api_payment  Комиссия из API
+     * @param float  $api_cart     Сумма заказа из API
      * @param string $slug         Slug сети
      * @param string $api_click_id Click ID из API
      * @param array  $action       Полный action из API
@@ -1565,6 +1567,7 @@ class Cashback_API_Client
         array $local,
         string $mapped_status,
         float $api_payment,
+        float $api_cart,
         string $slug,
         string $api_click_id,
         array $action,
@@ -1585,11 +1588,14 @@ class Cashback_API_Client
             return;
         }
 
-        // Обновляем если статус или сумма изменились
+        // Обновляем если статус, комиссия или сумма заказа изменились
         $status_changed     = ($local_status !== $mapped_status);
         $commission_changed = abs($api_payment - (float) $local['comission']) >= 0.02;
 
-        if (!$status_changed && !$commission_changed) {
+        $local_cart     = (float) ($local['sum_order'] ?? 0);
+        $cart_changed   = abs($api_cart - $local_cart) >= 0.02;
+
+        if (!$status_changed && !$commission_changed && !$cart_changed) {
             $skipped++;
             return;
         }
@@ -1604,6 +1610,11 @@ class Cashback_API_Client
 
         if ($commission_changed) {
             $update_data['comission'] = $api_payment;
+            $update_formats[]         = '%s';
+        }
+
+        if ($cart_changed) {
+            $update_data['sum_order'] = $api_cart;
             $update_formats[]         = '%s';
         }
 
