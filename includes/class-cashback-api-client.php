@@ -1330,7 +1330,7 @@ class Cashback_API_Client
                 $placeholders = implode(',', array_fill(0, count($api_click_ids), '%s'));
                 $query_args = array_merge($api_click_ids, [$slug, $network_name]);
                 $rows = $wpdb->get_results($wpdb->prepare(
-                    "SELECT id, click_id, order_number, order_status, comission, sum_order
+                    "SELECT id, click_id, order_number, order_status, comission, sum_order, api_verified
                      FROM {$this->transactions_table}
                      WHERE click_id IN ({$placeholders})
                        AND (LOWER(partner) = LOWER(%s) OR LOWER(partner) = LOWER(%s))",
@@ -1346,7 +1346,7 @@ class Cashback_API_Client
                 $placeholders = implode(',', array_fill(0, count($api_order_ids), '%s'));
                 $query_args = array_merge($api_order_ids, [$slug, $network_name]);
                 $rows = $wpdb->get_results($wpdb->prepare(
-                    "SELECT id, click_id, order_number, order_status, comission, sum_order
+                    "SELECT id, click_id, order_number, order_status, comission, sum_order, api_verified
                      FROM {$this->transactions_table}
                      WHERE order_number IN ({$placeholders})
                        AND (LOWER(partner) = LOWER(%s) OR LOWER(partner) = LOWER(%s))",
@@ -1368,7 +1368,7 @@ class Cashback_API_Client
                 $placeholders = implode(',', array_fill(0, count($api_click_ids), '%s'));
                 $query_args = array_merge($api_click_ids, [$slug, $network_name]);
                 $rows = $wpdb->get_results($wpdb->prepare(
-                    "SELECT id, click_id, order_number, order_status, comission, sum_order, user_id
+                    "SELECT id, click_id, order_number, order_status, comission, sum_order, user_id, api_verified
                      FROM {$this->unregistered_table}
                      WHERE click_id IN ({$placeholders})
                        AND (LOWER(partner) = LOWER(%s) OR LOWER(partner) = LOWER(%s))",
@@ -1384,7 +1384,7 @@ class Cashback_API_Client
                 $placeholders = implode(',', array_fill(0, count($api_order_ids), '%s'));
                 $query_args = array_merge($api_order_ids, [$slug, $network_name]);
                 $rows = $wpdb->get_results($wpdb->prepare(
-                    "SELECT id, click_id, order_number, order_status, comission, sum_order, user_id
+                    "SELECT id, click_id, order_number, order_status, comission, sum_order, user_id, api_verified
                      FROM {$this->unregistered_table}
                      WHERE order_number IN ({$placeholders})
                        AND (LOWER(partner) = LOWER(%s) OR LOWER(partner) = LOWER(%s))",
@@ -1595,7 +1595,9 @@ class Cashback_API_Client
         $local_cart     = (float) ($local['sum_order'] ?? 0);
         $cart_changed   = abs($api_cart - $local_cart) >= 0.02;
 
-        if (!$status_changed && !$commission_changed && !$cart_changed) {
+        $needs_verify = empty($local['api_verified']);
+
+        if (!$status_changed && !$commission_changed && !$cart_changed && !$needs_verify) {
             $skipped++;
             return;
         }
@@ -1616,6 +1618,12 @@ class Cashback_API_Client
         if ($cart_changed) {
             $update_data['sum_order'] = $api_cart;
             $update_formats[]         = '%s';
+        }
+
+        // Транзакция найдена в API — помечаем как проверенную
+        if ($needs_verify) {
+            $update_data['api_verified'] = 1;
+            $update_formats[]            = '%d';
         }
 
         $wpdb->update(
