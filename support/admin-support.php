@@ -320,6 +320,7 @@ class Cashback_Support_Admin
                 <tr>
                     <th scope="col" style="width: 60px;">№</th>
                     <th scope="col">Тема</th>
+                    <th scope="col" style="width: 80px;">ID польз.</th>
                     <th scope="col" style="width: 150px;">Пользователь</th>
                     <th scope="col" style="width: 100px;">Приоритет</th>
                     <th scope="col" style="width: 100px;">Статус</th>
@@ -335,6 +336,7 @@ class Cashback_Support_Admin
                         <tr<?php echo $ticket->unread_count > 0 ? ' style="font-weight: bold;"' : ''; ?>>
                             <td><?php echo esc_html(Cashback_Support_DB::format_ticket_number((int) $ticket->id)); ?></td>
                             <td><?php echo esc_html($ticket->subject); ?></td>
+                            <td><?php echo esc_html((string) $ticket->user_id); ?></td>
                             <td>
                                 <?php echo esc_html($ticket->user_login ?? 'Удалён'); ?>
                                 <?php if ($ticket->user_email): ?>
@@ -369,7 +371,7 @@ class Cashback_Support_Admin
                     <?php endforeach; ?>
                 <?php else: ?>
                     <tr>
-                        <td colspan="9">Тикеты не найдены.</td>
+                        <td colspan="10">Тикеты не найдены.</td>
                     </tr>
                 <?php endif; ?>
             </tbody>

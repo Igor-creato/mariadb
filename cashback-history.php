@@ -124,6 +124,7 @@ class CashbackHistory
             echo '<tr>';
             echo '<th>' . esc_html__('Дата', 'cashback-plugin') . '</th>';
             echo '<th>' . esc_html__('Магазин', 'cashback-plugin') . '</th>';
+            echo '<th>' . esc_html__('Номер заказа', 'cashback-plugin') . '</th>';
             echo '<th>' . esc_html__('Кэшбэк', 'cashback-plugin') . '</th>';
             echo '<th>' . esc_html__('Статус', 'cashback-plugin') . '</th>';
             echo '</tr>';
@@ -134,6 +135,7 @@ class CashbackHistory
                 echo '<tr>';
                 echo '<td>' . $this->format_date($transaction->created_at) . '</td>';
                 echo '<td>' . esc_html($transaction->offer_name ?? __('Н/Д', 'cashback-plugin')) . '</td>';
+                echo '<td>' . esc_html($transaction->order_number ?? __('Н/Д', 'cashback-plugin')) . '</td>';
                 echo '<td>' . esc_html($transaction->cashback ?? '0.00') . '</td>';
                 echo '<td>' . esc_html($this->get_status_label($transaction->order_status)) . '</td>';
                 echo '</tr>';
@@ -223,10 +225,10 @@ class CashbackHistory
         global $wpdb;
         $table_name = $wpdb->prefix . 'cashback_transactions';
         return $wpdb->get_results($wpdb->prepare(
-            "SELECT created_at, offer_name, cashback, order_status 
-             FROM {$table_name} 
-             WHERE user_id = %d 
-             ORDER BY created_at DESC 
+            "SELECT created_at, offer_name, order_number, cashback, order_status
+             FROM {$table_name}
+             WHERE user_id = %d
+             ORDER BY created_at DESC
              LIMIT %d OFFSET %d",
             $user_id,
             $limit,
@@ -287,6 +289,7 @@ class CashbackHistory
             $html .= '<tr>';
             $html .= '<td>' . $this->format_date($transaction->created_at) . '</td>';
             $html .= '<td>' . esc_html($transaction->offer_name ?? __('Н/Д', 'cashback-plugin')) . '</td>';
+            $html .= '<td>' . esc_html($transaction->order_number ?? __('Н/Д', 'cashback-plugin')) . '</td>';
             $html .= '<td>' . esc_html($transaction->cashback ?? '0.00') . '</td>';
             $html .= '<td>' . esc_html($this->get_status_label($transaction->order_status)) . '</td>';
             $html .= '</tr>';
