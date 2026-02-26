@@ -731,6 +731,7 @@ class Cashback_Payouts_Admin
         $update_data = array();
         $update_formats = array();
         $in_transaction = false;
+        $old_status = null;
 
         // Проверяем и добавляем только измененные поля
         // Поле provider (банк) НЕ редактируется администратором вручную
@@ -850,7 +851,10 @@ class Cashback_Payouts_Admin
                     throw new Exception(__('Ошибка при обновлении запроса выплаты в базе данных.', 'cashback-plugin'));
                 }
 
-                $wpdb->query('COMMIT');
+                $commit_result = $wpdb->query('COMMIT');
+                if ($commit_result === false) {
+                    throw new Exception('COMMIT failed: ' . $wpdb->last_error);
+                }
                 $in_transaction = false;
 
             } catch (\Throwable $e) {

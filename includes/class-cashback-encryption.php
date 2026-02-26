@@ -9,14 +9,24 @@ if (!defined('ABSPATH')) {
 /**
  * Утилитный класс шифрования реквизитов пользователей.
  *
- * AES-256-CBC через openssl_encrypt/openssl_decrypt.
+ * v2: AES-256-GCM (authenticated encryption) — новые записи.
+ * v1: AES-256-CBC (legacy) — обратная совместимость для чтения старых данных.
+ *
  * Ключ хранится в wp-config.php как CB_ENCRYPTION_KEY (64 hex-символа).
- * IV уникален для каждой записи (16 байт, prepend к шифротексту).
+ * IV уникален для каждой записи (12 байт для GCM, 16 байт для CBC).
  */
 class Cashback_Encryption
 {
-    private const CIPHER = 'aes-256-cbc';
-    private const IV_LENGTH = 16;
+    private const CIPHER_GCM = 'aes-256-gcm';
+    private const CIPHER_CBC = 'aes-256-cbc';
+    private const GCM_IV_LENGTH = 12;
+    private const GCM_TAG_LENGTH = 16;
+    private const CBC_IV_LENGTH = 16;
+
+    /** Текущая версия для новых шифрований (GCM с auth tag) */
+    private const KEY_VERSION = 'v2:';
+    /** Legacy версия (CBC без auth tag) */
+    private const LEGACY_KEY_VERSION = 'v1:';
 
     /**
      * Проверяет, настроен ли ключ шифрования
@@ -38,54 +48,100 @@ class Cashback_Encryption
     }
 
     /**
-     * Текущая версия формата шифрования.
-     * Префикс позволяет в будущем ротировать ключи без потери совместимости.
-     */
-    private const KEY_VERSION = 'v1:';
-
-    /**
-     * Шифрует строку AES-256-CBC. Результат: "v1:" . base64(iv . ciphertext)
+     * Шифрует строку AES-256-GCM (authenticated encryption).
+     * Результат: "v2:" . base64(iv . tag . ciphertext)
      */
     public static function encrypt(string $plaintext): string
     {
         $key = self::get_key();
-        $iv = random_bytes(self::IV_LENGTH);
-        $ciphertext = openssl_encrypt($plaintext, self::CIPHER, $key, OPENSSL_RAW_DATA, $iv);
+        $iv = random_bytes(self::GCM_IV_LENGTH);
+        $tag = '';
+        $ciphertext = openssl_encrypt($plaintext, self::CIPHER_GCM, $key, OPENSSL_RAW_DATA, $iv, $tag, '', self::GCM_TAG_LENGTH);
 
         if ($ciphertext === false) {
-            throw new \RuntimeException('Encryption failed: ' . openssl_error_string());
+            throw new \RuntimeException('Encryption failed.');
         }
 
-        return self::KEY_VERSION . base64_encode($iv . $ciphertext);
+        return self::KEY_VERSION . base64_encode($iv . $tag . $ciphertext);
     }
 
     /**
-     * Расшифровывает строку. Поддерживает как "v1:base64(...)" так и legacy "base64(...)"
+     * Расшифровывает строку. Поддерживает форматы:
+     *  - "v2:base64(iv . tag . ciphertext)" — AES-256-GCM (authenticated)
+     *  - "v1:base64(iv . ciphertext)" — AES-256-CBC (legacy)
+     *  - "base64(iv . ciphertext)" — legacy без префикса
      */
     public static function decrypt(string $encrypted): string
     {
         $key = self::get_key();
 
-        // Поддержка версионного префикса и legacy формата
+        // v2: AES-256-GCM (authenticated)
         if (strpos($encrypted, self::KEY_VERSION) === 0) {
-            $encrypted = substr($encrypted, strlen(self::KEY_VERSION));
+            return self::decrypt_gcm(substr($encrypted, strlen(self::KEY_VERSION)), $key);
         }
 
-        $data = base64_decode($encrypted, true);
-
-        if ($data === false || strlen($data) < self::IV_LENGTH + 1) {
-            throw new \RuntimeException('Decryption failed: invalid data format.');
+        // v1: AES-256-CBC (legacy) или без префикса
+        $payload = $encrypted;
+        if (strpos($encrypted, self::LEGACY_KEY_VERSION) === 0) {
+            $payload = substr($encrypted, strlen(self::LEGACY_KEY_VERSION));
         }
 
-        $iv = substr($data, 0, self::IV_LENGTH);
-        $ciphertext = substr($data, self::IV_LENGTH);
-        $plaintext = openssl_decrypt($ciphertext, self::CIPHER, $key, OPENSSL_RAW_DATA, $iv);
+        return self::decrypt_cbc($payload, $key);
+    }
+
+    /**
+     * Расшифровка AES-256-GCM: base64(iv[12] . tag[16] . ciphertext)
+     */
+    private static function decrypt_gcm(string $encoded, string $key): string
+    {
+        $data = base64_decode($encoded, true);
+        $min_length = self::GCM_IV_LENGTH + self::GCM_TAG_LENGTH + 1;
+
+        if ($data === false || strlen($data) < $min_length) {
+            throw new \RuntimeException('Decryption failed: invalid data.');
+        }
+
+        $iv = substr($data, 0, self::GCM_IV_LENGTH);
+        $tag = substr($data, self::GCM_IV_LENGTH, self::GCM_TAG_LENGTH);
+        $ciphertext = substr($data, self::GCM_IV_LENGTH + self::GCM_TAG_LENGTH);
+        $plaintext = openssl_decrypt($ciphertext, self::CIPHER_GCM, $key, OPENSSL_RAW_DATA, $iv, $tag);
 
         if ($plaintext === false) {
-            throw new \RuntimeException('Decryption failed: ' . openssl_error_string());
+            throw new \RuntimeException('Decryption failed: invalid data.');
         }
 
         return $plaintext;
+    }
+
+    /**
+     * Расшифровка AES-256-CBC (legacy): base64(iv[16] . ciphertext)
+     */
+    private static function decrypt_cbc(string $encoded, string $key): string
+    {
+        $data = base64_decode($encoded, true);
+
+        if ($data === false || strlen($data) < self::CBC_IV_LENGTH + 1) {
+            throw new \RuntimeException('Decryption failed: invalid data.');
+        }
+
+        $iv = substr($data, 0, self::CBC_IV_LENGTH);
+        $ciphertext = substr($data, self::CBC_IV_LENGTH);
+        $plaintext = openssl_decrypt($ciphertext, self::CIPHER_CBC, $key, OPENSSL_RAW_DATA, $iv);
+
+        if ($plaintext === false) {
+            throw new \RuntimeException('Decryption failed: invalid data.');
+        }
+
+        return $plaintext;
+    }
+
+    /**
+     * Проверяет, зашифрована ли строка устаревшим форматом v1 (CBC без auth tag)
+     */
+    public static function is_legacy_encrypted(string $encrypted): bool
+    {
+        return strpos($encrypted, self::LEGACY_KEY_VERSION) === 0
+            || (strpos($encrypted, self::KEY_VERSION) !== 0 && !empty($encrypted));
     }
 
     /**

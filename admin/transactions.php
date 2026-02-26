@@ -339,8 +339,8 @@ class Cashback_Transactions_Admin
 
         if (isset($_POST['sum_order'])) {
             $raw_sum = sanitize_text_field(wp_unslash($_POST['sum_order']));
-            if (!is_numeric($raw_sum) || (float) $raw_sum < 0) {
-                wp_send_json_error(['message' => 'Сумма заказа не может быть отрицательной.']);
+            if (!preg_match('/^\d+(\.\d{1,2})?$/', $raw_sum)) {
+                wp_send_json_error(['message' => 'Сумма заказа должна быть положительным числом.']);
                 return;
             }
             $update_data['sum_order'] = $raw_sum;
@@ -349,8 +349,8 @@ class Cashback_Transactions_Admin
 
         if (isset($_POST['comission'])) {
             $raw_comission = sanitize_text_field(wp_unslash($_POST['comission']));
-            if (!is_numeric($raw_comission) || (float) $raw_comission < 0) {
-                wp_send_json_error(['message' => 'Комиссия не может быть отрицательной.']);
+            if (!preg_match('/^\d+(\.\d{1,2})?$/', $raw_comission)) {
+                wp_send_json_error(['message' => 'Комиссия должна быть положительным числом.']);
                 return;
             }
             $update_data['comission'] = $raw_comission;

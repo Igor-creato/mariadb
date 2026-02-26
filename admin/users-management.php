@@ -336,7 +336,7 @@ class Cashback_Users_Management_Admin
             $cashback_rate = sanitize_text_field(wp_unslash($_POST['cashback_rate']));
 
             // Валидация данных
-            if (!is_numeric($cashback_rate) || bccomp($cashback_rate, '0', 2) < 0 || bccomp($cashback_rate, '100', 2) > 0) {
+            if (!preg_match('/^\d+(\.\d{1,2})?$/', $cashback_rate) || bccomp($cashback_rate, '0', 2) < 0 || bccomp($cashback_rate, '100', 2) > 0) {
                 wp_send_json_error(['message' => 'Ставка кэшбэка должна быть числом от 0 до 100.']);
                 return;
             }
@@ -348,7 +348,7 @@ class Cashback_Users_Management_Admin
         if (isset($_POST['min_payout_amount'])) {
             $min_payout_amount = sanitize_text_field(wp_unslash($_POST['min_payout_amount']));
 
-            if (!is_numeric($min_payout_amount) || bccomp($min_payout_amount, '0', 2) < 0) {
+            if (!preg_match('/^\d+(\.\d{1,2})?$/', $min_payout_amount) || bccomp($min_payout_amount, '0', 2) < 0) {
                 wp_send_json_error(['message' => 'Минимальная сумма выплаты должна быть положительным числом.']);
                 return;
             }
@@ -392,6 +392,7 @@ class Cashback_Users_Management_Admin
         $needs_withdrawal_lock = isset($status) && $status === 'banned';
         $withdrawal_lock_name = 'user_withdrawal_' . $user_id;
 
+        $withdrawal_lock_released = false;
         if ($needs_withdrawal_lock) {
             $lock_acquired = $wpdb->get_var($wpdb->prepare(
                 "SELECT GET_LOCK(%s, 10)",
@@ -402,6 +403,14 @@ class Cashback_Users_Management_Admin
                 wp_send_json_error(['message' => 'Пользователь в процессе вывода средств. Попробуйте позже.']);
                 return;
             }
+
+            // Гарантированное освобождение блокировки даже при fatal error
+            register_shutdown_function(function () use ($wpdb, $withdrawal_lock_name, &$withdrawal_lock_released) {
+                if (!$withdrawal_lock_released) {
+                    $withdrawal_lock_released = true;
+                    $wpdb->query($wpdb->prepare("DO RELEASE_LOCK(%s)", $withdrawal_lock_name));
+                }
+            });
         }
 
         // 🔒 НАЧИНАЕМ ТРАНЗАКЦИЮ ДО чтения и обновления профиля
@@ -475,6 +484,7 @@ class Cashback_Users_Management_Admin
 
             // Освобождаем withdrawal lock если захватывали
             if ($needs_withdrawal_lock) {
+                $withdrawal_lock_released = true;
                 $wpdb->query($wpdb->prepare("DO RELEASE_LOCK(%s)", $withdrawal_lock_name));
             }
 
@@ -485,6 +495,7 @@ class Cashback_Users_Management_Admin
 
         // Освобождаем withdrawal lock если захватывали
         if ($needs_withdrawal_lock) {
+            $withdrawal_lock_released = true;
             $wpdb->query($wpdb->prepare("DO RELEASE_LOCK(%s)", $withdrawal_lock_name));
         }
 

@@ -205,7 +205,9 @@ class HistoryPayout
 
     public function ajax_load_page()
     {
-        check_ajax_referer('load_page_payouts_nonce', 'nonce');
+        if (!check_ajax_referer('load_page_payouts_nonce', 'nonce', false)) {
+            wp_send_json_error(esc_html__('Ошибка безопасности: неверный nonce.', 'cashback-plugin'));
+        }
 
         $user_id = get_current_user_id();
         if (!$user_id) {

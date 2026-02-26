@@ -446,6 +446,23 @@ class Cashback_Support_DB
      */
     public static function handle_file_upload(array $file, int $ticket_id, int $message_id, int $user_id)
     {
+        // Defense-in-depth: проверяем что тикет существует и принадлежит пользователю (или это админ)
+        if ($ticket_id <= 0) {
+            return 'Некорректный ID тикета.';
+        }
+        global $wpdb;
+        $tickets_table = $wpdb->prefix . 'cashback_support_tickets';
+        $ticket_owner = $wpdb->get_var($wpdb->prepare(
+            "SELECT user_id FROM `{$tickets_table}` WHERE id = %d",
+            $ticket_id
+        ));
+        if (!$ticket_owner) {
+            return 'Тикет не найден.';
+        }
+        if ((int) $ticket_owner !== $user_id && !current_user_can('manage_options')) {
+            return 'Нет доступа к этому тикету.';
+        }
+
         $validation = self::validate_file($file);
         if ($validation !== true) {
             return $validation;
@@ -540,10 +557,11 @@ class Cashback_Support_DB
             : 'application/octet-stream';
 
         // Санитизация имени файла для заголовка Content-Disposition
-        $safe_filename = str_replace(['"', "\r", "\n"], '', $attachment->file_name);
+        // rawurlencode предотвращает инъекцию через кавычки, переводы строк, точки с запятой, null-байты
+        $safe_filename = sanitize_file_name($attachment->file_name);
 
         header('Content-Type: ' . $content_type);
-        header('Content-Disposition: attachment; filename="' . $safe_filename . '"');
+        header('Content-Disposition: attachment; filename="' . $safe_filename . '"; filename*=UTF-8\'\'' . rawurlencode($safe_filename));
         header('Content-Length: ' . filesize($file_path));
         header('Cache-Control: private, no-cache, no-store, must-revalidate');
         header('X-Content-Type-Options: nosniff');
