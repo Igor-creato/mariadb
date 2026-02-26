@@ -94,23 +94,16 @@ class Cashback_Payout_Methods_Admin
      */
     public function render_overview_page(): void
     {
-        // Проверяем права доступа
-        if (!current_user_can('manage_options')) {
-            wp_die(__('У вас недостаточно прав для просмотра этой страницы.', 'cashback-plugin'));
+        if (class_exists('Cashback_Statistics_Admin')) {
+            Cashback_Statistics_Admin::get_instance()->render_overview_page();
+            return;
         }
-?>
-        <div class="wrap">
-            <h1>Кэшбэк</h1>
-            <p>Управление кэшбэком и способами выплаты</p>
 
-            <div class="cashback-overview-stats">
-                <div class="card">
-                    <h2>Статистика кэшбэка</h2>
-                    <p>Здесь будет отображаться статистика по кэшбэку</p>
-                </div>
-            </div>
-        </div>
-        <?php
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__('У вас недостаточно прав для просмотра этой страницы.', 'cashback-plugin'));
+        }
+        echo '<div class="wrap"><h1>' . esc_html__('Кэшбэк', 'cashback-plugin') . '</h1>';
+        echo '<p>' . esc_html__('Модуль статистики не загружен.', 'cashback-plugin') . '</p></div>';
     }
 
     /**

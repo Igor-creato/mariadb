@@ -346,3 +346,78 @@
 #fraud-settings-message {
     margin-top: 10px;
 }
+
+/* === Страница статистики кэшбэка === */
+
+.cashback-stats-cards {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin: 20px 0;
+}
+
+.cashback-stat-card {
+    background: #fff;
+    border: 1px solid #c3c4c7;
+    border-left: 4px solid #2271b1;
+    padding: 16px 20px;
+    min-width: 200px;
+    flex: 1 1 200px;
+    box-shadow: 0 1px 1px rgba(0, 0, 0, 0.04);
+}
+
+.cashback-stat-card.card-commission {
+    border-left-color: #2271b1;
+}
+
+.cashback-stat-card.card-cashback {
+    border-left-color: #d63638;
+}
+
+.cashback-stat-card.card-profit {
+    border-left-color: #00a32a;
+}
+
+.cashback-stat-card .stat-label {
+    font-size: 12px;
+    color: #646970;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+}
+
+.cashback-stat-card .stat-value {
+    font-size: 24px;
+    font-weight: 600;
+    color: #1d2327;
+}
+
+.cashback-stat-card .stat-value.positive {
+    color: #00a32a;
+}
+
+.cashback-stat-card .stat-value.negative {
+    color: #d63638;
+}
+
+.cashback-stats-section {
+    margin-bottom: 20px;
+}
+
+.cashback-stats-section .postbox .hndle {
+    cursor: default;
+}
+
+.cashback-stats-section .widefat th {
+    font-weight: 600;
+}
+
+@media screen and (max-width: 782px) {
+    .cashback-stats-cards {
+        flex-direction: column;
+    }
+
+    .cashback-stat-card {
+        min-width: auto;
+    }
+}
