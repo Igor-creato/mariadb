@@ -806,14 +806,11 @@ class CashbackWithdrawal
             return;
         }
 
-        // === 2.2. Validate client-generated idempotency key (UUID v4 format) ===
-        $idempotency_key = sanitize_text_field(wp_unslash($_POST['idempotency_key'] ?? ''));
-
-        if (empty($idempotency_key) || !preg_match('/^[a-f0-9\-]{36}$/', $idempotency_key)) {
-            $wpdb->query($wpdb->prepare("DO RELEASE_LOCK(%s)", $lock_name));
-            wp_send_json_error(__('Некорректный запрос. Обновите страницу.', 'cashback-plugin'));
-            return;
-        }
+        // === 2.2. Server-generated idempotency key ===
+        // Ключ генерируется на сервере для исключения манипуляции клиентом.
+        // Клиентский UUID (если передан) используется только для логирования.
+        $client_request_id = sanitize_text_field(wp_unslash($_POST['idempotency_key'] ?? ''));
+        $idempotency_key = wp_generate_uuid4();
 
         // === 3. Check if payout method and account are filled ===
         $payout_method = $this->get_payout_method($user_id);
@@ -992,7 +989,7 @@ class CashbackWithdrawal
 
             $wpdb->query('COMMIT');
 
-            // Инкремент счетчика rate limiting после успешного вывода
+            // Инкремент счетчика rate limiting ПЕРЕД освобождением lock для атомарности
             $rate_count = (int) get_transient($rate_key);
             set_transient($rate_key, $rate_count + 1, DAY_IN_SECONDS);
 

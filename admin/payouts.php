@@ -1370,6 +1370,15 @@ class Cashback_Payouts_Admin
             return;
         }
 
+        // Rate limiting: max 20 расшифровок в минуту для защиты от массового экспорта
+        $rate_key = 'cb_decrypt_rate_' . get_current_user_id();
+        $rate_count = (int) get_transient($rate_key);
+        if ($rate_count >= 20) {
+            wp_send_json_error(['message' => __('Слишком много запросов на расшифровку. Подождите минуту.', 'cashback-plugin')]);
+            return;
+        }
+        set_transient($rate_key, $rate_count + 1, MINUTE_IN_SECONDS);
+
         global $wpdb;
         $payout_id = intval($_POST['payout_id'] ?? 0);
 

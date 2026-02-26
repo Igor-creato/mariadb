@@ -99,8 +99,9 @@ class Cashback_Transactions_Admin
             $filter_status = '';
         }
 
-        // Pagination
-        $current_page = max(1, absint($_GET['paged'] ?? 1));
+        // Pagination (с ограничением верхней границы для защиты от DoS)
+        $max_allowed_pages = 5000;
+        $current_page = max(1, min(absint($_GET['paged'] ?? 1), $max_allowed_pages));
         $offset = ($current_page - 1) * $this->per_page;
 
         // Build WHERE
@@ -318,28 +319,16 @@ class Cashback_Transactions_Admin
         $tab = sanitize_text_field(wp_unslash($_POST['tab'] ?? 'registered'));
         $table_name = ($tab === 'unregistered') ? $this->unregistered_table : $this->registered_table;
 
-        // Pre-check current status
-        $current = $wpdb->get_row($wpdb->prepare(
-            "SELECT order_status FROM {$table_name} WHERE id = %d",
-            $transaction_id
-        ), ARRAY_A);
-
-        if (!$current) {
-            wp_send_json_error(['message' => 'Транзакция не найдена.']);
-            return;
-        }
-
-        if ($current['order_status'] === 'balance') {
-            wp_send_json_error(['message' => 'Транзакция с финальным статусом не может быть изменена.']);
-            return;
-        }
-
+        // === Валидация входных данных до начала транзакции ===
         $update_data = [];
         $update_formats = [];
 
         if (isset($_POST['order_status'])) {
             $new_status = sanitize_text_field(wp_unslash($_POST['order_status']));
-            $allowed_statuses = ['waiting', 'completed', 'declined', 'hold', 'balance'];
+            // 'balance' исключён: перевод в balance происходит только через MySQL Event
+            // cashback_ev_confirmed_cashback, который также начисляет available_balance.
+            // Ручная установка balance без начисления баланса нарушает целостность данных.
+            $allowed_statuses = ['waiting', 'completed', 'declined', 'hold'];
             if (!in_array($new_status, $allowed_statuses, true)) {
                 wp_send_json_error(['message' => 'Недопустимый статус.']);
                 return;
@@ -349,23 +338,23 @@ class Cashback_Transactions_Admin
         }
 
         if (isset($_POST['sum_order'])) {
-            $sum_order = floatval($_POST['sum_order']);
-            if ($sum_order < 0) {
+            $raw_sum = sanitize_text_field(wp_unslash($_POST['sum_order']));
+            if (!is_numeric($raw_sum) || (float) $raw_sum < 0) {
                 wp_send_json_error(['message' => 'Сумма заказа не может быть отрицательной.']);
                 return;
             }
-            $update_data['sum_order'] = $sum_order;
-            $update_formats[] = '%f';
+            $update_data['sum_order'] = $raw_sum;
+            $update_formats[] = '%s';
         }
 
         if (isset($_POST['comission'])) {
-            $comission = floatval($_POST['comission']);
-            if ($comission < 0) {
+            $raw_comission = sanitize_text_field(wp_unslash($_POST['comission']));
+            if (!is_numeric($raw_comission) || (float) $raw_comission < 0) {
                 wp_send_json_error(['message' => 'Комиссия не может быть отрицательной.']);
                 return;
             }
-            $update_data['comission'] = $comission;
-            $update_formats[] = '%f';
+            $update_data['comission'] = $raw_comission;
+            $update_formats[] = '%s';
         }
 
         if (empty($update_data)) {
@@ -373,20 +362,72 @@ class Cashback_Transactions_Admin
             return;
         }
 
-        $result = $wpdb->update(
-            $table_name,
-            $update_data,
-            ['id' => $transaction_id],
-            $update_formats,
-            ['%d']
-        );
+        // === Атомарное обновление с FOR UPDATE для защиты от race conditions ===
+        $wpdb->query('START TRANSACTION');
 
-        if ($result === false) {
-            $db_error = $wpdb->last_error;
-            wp_send_json_error([
-                'message' => 'Ошибка при обновлении транзакции.' .
-                    (!empty($db_error) ? ' ' . $db_error : '')
-            ]);
+        try {
+            // Блокируем строку для предотвращения конкурентного обновления (MySQL Event, sync)
+            $current = $wpdb->get_row($wpdb->prepare(
+                "SELECT id, user_id, order_status, sum_order, comission, cashback FROM {$table_name} WHERE id = %d FOR UPDATE",
+                $transaction_id
+            ), ARRAY_A);
+
+            if (!$current) {
+                $wpdb->query('ROLLBACK');
+                wp_send_json_error(['message' => 'Транзакция не найдена.']);
+                return;
+            }
+
+            if ($current['order_status'] === 'balance') {
+                $wpdb->query('ROLLBACK');
+                wp_send_json_error(['message' => 'Транзакция с финальным статусом не может быть изменена.']);
+                return;
+            }
+
+            $result = $wpdb->update(
+                $table_name,
+                $update_data,
+                ['id' => $transaction_id],
+                $update_formats,
+                ['%d']
+            );
+
+            if ($result === false) {
+                $db_error = $wpdb->last_error;
+                $wpdb->query('ROLLBACK');
+                error_log(sprintf('[Cashback Transactions] Update failed for ID %d: %s', $transaction_id, $db_error));
+                wp_send_json_error(['message' => 'Ошибка при обновлении транзакции.']);
+                return;
+            }
+
+            $wpdb->query('COMMIT');
+
+            // Аудит-лог: фиксируем ручное изменение транзакции
+            if (class_exists('Cashback_Encryption')) {
+                $changes = [];
+                foreach ($update_data as $field => $new_value) {
+                    $old_value = $current[$field] ?? '';
+                    if ((string) $old_value !== (string) $new_value) {
+                        $changes[$field] = ['old' => $old_value, 'new' => $new_value];
+                    }
+                }
+                if (!empty($changes)) {
+                    Cashback_Encryption::write_audit_log(
+                        'transaction_manual_edit',
+                        get_current_user_id(),
+                        ($tab === 'unregistered') ? 'unregistered_transaction' : 'transaction',
+                        $transaction_id,
+                        [
+                            'changes' => $changes,
+                            'user_id' => $current['user_id'],
+                        ]
+                    );
+                }
+            }
+        } catch (\Throwable $e) {
+            $wpdb->query('ROLLBACK');
+            error_log(sprintf('[Cashback Transactions] Exception updating ID %d: %s', $transaction_id, $e->getMessage()));
+            wp_send_json_error(['message' => 'Ошибка при обновлении транзакции.']);
             return;
         }
 
