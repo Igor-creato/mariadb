@@ -293,6 +293,7 @@ class CashbackPlugin
         $this->require_file('admin/bank-management.php');
         $this->require_file('admin/health-check.php');
         $this->require_file('admin/click-log.php');
+        $this->require_file('admin/transactions.php');
 
         // Модуль партнеров
         $this->require_file('partner/partner-management.php');
