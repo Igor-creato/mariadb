@@ -75,12 +75,15 @@ class Cashback_API_Cron
             foreach ($results as $network => $result) {
                 if ($result['success']) {
                     error_log(sprintf(
-                        'Cashback API Cron [%s]: total=%d, updated=%d, skipped=%d, not_found=%d (%.2fs)',
+                        'Cashback API Cron [%s]: total=%d, updated=%d, inserted=%d, skipped=%d, not_found=%d, insert_errors=%d, declined_stale=%d (%.2fs)',
                         $network,
                         $result['total'],
                         $result['updated'],
+                        $result['inserted'] ?? 0,
                         $result['skipped'],
                         $result['not_found'],
+                        $result['insert_errors'] ?? 0,
+                        $result['declined_stale'] ?? 0,
                         $elapsed
                     ));
                 } else {

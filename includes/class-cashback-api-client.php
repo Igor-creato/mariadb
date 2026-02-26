@@ -459,6 +459,64 @@ class Cashback_API_Client
     }
 
     // =========================================================================
+    // Date parsing
+    // =========================================================================
+
+    /**
+     * Парсинг даты из API в MySQL DATETIME формат
+     *
+     * Поддерживает: ISO 8601, MySQL, русский dd.mm.YYYY, Unix timestamps.
+     *
+     * @param string $date_str Строка даты из API
+     * @return string|null MySQL DATETIME (Y-m-d H:i:s) или null
+     */
+    protected static function parse_api_date(string $date_str): ?string
+    {
+        $date_str = trim($date_str);
+        if ($date_str === '') {
+            return null;
+        }
+
+        // Unix timestamp (10 цифр = секунды, 13 цифр = миллисекунды)
+        if (preg_match('/^\d{10,13}$/', $date_str)) {
+            $timestamp = (int) $date_str;
+            if (strlen($date_str) === 13) {
+                $timestamp = (int) ($timestamp / 1000);
+            }
+            $dt = new DateTime();
+            $dt->setTimestamp($timestamp);
+            $dt->setTimezone(new DateTimeZone(wp_timezone_string()));
+            return $dt->format('Y-m-d H:i:s');
+        }
+
+        // ISO 8601 с T-разделителем: "2024-01-15T10:30:00"
+        $date_str = str_replace('T', ' ', $date_str);
+
+        // Убираем таймзону: "+03:00", " 03:00" (+ → пробел после URL encoding), "Z"
+        $date_str = preg_replace('/[+-]\d{2}:\d{2}$/', '', $date_str);
+        $date_str = preg_replace('/\s+\d{2}:\d{2}$/', '', $date_str);
+        $date_str = rtrim($date_str, 'Z');
+
+        $formats = [
+            'Y-m-d H:i:s',  // 2024-01-15 10:30:00
+            'Y-m-d H:i',    // 2024-01-15 10:30
+            'Y-m-d',         // 2024-01-15
+            'd.m.Y H:i:s',  // 15.01.2024 10:30:00
+            'd.m.Y H:i',    // 15.01.2024 10:30
+            'd.m.Y',         // 15.01.2024
+        ];
+
+        foreach ($formats as $format) {
+            $dt = DateTime::createFromFormat($format, $date_str);
+            if ($dt !== false) {
+                return $dt->format('Y-m-d H:i:s');
+            }
+        }
+
+        return null;
+    }
+
+    // =========================================================================
     // Validation logic
     // =========================================================================
 
@@ -1229,13 +1287,26 @@ class Cashback_API_Client
             $api_actions = $api_result['actions'];
 
             if (empty($api_actions)) {
-                $results[$slug] = ['success' => true, 'total' => 0, 'updated' => 0, 'skipped' => 0, 'not_found' => 0];
+                // Проверяем stale транзакции даже если нет свежих обновлений в API
+                $decline_result = $this->decline_stale_missing_transactions($config, $slug);
+                $results[$slug] = [
+                    'success'               => true,
+                    'total'                 => 0,
+                    'updated'               => 0,
+                    'skipped'               => 0,
+                    'not_found'             => 0,
+                    'inserted'              => 0,
+                    'insert_errors'         => 0,
+                    'declined_stale'        => ($decline_result['declined_registered'] + $decline_result['declined_unregistered']),
+                    'declined_stale_detail' => $decline_result,
+                ];
                 update_option("cashback_last_sync_{$slug}", (new DateTime())->format('Y-m-d H:i:s'));
                 continue;
             }
 
             // ─── Загружаем ВСЕ нужные локальные транзакции одним запросом ───
-            $click_field = $config['api_click_field'] ?? 'subid1';
+            $click_field  = $config['api_click_field'] ?? 'subid1';
+            $network_name = $config['name'] ?? $slug;
 
             // Собираем click_id и order_id из API-ответа
             $api_click_ids = [];
@@ -1251,17 +1322,18 @@ class Cashback_API_Client
                 }
             }
 
-            // Единый запрос: все транзакции по click_id OR order_number
+            // ─── Batch-запросы: cashback_transactions ───
             $local_map_by_click = [];
             $local_map_by_order = [];
 
             if (!empty($api_click_ids)) {
                 $placeholders = implode(',', array_fill(0, count($api_click_ids), '%s'));
-                $query_args = array_merge($api_click_ids, [$slug]);
+                $query_args = array_merge($api_click_ids, [$slug, $network_name]);
                 $rows = $wpdb->get_results($wpdb->prepare(
                     "SELECT id, click_id, order_number, order_status, comission, sum_order
                      FROM {$this->transactions_table}
-                     WHERE click_id IN ({$placeholders}) AND partner = %s",
+                     WHERE click_id IN ({$placeholders})
+                       AND (LOWER(partner) = LOWER(%s) OR LOWER(partner) = LOWER(%s))",
                     ...$query_args
                 ), ARRAY_A);
 
@@ -1272,11 +1344,12 @@ class Cashback_API_Client
 
             if (!empty($api_order_ids)) {
                 $placeholders = implode(',', array_fill(0, count($api_order_ids), '%s'));
-                $query_args = array_merge($api_order_ids, [$slug]);
+                $query_args = array_merge($api_order_ids, [$slug, $network_name]);
                 $rows = $wpdb->get_results($wpdb->prepare(
                     "SELECT id, click_id, order_number, order_status, comission, sum_order
                      FROM {$this->transactions_table}
-                     WHERE order_number IN ({$placeholders}) AND partner = %s",
+                     WHERE order_number IN ({$placeholders})
+                       AND (LOWER(partner) = LOWER(%s) OR LOWER(partner) = LOWER(%s))",
                     ...$query_args
                 ), ARRAY_A);
 
@@ -1287,10 +1360,82 @@ class Cashback_API_Client
                 }
             }
 
-            $status_map = $config['status_map'];
-            $updated    = 0;
-            $skipped    = 0;
-            $not_found  = 0;
+            // ─── Batch-запросы: cashback_unregistered_transactions ───
+            $unreg_map_by_click = [];
+            $unreg_map_by_order = [];
+
+            if (!empty($api_click_ids)) {
+                $placeholders = implode(',', array_fill(0, count($api_click_ids), '%s'));
+                $query_args = array_merge($api_click_ids, [$slug, $network_name]);
+                $rows = $wpdb->get_results($wpdb->prepare(
+                    "SELECT id, click_id, order_number, order_status, comission, sum_order, user_id
+                     FROM {$this->unregistered_table}
+                     WHERE click_id IN ({$placeholders})
+                       AND (LOWER(partner) = LOWER(%s) OR LOWER(partner) = LOWER(%s))",
+                    ...$query_args
+                ), ARRAY_A);
+
+                foreach ($rows as $row) {
+                    $unreg_map_by_click[$row['click_id']] = $row;
+                }
+            }
+
+            if (!empty($api_order_ids)) {
+                $placeholders = implode(',', array_fill(0, count($api_order_ids), '%s'));
+                $query_args = array_merge($api_order_ids, [$slug, $network_name]);
+                $rows = $wpdb->get_results($wpdb->prepare(
+                    "SELECT id, click_id, order_number, order_status, comission, sum_order, user_id
+                     FROM {$this->unregistered_table}
+                     WHERE order_number IN ({$placeholders})
+                       AND (LOWER(partner) = LOWER(%s) OR LOWER(partner) = LOWER(%s))",
+                    ...$query_args
+                ), ARRAY_A);
+
+                foreach ($rows as $row) {
+                    if (!isset($unreg_map_by_order[$row['order_number']])) {
+                        $unreg_map_by_order[$row['order_number']] = $row;
+                    }
+                }
+            }
+
+            // ─── Batch-проверка существования пользователей для INSERT ───
+            $user_field = $config['api_user_field'] ?? 'subid';
+            $potential_user_ids = [];
+
+            foreach ($api_actions as $action) {
+                $cid = (string) ($action[$click_field] ?? '');
+                $oid = (string) ($action['order_id'] ?? '');
+
+                // Проверяем, найдётся ли action в одной из таблиц
+                $would_match = ($cid !== '' && (isset($local_map_by_click[$cid]) || isset($unreg_map_by_click[$cid])))
+                    || ($oid !== '' && (isset($local_map_by_order[$oid]) || isset($unreg_map_by_order[$oid])));
+
+                if (!$would_match) {
+                    $uid = (string) ($action[$user_field] ?? '');
+                    if (is_numeric($uid) && (int) $uid > 0) {
+                        $potential_user_ids[] = (int) $uid;
+                    }
+                }
+            }
+
+            $existing_user_ids = [];
+            if (!empty($potential_user_ids)) {
+                $potential_user_ids = array_unique($potential_user_ids);
+                $placeholders = implode(',', array_fill(0, count($potential_user_ids), '%d'));
+                $rows = $wpdb->get_col($wpdb->prepare(
+                    "SELECT ID FROM {$wpdb->users} WHERE ID IN ({$placeholders})",
+                    ...$potential_user_ids
+                ));
+                $existing_user_ids = array_flip(array_map('intval', $rows));
+            }
+
+            // ─── Обработка actions ───
+            $status_map     = $config['status_map'];
+            $updated        = 0;
+            $skipped        = 0;
+            $not_found      = 0;
+            $inserted       = 0;
+            $insert_errors  = 0;
 
             foreach ($api_actions as $action) {
                 $api_click_id  = (string) ($action[$click_field] ?? '');
@@ -1298,7 +1443,7 @@ class Cashback_API_Client
                 $mapped_status = $status_map[$api_status] ?? 'waiting';
                 $api_payment   = (float) ($action['payment'] ?? 0);
 
-                // ─── Матчинг ───
+                // ─── Матчинг: cashback_transactions ───
                 $local = null;
 
                 // 1. Основной: click_id
@@ -1314,82 +1459,636 @@ class Cashback_API_Client
                     }
                 }
 
-                if (!$local) {
-                    $not_found++;
+                // ─── Если найдено в cashback_transactions — обновляем ───
+                if ($local) {
+                    $this->sync_update_local($wpdb, $this->transactions_table, $local, $mapped_status, $api_payment, $slug, $api_click_id, $action, $updated, $skipped);
                     continue;
                 }
 
-                $local_status = $local['order_status'];
+                // ─── Матчинг: cashback_unregistered_transactions ───
+                $unreg = null;
 
-                // Защита: balance — финальный, не трогаем
-                if ($local_status === 'balance') {
-                    $skipped++;
+                if ($api_click_id !== '' && isset($unreg_map_by_click[$api_click_id])) {
+                    $unreg = $unreg_map_by_click[$api_click_id];
+                }
+
+                if (!$unreg) {
+                    $order_id = (string) ($action['order_id'] ?? '');
+                    if ($order_id !== '' && isset($unreg_map_by_order[$order_id])) {
+                        $unreg = $unreg_map_by_order[$order_id];
+                    }
+                }
+
+                // ─── Если найдено в unregistered — обновляем ───
+                if ($unreg) {
+                    $this->sync_update_local($wpdb, $this->unregistered_table, $unreg, $mapped_status, $api_payment, $slug, $api_click_id, $action, $updated, $skipped);
                     continue;
                 }
 
-                // Защита от понижения: completed не откатываем в waiting
-                if ($local_status === 'completed' && $mapped_status === 'waiting') {
-                    $skipped++;
-                    continue;
-                }
+                // ─── Не найдено нигде: INSERT новой транзакции ───
+                $insert_result = $this->insert_missing_transaction($action, $config, $slug, $wpdb, $existing_user_ids);
 
-                // Обновляем если статус или сумма изменились
-                $status_changed = ($local_status !== $mapped_status);
-                $commission_changed = abs($api_payment - (float) $local['comission']) >= 0.02;
+                if ($insert_result['success']) {
+                    $inserted++;
 
-                if (!$status_changed && !$commission_changed) {
-                    $skipped++;
-                    continue;
-                }
-
-                $update_data = [];
-                $update_formats = [];
-
-                if ($status_changed) {
-                    $update_data['order_status'] = $mapped_status;
-                    $update_formats[] = '%s';
-                }
-
-                if ($commission_changed) {
-                    $update_data['comission'] = $api_payment;
-                    $update_formats[] = '%s';
-                }
-
-                $wpdb->update(
-                    $this->transactions_table,
-                    $update_data,
-                    ['id' => $local['id']],
-                    $update_formats,
-                    ['%d']
-                );
-
-                if (!$wpdb->last_error) {
-                    $updated++;
-
-                    $this->log_sync_event(
+                    $this->log_sync_insert(
                         $slug,
-                        (int) $local['id'],
-                        $api_click_id ?: ($action['action_id'] ?? ''),
-                        $local_status,
+                        $insert_result['insert_id'],
+                        (string) ($action['action_id'] ?? ''),
                         $mapped_status,
-                        $api_payment
+                        $api_payment,
+                        $insert_result['table_type']
                     );
+                } else {
+                    // Дубликат — не ошибка, транзакция уже есть
+                    if (strpos($insert_result['error'], 'Duplicate') !== false) {
+                        $skipped++;
+                    } else {
+                        $insert_errors++;
+                        if (defined('WP_DEBUG') && WP_DEBUG) {
+                            error_log(sprintf(
+                                '[Cashback Sync] Insert failed for action_id=%s: %s',
+                                $action['action_id'] ?? 'unknown',
+                                $insert_result['error']
+                            ));
+                        }
+                    }
                 }
             }
+
+            // ─── Auto-decline stale транзакций, отсутствующих в API ───
+            $decline_result = $this->decline_stale_missing_transactions($config, $slug);
 
             // Сохраняем время последней синхронизации
             update_option("cashback_last_sync_{$slug}", (new DateTime())->format('Y-m-d H:i:s'));
 
             $results[$slug] = [
-                'success'   => true,
-                'total'     => count($api_actions),
-                'updated'   => $updated,
-                'skipped'   => $skipped,
-                'not_found' => $not_found,
+                'success'               => true,
+                'total'                 => count($api_actions),
+                'updated'               => $updated,
+                'skipped'               => $skipped,
+                'not_found'             => $not_found,
+                'inserted'              => $inserted,
+                'insert_errors'         => $insert_errors,
+                'declined_stale'        => ($decline_result['declined_registered'] + $decline_result['declined_unregistered']),
+                'declined_stale_detail' => $decline_result,
             ];
         }
 
         return $results;
+    }
+
+    // =========================================================================
+    // Background sync — helper methods
+    // =========================================================================
+
+    /**
+     * Обновить локальную транзакцию при синхронизации
+     *
+     * Общая логика для cashback_transactions и cashback_unregistered_transactions.
+     * Защиты: skip balance, skip downgrade completed → waiting.
+     *
+     * @param wpdb   $wpdb
+     * @param string $table        Таблица для UPDATE
+     * @param array  $local        Локальная запись (id, order_status, comission)
+     * @param string $mapped_status Статус из API после маппинга
+     * @param float  $api_payment  Комиссия из API
+     * @param string $slug         Slug сети
+     * @param string $api_click_id Click ID из API
+     * @param array  $action       Полный action из API
+     * @param int    &$updated     Счётчик обновлённых (по ссылке)
+     * @param int    &$skipped     Счётчик пропущенных (по ссылке)
+     */
+    private function sync_update_local(
+        \wpdb $wpdb,
+        string $table,
+        array $local,
+        string $mapped_status,
+        float $api_payment,
+        string $slug,
+        string $api_click_id,
+        array $action,
+        int &$updated,
+        int &$skipped
+    ): void {
+        $local_status = $local['order_status'];
+
+        // Защита: balance — финальный, не трогаем
+        if ($local_status === 'balance') {
+            $skipped++;
+            return;
+        }
+
+        // Защита от понижения: completed не откатываем в waiting
+        if ($local_status === 'completed' && $mapped_status === 'waiting') {
+            $skipped++;
+            return;
+        }
+
+        // Обновляем если статус или сумма изменились
+        $status_changed     = ($local_status !== $mapped_status);
+        $commission_changed = abs($api_payment - (float) $local['comission']) >= 0.02;
+
+        if (!$status_changed && !$commission_changed) {
+            $skipped++;
+            return;
+        }
+
+        $update_data    = [];
+        $update_formats = [];
+
+        if ($status_changed) {
+            $update_data['order_status'] = $mapped_status;
+            $update_formats[]            = '%s';
+        }
+
+        if ($commission_changed) {
+            $update_data['comission'] = $api_payment;
+            $update_formats[]         = '%s';
+        }
+
+        $wpdb->update(
+            $table,
+            $update_data,
+            ['id' => $local['id']],
+            $update_formats,
+            ['%d']
+        );
+
+        if (!$wpdb->last_error) {
+            $updated++;
+
+            $this->log_sync_event(
+                $slug,
+                (int) $local['id'],
+                $api_click_id ?: ($action['action_id'] ?? ''),
+                $local_status,
+                $mapped_status,
+                $api_payment
+            );
+        }
+    }
+
+    /**
+     * Вставить отсутствующую транзакцию из API в локальную БД
+     *
+     * Определяет user_id из action, выбирает таблицу (registered / unregistered),
+     * проверяет существование пользователя, формирует данные и вставляет.
+     * Триггеры calculate_cashback_before_insert автоматически рассчитают cashback.
+     *
+     * @param array  $action             API action данные
+     * @param array  $config             Конфигурация сети
+     * @param string $slug               Slug сети
+     * @param wpdb   $wpdb              WordPress DB
+     * @param array  $existing_user_ids  Массив существующих user_id (из batch-проверки)
+     * @return array ['success' => bool, 'insert_id' => int, 'table_type' => string, 'error' => string]
+     */
+    private function insert_missing_transaction(
+        array $action,
+        array $config,
+        string $slug,
+        \wpdb $wpdb,
+        array $existing_user_ids
+    ): array {
+        $user_field   = $config['api_user_field'] ?? 'subid';
+        $click_field  = $config['api_click_field'] ?? 'subid1';
+        $status_map   = $config['status_map'] ?? [];
+        $network_name = $config['name'] ?? $slug;
+
+        // 1. Определяем user_id
+        $raw_user_id = (string) ($action[$user_field] ?? '');
+
+        $is_unregistered = !is_numeric($raw_user_id)
+            || (int) $raw_user_id === 0
+            || strtolower($raw_user_id) === 'unregistered';
+
+        // 2. Для зарегистрированных — проверяем существование WP-пользователя
+        if (!$is_unregistered) {
+            if (!isset($existing_user_ids[(int) $raw_user_id])) {
+                $is_unregistered = true;
+            }
+        }
+
+        // 3. Целевая таблица
+        $table      = $is_unregistered ? $this->unregistered_table : $this->transactions_table;
+        $table_type = $is_unregistered ? 'unregistered' : 'transactions';
+
+        // 4. Маппинг статуса
+        $api_status    = strtolower($action['status'] ?? 'pending');
+        $mapped_status = $status_map[$api_status] ?? 'waiting';
+
+        // 5. Парсим даты
+        $action_date_mysql = self::parse_api_date((string) ($action['action_date'] ?? ''));
+        $click_time_raw    = (string) ($action['click_time'] ?? $action['click_date'] ?? $action['closing_date'] ?? '');
+        $click_time_mysql  = self::parse_api_date($click_time_raw);
+
+        // 6. Извлекаем поля
+        $action_id   = (string) ($action['action_id'] ?? '');
+        $click_id    = (string) ($action[$click_field] ?? '');
+        $order_id    = (string) ($action['order_id'] ?? '');
+        $payment     = (float) ($action['payment'] ?? 0);
+        $cart        = (float) ($action['cart'] ?? 0);
+        $campaign    = (string) ($action['advcampaign_name'] ?? '');
+        $campaign_id = (string) ($action['advcampaign_id'] ?? '');
+        $currency    = (string) ($action['currency'] ?? 'RUB');
+        $action_type = (string) ($action['action_type'] ?? '');
+        $website_id  = (string) ($action['website_id'] ?? $action['website'] ?? ($config['api_website_id'] ?? ''));
+
+        // 7. Валидация валюты (ISO 4217)
+        if (!preg_match('/^[A-Z]{3}$/', $currency)) {
+            $currency = 'RUB';
+        }
+
+        // 8. action_id обязателен (часть UNIQUE KEY)
+        if ($action_id === '') {
+            return ['success' => false, 'insert_id' => 0, 'table_type' => $table_type, 'error' => 'Missing action_id'];
+        }
+
+        // 9. Ключ идемпотентности
+        $idempotency_key = hash('sha256', 'cron_sync_' . $action_id . '_' . $slug . '_' . bin2hex(random_bytes(16)));
+
+        // 10. Формируем данные для INSERT
+        $data = [
+            'user_id'         => $is_unregistered ? $raw_user_id : (int) $raw_user_id,
+            'uniq_id'         => $action_id,
+            'order_number'    => $order_id,
+            'partner'         => $network_name,
+            'comission'       => $payment,
+            'sum_order'       => $cart,
+            'order_status'    => $mapped_status,
+            'offer_id'        => $campaign_id !== '' ? (int) $campaign_id : null,
+            'offer_name'      => $campaign,
+            'currency'        => $currency,
+            'action_date'     => $action_date_mysql,
+            'click_time'      => $click_time_mysql,
+            'click_id'        => $click_id !== '' ? $click_id : null,
+            'website_id'      => $website_id !== '' ? (int) $website_id : null,
+            'action_type'     => $action_type !== '' ? $action_type : null,
+            'api_verified'    => 1,
+            'idempotency_key' => $idempotency_key,
+        ];
+
+        $formats = [
+            $is_unregistered ? '%s' : '%d',  // user_id
+            '%s',  // uniq_id
+            '%s',  // order_number
+            '%s',  // partner
+            '%f',  // comission
+            '%f',  // sum_order
+            '%s',  // order_status
+            '%d',  // offer_id
+            '%s',  // offer_name
+            '%s',  // currency
+            '%s',  // action_date
+            '%s',  // click_time
+            '%s',  // click_id
+            '%d',  // website_id
+            '%s',  // action_type
+            '%d',  // api_verified
+            '%s',  // idempotency_key
+        ];
+
+        // 11. Убираем NULL-значения (аналогично ajax_add_transaction)
+        $clean_data    = [];
+        $clean_formats = [];
+        $i = 0;
+        foreach ($data as $key => $value) {
+            if ($value !== null) {
+                $clean_data[$key] = $value;
+                $clean_formats[]  = $formats[$i];
+            }
+            $i++;
+        }
+
+        // 12. INSERT (UNIQUE KEY на uniq_id+partner защищает от дубликатов)
+        $result = $wpdb->insert($table, $clean_data, $clean_formats);
+
+        if ($result === false || $wpdb->last_error) {
+            $error = $wpdb->last_error;
+            return ['success' => false, 'insert_id' => 0, 'table_type' => $table_type, 'error' => $error ?: 'Unknown insert error'];
+        }
+
+        return ['success' => true, 'insert_id' => (int) $wpdb->insert_id, 'table_type' => $table_type, 'error' => ''];
+    }
+
+    /**
+     * Залогировать событие INSERT в cashback_sync_log
+     *
+     * @param string $network_slug
+     * @param int    $transaction_id ID вставленной записи
+     * @param string $action_id     ID действия из API
+     * @param string $status        Статус вставленной транзакции
+     * @param float  $api_payment   Комиссия из API
+     * @param string $table_type    'transactions' или 'unregistered'
+     */
+    private function log_sync_insert(
+        string $network_slug,
+        int $transaction_id,
+        string $action_id,
+        string $status,
+        float $api_payment,
+        string $table_type
+    ): void {
+        global $wpdb;
+
+        $wpdb->insert($this->sync_log_table, [
+            'network_slug'   => $network_slug,
+            'transaction_id' => $transaction_id,
+            'action_id'      => $action_id,
+            'old_status'     => 'not_found',
+            'new_status'     => $status,
+            'api_payment'    => $api_payment,
+            'sync_type'      => 'cron',
+            'synced_at'      => current_time('mysql'),
+        ]);
+    }
+
+    // =========================================================================
+    // Auto-decline stale transactions missing from API
+    // =========================================================================
+
+    /**
+     * Автоматическое отклонение устаревших транзакций, отсутствующих в API
+     *
+     * Находит транзакции со статусами 'waiting'/'hold', у которых:
+     *   - updated_at старше 5 дней
+     *   - есть click_id (для сверки с API)
+     *   - partner совпадает с сетью
+     * Затем запрашивает API за полный диапазон дат (без status_updated фильтра)
+     * и отклоняет те, что не найдены в API.
+     *
+     * Безопасность:
+     *   - НИКОГДА не трогает 'balance' (финальный, защищён триггером БД)
+     *   - Проверяет 'waiting', 'hold' и 'completed' с updated_at > 5 дней
+     *   - Каждое изменение логируется в cashback_sync_log с sync_type='auto_decline'
+     *
+     * @param array  $config Конфигурация сети (из get_network_config)
+     * @param string $slug   Slug сети
+     * @return array ['declined_registered' => int, 'declined_unregistered' => int, 'checked' => int, 'error' => string|null]
+     */
+    public function decline_stale_missing_transactions(array $config, string $slug): array
+    {
+        global $wpdb;
+
+        $result = [
+            'declined_registered'   => 0,
+            'declined_unregistered' => 0,
+            'checked'               => 0,
+            'error'                 => null,
+        ];
+
+        if (empty($config['credentials'])) {
+            return $result;
+        }
+
+        $network_name   = $config['name'] ?? $slug;
+        $stale_interval = 5; // дней
+
+        // ─── 1. Найти устаревшие транзакции в обеих таблицах ───
+
+        $stale_registered = $wpdb->get_results($wpdb->prepare(
+            "SELECT id, click_id, order_number, order_status, comission, created_at, updated_at
+             FROM {$this->transactions_table}
+             WHERE order_status IN ('waiting', 'hold', 'completed')
+               AND click_id IS NOT NULL AND click_id != ''
+               AND updated_at < DATE_SUB(NOW(), INTERVAL %d DAY)
+               AND (LOWER(partner) = LOWER(%s) OR LOWER(partner) = LOWER(%s))
+             ORDER BY created_at ASC",
+            $stale_interval,
+            $slug,
+            $network_name
+        ), ARRAY_A);
+
+        $stale_unregistered = $wpdb->get_results($wpdb->prepare(
+            "SELECT id, click_id, order_number, order_status, comission, created_at, updated_at
+             FROM {$this->unregistered_table}
+             WHERE order_status IN ('waiting', 'hold', 'completed')
+               AND click_id IS NOT NULL AND click_id != ''
+               AND updated_at < DATE_SUB(NOW(), INTERVAL %d DAY)
+               AND (LOWER(partner) = LOWER(%s) OR LOWER(partner) = LOWER(%s))
+             ORDER BY created_at ASC",
+            $stale_interval,
+            $slug,
+            $network_name
+        ), ARRAY_A);
+
+        $all_stale = array_merge($stale_registered, $stale_unregistered);
+
+        if (empty($all_stale)) {
+            return $result;
+        }
+
+        $result['checked'] = count($all_stale);
+
+        // ─── 2. Определить диапазон дат для API-запроса ───
+
+        $earliest_date = null;
+        foreach ($all_stale as $tx) {
+            $created = $tx['created_at'];
+            if ($earliest_date === null || $created < $earliest_date) {
+                $earliest_date = $created;
+            }
+        }
+
+        $dt_start = new DateTime($earliest_date);
+        $dt_start->modify('-1 day');
+        $date_start = $dt_start->format('d.m.Y');
+        $date_end   = (new DateTime())->format('d.m.Y');
+
+        // ─── 3. Запросить API (полный диапазон, без status_updated фильтра) ───
+
+        $api_params = [
+            'date_start' => $date_start,
+            'date_end'   => $date_end,
+        ];
+
+        if (!empty($config['api_website_id'])) {
+            $api_params['website'] = $config['api_website_id'];
+        }
+
+        $max_pages  = 20;
+        $page_limit = 500;
+        $api_result = $this->fetch_all_admitad_actions(
+            $config['credentials'],
+            $api_params,
+            $max_pages,
+            $config
+        );
+
+        if (!$api_result['success']) {
+            $result['error'] = 'API error during stale check: ' . $api_result['error'];
+            error_log('[Cashback Auto-Decline] ' . $result['error']);
+            return $result;
+        }
+
+        $api_actions_list = $api_result['actions'];
+
+        // ─── 4. Построить индекс API actions по click_id и order_id ───
+
+        $click_field  = $config['api_click_field'] ?? 'subid1';
+        $api_click_ids = [];
+        $api_order_ids = [];
+
+        foreach ($api_actions_list as $action) {
+            $cid = (string) ($action[$click_field] ?? '');
+            if ($cid !== '') {
+                $api_click_ids[$cid] = true;
+            }
+            $oid = (string) ($action['order_id'] ?? '');
+            if ($oid !== '') {
+                $api_order_ids[$oid] = true;
+            }
+        }
+
+        // ─── 5. Защита пагинации ───
+        // Если API вернул >= лимита пагинации, данные могут быть неполными.
+        // Не отклоняем транзакции с created_at старше самой ранней API-записи.
+        $pagination_limit_hit = (count($api_actions_list) >= $max_pages * $page_limit);
+        $earliest_api_date    = null;
+
+        if ($pagination_limit_hit && !empty($api_actions_list)) {
+            foreach ($api_actions_list as $a) {
+                $ad     = (string) ($a['action_date'] ?? $a['click_time'] ?? '');
+                $parsed = self::parse_api_date($ad);
+                if ($parsed !== null && ($earliest_api_date === null || $parsed < $earliest_api_date)) {
+                    $earliest_api_date = $parsed;
+                }
+            }
+        }
+
+        // ─── 6. Определить какие stale транзакции отсутствуют в API ───
+
+        $to_decline_registered   = [];
+        $to_decline_unregistered = [];
+
+        foreach ($stale_registered as $tx) {
+            // Пропускаем если лимит пагинации и транзакция старше ранней API-записи
+            if ($pagination_limit_hit && $earliest_api_date !== null && $tx['created_at'] < $earliest_api_date) {
+                continue;
+            }
+            $found = false;
+            if (!empty($tx['click_id']) && isset($api_click_ids[$tx['click_id']])) {
+                $found = true;
+            }
+            if (!$found && !empty($tx['order_number']) && isset($api_order_ids[$tx['order_number']])) {
+                $found = true;
+            }
+            if (!$found) {
+                $to_decline_registered[] = $tx;
+            }
+        }
+
+        foreach ($stale_unregistered as $tx) {
+            if ($pagination_limit_hit && $earliest_api_date !== null && $tx['created_at'] < $earliest_api_date) {
+                continue;
+            }
+            $found = false;
+            if (!empty($tx['click_id']) && isset($api_click_ids[$tx['click_id']])) {
+                $found = true;
+            }
+            if (!$found && !empty($tx['order_number']) && isset($api_order_ids[$tx['order_number']])) {
+                $found = true;
+            }
+            if (!$found) {
+                $to_decline_unregistered[] = $tx;
+            }
+        }
+
+        // ─── 7. Батчевое отклонение: cashback_transactions ───
+
+        if (!empty($to_decline_registered)) {
+            $ids = array_column($to_decline_registered, 'id');
+            foreach (array_chunk($ids, 500) as $chunk) {
+                $placeholders = implode(',', array_fill(0, count($chunk), '%d'));
+                $wpdb->query($wpdb->prepare(
+                    "UPDATE {$this->transactions_table}
+                     SET order_status = 'declined'
+                     WHERE id IN ({$placeholders})
+                       AND order_status IN ('waiting', 'hold', 'completed')",
+                    ...$chunk
+                ));
+            }
+
+            foreach ($to_decline_registered as $tx) {
+                $this->log_sync_auto_decline(
+                    $slug,
+                    (int) $tx['id'],
+                    $tx['click_id'],
+                    $tx['order_status'],
+                    (float) $tx['comission']
+                );
+            }
+
+            $result['declined_registered'] = count($to_decline_registered);
+        }
+
+        // ─── 8. Батчевое отклонение: cashback_unregistered_transactions ───
+
+        if (!empty($to_decline_unregistered)) {
+            $ids = array_column($to_decline_unregistered, 'id');
+            foreach (array_chunk($ids, 500) as $chunk) {
+                $placeholders = implode(',', array_fill(0, count($chunk), '%d'));
+                $wpdb->query($wpdb->prepare(
+                    "UPDATE {$this->unregistered_table}
+                     SET order_status = 'declined'
+                     WHERE id IN ({$placeholders})
+                       AND order_status IN ('waiting', 'hold', 'completed')",
+                    ...$chunk
+                ));
+            }
+
+            foreach ($to_decline_unregistered as $tx) {
+                $this->log_sync_auto_decline(
+                    $slug,
+                    (int) $tx['id'],
+                    $tx['click_id'],
+                    $tx['order_status'],
+                    (float) $tx['comission']
+                );
+            }
+
+            $result['declined_unregistered'] = count($to_decline_unregistered);
+        }
+
+        // ─── 9. Итоговое логирование ───
+
+        $total_declined = $result['declined_registered'] + $result['declined_unregistered'];
+        if ($total_declined > 0) {
+            error_log(sprintf(
+                '[Cashback Auto-Decline] Network=%s: declined %d registered + %d unregistered (checked %d stale, API returned %d actions)',
+                $slug,
+                $result['declined_registered'],
+                $result['declined_unregistered'],
+                $result['checked'],
+                count($api_actions_list)
+            ));
+        }
+
+        return $result;
+    }
+
+    /**
+     * Залогировать автоматическое отклонение в cashback_sync_log
+     */
+    private function log_sync_auto_decline(
+        string $network_slug,
+        int $transaction_id,
+        string $click_id,
+        string $old_status,
+        float $commission
+    ): void {
+        global $wpdb;
+
+        $wpdb->insert($this->sync_log_table, [
+            'network_slug'   => $network_slug,
+            'transaction_id' => $transaction_id,
+            'action_id'      => $click_id,
+            'old_status'     => $old_status,
+            'new_status'     => 'declined',
+            'api_payment'    => $commission,
+            'sync_type'      => 'auto_decline',
+            'synced_at'      => current_time('mysql'),
+        ]);
     }
 
     // =========================================================================

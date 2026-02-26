@@ -33,6 +33,7 @@ class Cashback_API_Migration
         self::add_api_columns_to_networks();
         self::add_click_id_to_transactions();
         self::insert_default_api_config();
+        self::add_auto_decline_sync_type();
 
         error_log('Cashback API Migration: All migrations completed');
     }
@@ -323,6 +324,38 @@ class Cashback_API_Migration
                 ],
                 ['slug' => 'epn']
             );
+        }
+    }
+
+    /**
+     * Добавить 'auto_decline' в ENUM sync_type таблицы cashback_sync_log
+     *
+     * Необходимо для логирования автоматического отклонения
+     * устаревших транзакций, отсутствующих в API.
+     */
+    private static function add_auto_decline_sync_type(): void
+    {
+        global $wpdb;
+        $table = $wpdb->prefix . 'cashback_sync_log';
+
+        $column_type = $wpdb->get_var($wpdb->prepare(
+            "SELECT COLUMN_TYPE FROM information_schema.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND COLUMN_NAME = 'sync_type'",
+            $table
+        ));
+
+        if ($column_type && strpos($column_type, 'auto_decline') === false) {
+            $wpdb->query(
+                "ALTER TABLE `{$table}` MODIFY COLUMN `sync_type`
+                 enum('cron','manual','webhook','auto_decline') NOT NULL DEFAULT 'cron'
+                 COMMENT 'Источник синхронизации'"
+            );
+
+            if ($wpdb->last_error) {
+                error_log("Cashback API Migration Error: Failed to add auto_decline to sync_type: " . $wpdb->last_error);
+            } else {
+                error_log("Cashback API Migration: Added 'auto_decline' to sync_type ENUM");
+            }
         }
     }
 
