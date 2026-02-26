@@ -774,15 +774,13 @@ class CashbackWithdrawal
         }
 
         // === 1.9. Rate limiting: max 3 withdrawal requests per 24 hours ===
-        // Инкрементируем ПЕРЕД обработкой чтобы исключить race condition при конкурентных запросах.
-        // Если обработка упадет — инкремент сохранится, это defense-in-depth (лучше false-positive чем обход).
+        // Проверяем лимит здесь, инкрементируем только после успешного COMMIT
         $rate_key = 'cb_withdrawal_rate_' . $user_id;
         $rate_count = (int) get_transient($rate_key);
         if ($rate_count >= 3) {
             wp_send_json_error(__('Слишком много заявок на вывод. Попробуйте через 24 часа.', 'cashback-plugin'));
             return;
         }
-        set_transient($rate_key, $rate_count + 1, DAY_IN_SECONDS);
 
         // === 2. Защита от повторных запросов через GET_LOCK ===
         global $wpdb;
@@ -1006,7 +1004,8 @@ class CashbackWithdrawal
                 throw new Exception('COMMIT failed: ' . $wpdb->last_error);
             }
 
-            // Rate limit уже инкрементирован до обработки (defense-in-depth)
+            // Инкрементируем rate limit только после успешного создания заявки
+            set_transient($rate_key, $rate_count + 1, DAY_IN_SECONDS);
 
             // Логирование успешной операции с идемпотентным ключом
             $new_balance = bcsub((string) $user_balance->available_balance, (string) $withdrawal_amount, 2);
@@ -1124,11 +1123,11 @@ class CashbackWithdrawal
             return;
         }
 
-        // Rate limiting: max 10 settings saves per hour
+        // Rate limiting: max 3 settings saves per 24 hours
         $settings_rate_key = 'cb_settings_rate_' . $user_id;
         $settings_rate_count = (int) get_transient($settings_rate_key);
-        if ($settings_rate_count >= 10) {
-            wp_send_json_error(array('message' => __('Слишком частое сохранение настроек. Попробуйте позже.', 'cashback-plugin')));
+        if ($settings_rate_count >= 3) {
+            wp_send_json_error(array('message' => __('Слишком частое сохранение настроек. Попробуйте через 24 часа.', 'cashback-plugin')));
             return;
         }
 
@@ -1217,7 +1216,7 @@ class CashbackWithdrawal
         if ($result) {
             // Инкремент счетчика rate limiting
             $settings_rate_count = (int) get_transient($settings_rate_key);
-            set_transient($settings_rate_key, $settings_rate_count + 1, HOUR_IN_SECONDS);
+            set_transient($settings_rate_key, $settings_rate_count + 1, DAY_IN_SECONDS);
 
             wp_send_json_success(array(
                 'message' => __('Настройки успешно сохранены.', 'cashback-plugin')
