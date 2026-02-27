@@ -487,7 +487,7 @@ class Cashback_Transactions_Admin
             'waiting'   => 'В ожидании',
             'completed' => 'Подтверждена',
             'declined'  => 'Отклонена',
-            'hold'      => 'Удержание',
+            'hold'      => 'На проверке',
             'balance'   => 'Зачислена на баланс',
         ];
         return $labels[$status] ?? $status;

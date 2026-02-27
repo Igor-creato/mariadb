@@ -183,7 +183,7 @@ class Cashback_Statistics_Admin
                                 $status_labels = [
                                     'waiting'   => __('В ожидании', 'cashback-plugin'),
                                     'completed' => __('Подтверждён', 'cashback-plugin'),
-                                    'hold'      => __('Холд', 'cashback-plugin'),
+                                    'hold'      => __('На проверке', 'cashback-plugin'),
                                     'declined'  => __('Отклонён', 'cashback-plugin'),
                                     'balance'   => __('На балансе', 'cashback-plugin'),
                                 ];
@@ -326,9 +326,9 @@ class Cashback_Statistics_Admin
         }
 
         $sql = "SELECT
-            COALESCE(SUM(comission), 0) AS total_commission,
-            COALESCE(SUM(cashback), 0) AS total_cashback,
-            COUNT(*) AS total_count,
+            COALESCE(SUM(CASE WHEN order_status NOT IN ('declined', 'hold') THEN comission ELSE 0 END), 0) AS total_commission,
+            COALESCE(SUM(CASE WHEN order_status NOT IN ('declined', 'hold') THEN cashback ELSE 0 END), 0) AS total_cashback,
+            COALESCE(SUM(CASE WHEN order_status NOT IN ('declined', 'hold') THEN 1 ELSE 0 END), 0) AS total_count,
             COALESCE(SUM(CASE WHEN order_status = 'waiting' THEN 1 ELSE 0 END), 0) AS count_waiting,
             COALESCE(SUM(CASE WHEN order_status = 'completed' THEN 1 ELSE 0 END), 0) AS count_completed,
             COALESCE(SUM(CASE WHEN order_status = 'hold' THEN 1 ELSE 0 END), 0) AS count_hold,
