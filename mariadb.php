@@ -69,6 +69,7 @@ class Mariadb_Plugin
 
         try {
             $instance->create_tables();
+            $instance->migrate_add_reference_id();
             $instance->create_triggers();
             $instance->create_events();
             $instance->initialize_existing_users();
@@ -96,6 +97,7 @@ class Mariadb_Plugin
         // Таблица cashback_payout_requests с защитой от дублирования
         $table1 = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_payout_requests` (
             `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            `reference_id` varchar(11) NOT NULL DEFAULT '' COMMENT 'Публичный ID заявки формата WD-XXXXXXXX',
             `user_id` bigint(20) unsigned NOT NULL,
             `total_amount` decimal(18,2) NOT NULL,
             `payout_method` varchar(50) DEFAULT NULL COMMENT 'Slug способа выплаты из cashback_payout_methods',
@@ -112,6 +114,7 @@ class Mariadb_Plugin
             `created_at` datetime DEFAULT current_timestamp(),
             `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp(),
             PRIMARY KEY (`id`),
+            UNIQUE KEY `uk_reference_id` (`reference_id`) COMMENT 'Уникальный публичный идентификатор заявки',
             UNIQUE KEY `uk_idempotency` (`idempotency_key`) COMMENT 'Гарантирует уникальность заявки на выплату',
             KEY `idx_user_status` (`user_id`,`status`),
             KEY `idx_status_updated` (`status`,`updated_at`),
@@ -1075,6 +1078,123 @@ END;",
         }
 
         return $result;
+    }
+
+    /**
+     * Генерация уникального читаемого идентификатора заявки на выплату
+     * Формат: WD-XXXXXXXX, где X — символ из безопасного алфавита (без 0/O, 1/I/L)
+     *
+     * @return string Reference ID в формате WD-XXXXXXXX
+     */
+    public static function generate_reference_id(): string
+    {
+        // 30 символов: цифры 2-9, буквы A-Z без O, I, L
+        $charset = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
+        $charset_len = 30;
+        $id_length = 8;
+
+        $random_bytes = random_bytes($id_length);
+        $result = 'WD-';
+
+        for ($i = 0; $i < $id_length; $i++) {
+            $result .= $charset[ord($random_bytes[$i]) % $charset_len];
+        }
+
+        return $result;
+    }
+
+    /**
+     * Миграция: добавление колонки reference_id в cashback_payout_requests
+     * Бэкфилл существующих записей уникальными идентификаторами
+     *
+     * @return void
+     */
+    private function migrate_add_reference_id(): void
+    {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'cashback_payout_requests';
+
+        // Шаг 1: Проверяем наличие колонки
+        $column_exists = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM information_schema.COLUMNS
+             WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s AND COLUMN_NAME = 'reference_id'",
+            DB_NAME,
+            $table
+        ));
+
+        if (!$column_exists) {
+            // Шаг 2: Добавляем колонку
+            $wpdb->query("ALTER TABLE `{$table}` ADD COLUMN `reference_id` varchar(11) NOT NULL DEFAULT '' COMMENT 'Публичный ID заявки формата WD-XXXXXXXX' AFTER `id`");
+
+            if ($wpdb->last_error) {
+                error_log('[Cashback] Failed to add reference_id column: ' . $wpdb->last_error);
+                return;
+            }
+        }
+
+        // Шаг 3: Бэкфилл записей с пустым reference_id
+        $batch_size = 100;
+        $max_retries = 5;
+
+        do {
+            $rows = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT id FROM `{$table}` WHERE reference_id = '' LIMIT %d",
+                    $batch_size
+                )
+            );
+
+            if (empty($rows)) {
+                break;
+            }
+
+            foreach ($rows as $row) {
+                $updated = false;
+
+                for ($attempt = 0; $attempt < $max_retries; $attempt++) {
+                    $ref_id = self::generate_reference_id();
+                    $result = $wpdb->update(
+                        $table,
+                        array('reference_id' => $ref_id),
+                        array('id' => $row->id),
+                        array('%s'),
+                        array('%d')
+                    );
+
+                    if ($result !== false) {
+                        $updated = true;
+                        break;
+                    }
+
+                    // Если ошибка не связана с дубликатом — прекращаем
+                    if (strpos($wpdb->last_error, 'Duplicate') === false) {
+                        error_log('[Cashback] Failed to update reference_id for payout #' . $row->id . ': ' . $wpdb->last_error);
+                        break;
+                    }
+                }
+
+                if (!$updated) {
+                    error_log('[Cashback] Could not generate unique reference_id for payout #' . $row->id . ' after ' . $max_retries . ' attempts');
+                }
+            }
+        } while (!empty($rows));
+
+        // Шаг 4: Добавляем UNIQUE индекс если отсутствует
+        $index_exists = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM information_schema.STATISTICS
+             WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s AND INDEX_NAME = 'uk_reference_id'",
+            DB_NAME,
+            $table
+        ));
+
+        if (!$index_exists) {
+            $wpdb->query("ALTER TABLE `{$table}` ADD UNIQUE KEY `uk_reference_id` (`reference_id`)");
+
+            if ($wpdb->last_error) {
+                error_log('[Cashback] Failed to add uk_reference_id index: ' . $wpdb->last_error);
+            }
+        }
     }
 }
 

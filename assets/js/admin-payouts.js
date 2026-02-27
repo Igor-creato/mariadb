@@ -93,6 +93,13 @@
         url.searchParams.delete('date_to');
       }
 
+      const reference = $('#filter-reference').val();
+      if (reference) {
+        url.searchParams.set('reference', reference);
+      } else {
+        url.searchParams.delete('reference');
+      }
+
       url.searchParams.delete('paged');
       window.location.href = url.toString();
     });
@@ -103,6 +110,7 @@
       url.searchParams.delete('status');
       url.searchParams.delete('date_from');
       url.searchParams.delete('date_to');
+      url.searchParams.delete('reference');
       url.searchParams.delete('paged');
       window.location.href = url.toString();
     });

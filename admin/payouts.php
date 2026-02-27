@@ -183,6 +183,12 @@ class Cashback_Payouts_Admin
             $filter_date_to = '';
         }
 
+        // Фильтр по номеру заявки
+        $filter_reference = sanitize_text_field(wp_unslash($_GET['reference'] ?? ''));
+        if (!empty($filter_reference) && !preg_match('/^WD-[23456789A-HJ-NP-Z]{0,8}$/i', $filter_reference)) {
+            $filter_reference = '';
+        }
+
         // Валидация статуса по допустимому списку
         $allowed_filter_statuses = ['waiting', 'processing', 'paid', 'failed', 'declined', 'needs_retry'];
         if (!empty($filter_status) && !in_array($filter_status, $allowed_filter_statuses, true)) {
@@ -206,6 +212,11 @@ class Cashback_Payouts_Admin
         if (!empty($filter_date_to)) {
             $where_conditions[] = 'DATE(created_at) <= %s';
             $where_params[] = $filter_date_to;
+        }
+
+        if (!empty($filter_reference)) {
+            $where_conditions[] = 'reference_id LIKE %s';
+            $where_params[] = $wpdb->esc_like($filter_reference) . '%';
         }
 
         $where_clause = '';
@@ -237,7 +248,7 @@ class Cashback_Payouts_Admin
         if (!empty($where_params)) {
             $payouts = $wpdb->get_results(
                 $wpdb->prepare(
-                    "SELECT id, user_id, total_amount, payout_method, payout_account, masked_details,
+                    "SELECT id, reference_id, user_id, total_amount, payout_method, payout_account, masked_details,
                     encrypted_details, provider, provider_payout_id, attempts, fail_reason, status,
                     created_at, updated_at
             FROM {$this->table_name}
@@ -251,7 +262,7 @@ class Cashback_Payouts_Admin
         } else {
             $payouts = $wpdb->get_results(
                 $wpdb->prepare(
-                    "SELECT id, user_id, total_amount, payout_method, payout_account, masked_details,
+                    "SELECT id, reference_id, user_id, total_amount, payout_method, payout_account, masked_details,
                     encrypted_details, provider, provider_payout_id, attempts, fail_reason, status,
                     created_at, updated_at
             FROM {$this->table_name}
@@ -311,6 +322,9 @@ class Cashback_Payouts_Admin
                     <label for="filter-date-to" class="screen-reader-text"><?php echo esc_html__('Дата до', 'cashback-plugin'); ?></label>
                     <input type="date" id="filter-date-to" name="filter-date-to" value="<?php echo esc_attr($filter_date_to); ?>" />
 
+                    <label for="filter-reference" class="screen-reader-text"><?php echo esc_html__('Номер заявки', 'cashback-plugin'); ?></label>
+                    <input type="text" id="filter-reference" name="filter-reference" value="<?php echo esc_attr($filter_reference); ?>" placeholder="<?php echo esc_attr__('WD-XXXXXXXX', 'cashback-plugin'); ?>" maxlength="11" style="width: 130px;" />
+
                     <button type="submit" id="filter-submit" class="button action"><?php echo esc_html__('Фильтровать', 'cashback-plugin'); ?></button>
                     <button type="submit" id="filter-reset" class="button action"><?php echo esc_html__('Сбросить', 'cashback-plugin'); ?></button>
                 </div>
@@ -323,6 +337,7 @@ class Cashback_Payouts_Admin
                     <thead>
                         <tr>
                             <th scope="col"><?php echo esc_html__('ID пользователя', 'cashback-plugin'); ?></th>
+                            <th scope="col"><?php echo esc_html__('Номер заявки', 'cashback-plugin'); ?></th>
                             <th scope="col"><?php echo esc_html__('Сумма', 'cashback-plugin'); ?></th>
                             <th scope="col"><?php echo esc_html__('Платежная система', 'cashback-plugin'); ?></th>
                             <th scope="col"><?php echo esc_html__('Номер счета/телефона', 'cashback-plugin'); ?></th>
@@ -339,6 +354,7 @@ class Cashback_Payouts_Admin
                     <tfoot>
                         <tr>
                             <th scope="col"><?php echo esc_html__('ID пользователя', 'cashback-plugin'); ?></th>
+                            <th scope="col"><?php echo esc_html__('Номер заявки', 'cashback-plugin'); ?></th>
                             <th scope="col"><?php echo esc_html__('Сумма', 'cashback-plugin'); ?></th>
                             <th scope="col"><?php echo esc_html__('Платежная система', 'cashback-plugin'); ?></th>
                             <th scope="col"><?php echo esc_html__('Номер счета/телефона', 'cashback-plugin'); ?></th>
@@ -365,6 +381,7 @@ class Cashback_Payouts_Admin
                                 ?>
                                 <tr data-payout-id="<?php echo esc_attr($payout['id']); ?>">
                                     <td><?php echo esc_html($payout['user_id']); ?></td>
+                                    <td><?php echo esc_html(!empty($payout['reference_id']) ? $payout['reference_id'] : '---'); ?></td>
                                     <td><?php echo esc_html(number_format((float) $payout['total_amount'], 2, '.', ' ')); ?></td>
                                     <td<?php if ($method_inactive && $is_actionable_status): ?> class="cashback-inactive-warning" title="<?php echo esc_attr__('Платежная система деактивирована', 'cashback-plugin'); ?>" <?php endif; ?>>
                                         <?php echo esc_html($payout_method_info['name']); ?>
@@ -411,7 +428,7 @@ class Cashback_Payouts_Admin
                             <?php endforeach; ?>
                         <?php else: ?>
                             <tr>
-                                <td colspan="12"><?php echo esc_html__('Нет выплат для отображения.', 'cashback-plugin'); ?></td>
+                                <td colspan="13"><?php echo esc_html__('Нет выплат для отображения.', 'cashback-plugin'); ?></td>
                             </tr>
                         <?php endif; ?>
                     </tbody>
@@ -429,7 +446,8 @@ class Cashback_Payouts_Admin
                 'add_args'    => array_filter([
                     'status' => $filter_status,
                     'date_from' => $filter_date_from,
-                    'date_to' => $filter_date_to
+                    'date_to' => $filter_date_to,
+                    'reference' => $filter_reference
                 ])
             );
 
@@ -452,7 +470,7 @@ class Cashback_Payouts_Admin
         // Получаем данные заявки
         $payout = $wpdb->get_row(
             $wpdb->prepare(
-                "SELECT id, user_id, total_amount, payout_method, payout_account, masked_details,
+                "SELECT id, reference_id, user_id, total_amount, payout_method, payout_account, masked_details,
                         encrypted_details, provider, provider_payout_id, attempts, fail_reason,
                         status, created_at, updated_at
                  FROM {$this->table_name}
@@ -512,7 +530,10 @@ class Cashback_Payouts_Admin
         ?>
         <div class="wrap payout-detail-wrap">
             <h1 class="wp-heading-inline">
-                <?php echo esc_html(sprintf(__('Заявка на выплату #%d', 'cashback-plugin'), $payout_id)); ?>
+                <?php
+                $ref_display = !empty($payout['reference_id']) ? $payout['reference_id'] : '#' . $payout_id;
+                echo esc_html(sprintf(__('Заявка на выплату %s', 'cashback-plugin'), $ref_display));
+                ?>
             </h1>
             <a href="<?php echo esc_url($back_url); ?>" class="page-title-action">&larr; <?php echo esc_html__('Назад к списку', 'cashback-plugin'); ?></a>
             <hr class="wp-header-end">
@@ -569,6 +590,15 @@ class Cashback_Payouts_Admin
                             <h2 class="hndle"><span><?php echo esc_html__('Данные заявки', 'cashback-plugin'); ?></span></h2>
                             <div class="inside">
                                 <table class="form-table payout-detail-table">
+                                    <?php if (!empty($payout['reference_id'])): ?>
+                                    <tr>
+                                        <th><?php echo esc_html__('Номер заявки', 'cashback-plugin'); ?></th>
+                                        <td>
+                                            <span class="detail-value"><?php echo esc_html($payout['reference_id']); ?></span>
+                                            <button type="button" class="button button-small copy-btn" data-copy="<?php echo esc_attr($payout['reference_id']); ?>" title="<?php echo esc_attr__('Скопировать', 'cashback-plugin'); ?>">&#128203;</button>
+                                        </td>
+                                    </tr>
+                                    <?php endif; ?>
                                     <tr>
                                         <th><?php echo esc_html__('Сумма выплаты', 'cashback-plugin'); ?></th>
                                         <td>
@@ -930,7 +960,7 @@ class Cashback_Payouts_Admin
         // Получаем обновленные данные из базы
         $updated_payout_data = $wpdb->get_row(
             $wpdb->prepare(
-                "SELECT provider, provider_payout_id, attempts, fail_reason, status, encrypted_details, payout_account
+                "SELECT reference_id, provider, provider_payout_id, attempts, fail_reason, status, encrypted_details, payout_account
                  FROM {$this->table_name}
                  WHERE id = %d",
                 $payout_id
@@ -1316,7 +1346,7 @@ class Cashback_Payouts_Admin
         // Получаем данные из базы
         $payout_data = $wpdb->get_row(
             $wpdb->prepare(
-                "SELECT provider, provider_payout_id, attempts, fail_reason, status, encrypted_details, payout_account
+                "SELECT reference_id, provider, provider_payout_id, attempts, fail_reason, status, encrypted_details, payout_account
                  FROM {$this->table_name}
                  WHERE id = %d",
                 $payout_id

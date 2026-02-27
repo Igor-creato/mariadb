@@ -92,6 +92,7 @@ class HistoryPayout
             echo '<table class="wd-table shop_table_responsive">';
             echo '<thead>';
             echo '<tr>';
+            echo '<th>' . esc_html__('Номер заявки', 'cashback-plugin') . '</th>';
             echo '<th>' . esc_html__('Дата', 'cashback-plugin') . '</th>';
             echo '<th>' . esc_html__('Сумма', 'cashback-plugin') . '</th>';
             echo '<th>' . esc_html__('Способ вывода', 'cashback-plugin') . '</th>';
@@ -104,6 +105,7 @@ class HistoryPayout
 
             foreach ($payouts as $payout) {
                 echo '<tr>';
+                echo '<td data-title="' . esc_attr__('Номер заявки', 'cashback-plugin') . '">' . esc_html(!empty($payout->reference_id) ? $payout->reference_id : '---') . '</td>';
                 echo '<td data-title="' . esc_attr__('Дата', 'cashback-plugin') . '">' . $this->format_date($payout->created_at) . '</td>';
                 echo '<td data-title="' . esc_attr__('Сумма', 'cashback-plugin') . '">' . esc_html($payout->total_amount ?? '0.00') . '</td>';
                 echo '<td data-title="' . esc_attr__('Способ вывода', 'cashback-plugin') . '">' . esc_html($this->get_payout_method_label($payout->payout_method) ?: __('Не указан', 'cashback-plugin')) . '</td>';
@@ -182,7 +184,7 @@ class HistoryPayout
         global $wpdb;
         $table_name = $wpdb->prefix . 'cashback_payout_requests';
         return $wpdb->get_results($wpdb->prepare(
-            "SELECT created_at, total_amount, payout_method, payout_account, masked_details, provider, status
+            "SELECT reference_id, created_at, total_amount, payout_method, payout_account, masked_details, provider, status
              FROM {$table_name}
              WHERE user_id = %d
              ORDER BY created_at DESC
@@ -232,6 +234,7 @@ class HistoryPayout
         $html = '';
         foreach ($payouts as $payout) {
             $html .= '<tr>';
+            $html .= '<td>' . esc_html(!empty($payout->reference_id) ? $payout->reference_id : '---') . '</td>';
             $html .= '<td>' . $this->format_date($payout->created_at) . '</td>';
             $html .= '<td>' . esc_html($payout->total_amount ?? '0.00') . '</td>';
             $html .= '<td>' . esc_html($this->get_payout_method_label($payout->payout_method) ?: __('Не указан', 'cashback-plugin')) . '</td>';

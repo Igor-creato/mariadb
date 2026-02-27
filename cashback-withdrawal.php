@@ -882,6 +882,10 @@ class CashbackWithdrawal
         $table_balance = $wpdb->prefix . 'cashback_user_balance';
         $table_requests = $wpdb->prefix . 'cashback_payout_requests';
 
+        // Генерируем уникальный публичный номер заявки ДО транзакции,
+        // чтобы SELECT-проверка видела актуальные данные (вне REPEATABLE READ snapshot)
+        $reference_id = $this->generate_unique_reference_id($wpdb, $table_requests);
+
         // === 5.1. Early duplicate check — avoid locking balance row unnecessarily ===
         $existing_request = $wpdb->get_row($wpdb->prepare(
             "SELECT id, status FROM {$table_requests} WHERE idempotency_key = %s",
@@ -945,6 +949,7 @@ class CashbackWithdrawal
 
             $insert_data = array(
                 'user_id' => $user_id,
+                'reference_id' => $reference_id,
                 'total_amount' => $withdrawal_amount,
                 'payout_method' => $payout_method,
                 'payout_account' => $has_encrypted ? '' : ($payout_account ?: ''),
@@ -952,7 +957,7 @@ class CashbackWithdrawal
                 'idempotency_key' => $idempotency_key,
                 'status' => 'waiting',
             );
-            $insert_formats = array('%d', '%s', '%s', '%s', '%s', '%s', '%s');
+            $insert_formats = array('%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s');
 
             // Добавляем зашифрованные поля если доступны
             if ($has_encrypted) {
@@ -962,21 +967,43 @@ class CashbackWithdrawal
                 $insert_formats[] = '%s';
             }
 
-            $result = $wpdb->insert(
-                $table_requests,
-                $insert_data,
-                $insert_formats
-            );
+            // INSERT с автоматическим retry при коллизии reference_id
+            $max_insert_retries = 3;
+            $inserted = false;
 
-            if ($result === false) {
-                // Проверяем, не произошло ли нарушение уникального ключа (дубль)
+            for ($insert_attempt = 0; $insert_attempt < $max_insert_retries; $insert_attempt++) {
+                $result = $wpdb->insert(
+                    $table_requests,
+                    $insert_data,
+                    $insert_formats
+                );
+
+                if ($result !== false) {
+                    $inserted = true;
+                    break;
+                }
+
+                // Коллизия reference_id — перегенерировать и повторить
+                if (strpos($wpdb->last_error, 'uk_reference_id') !== false) {
+                    $reference_id = Mariadb_Plugin::generate_reference_id();
+                    $insert_data['reference_id'] = $reference_id;
+                    continue;
+                }
+
+                // Дубликат idempotency — настоящий повтор заявки
                 if (
                     strpos($wpdb->last_error, 'uk_idempotency') !== false ||
                     strpos($wpdb->last_error, 'Duplicate entry') !== false
                 ) {
                     throw new Exception('Duplicate payout request detected');
                 }
+
+                // Иная ошибка БД
                 throw new Exception('Failed to insert payout request: ' . $wpdb->last_error);
+            }
+
+            if (!$inserted) {
+                throw new Exception('Failed to insert payout request after reference_id retries');
             }
 
             $payout_id = $wpdb->insert_id;
@@ -1010,11 +1037,12 @@ class CashbackWithdrawal
             // Логирование успешной операции с идемпотентным ключом
             $new_balance = bcsub((string) $user_balance->available_balance, (string) $withdrawal_amount, 2);
             wc_get_logger()->info(sprintf(
-                'User %d withdrew %s. New balance: %s. Payout ID: %d. Idempotency: %s',
+                'User %d withdrew %s. New balance: %s. Payout ID: %d. Reference: %s. Idempotency: %s',
                 $user_id,
                 $withdrawal_amount,
                 $new_balance,
                 $payout_id,
+                $reference_id,
                 substr($idempotency_key, 0, 16) . '...'
             ));
 
@@ -1022,8 +1050,9 @@ class CashbackWithdrawal
             $lock_released = true; $wpdb->query($wpdb->prepare("DO RELEASE_LOCK(%s)", $lock_name));
 
             wp_send_json_success(sprintf(
-                __('Заявка на вывод кэшбэка на сумму %s руб. успешно добавлена', 'cashback-plugin'),
-                number_format((float) $withdrawal_amount, 2, '.', ' ')
+                __('Заявка на вывод кэшбэка на сумму %s руб. успешно добавлена. Номер заявки: %s', 'cashback-plugin'),
+                number_format((float) $withdrawal_amount, 2, '.', ' '),
+                $reference_id
             ));
         } catch (\Throwable $e) {
             $wpdb->query('ROLLBACK');
@@ -1057,6 +1086,42 @@ class CashbackWithdrawal
                 wp_send_json_error(__('Ошибка при обработке запроса на вывод. Пожалуйста, попробуйте еще раз.', 'cashback-plugin'));
             }
         }
+    }
+
+    /**
+     * Генерация уникального reference_id с проверкой коллизий
+     *
+     * @param wpdb   $wpdb  WordPress database object
+     * @param string $table Имя таблицы для проверки уникальности
+     * @return string Уникальный reference ID
+     * @throws \Exception Если не удалось сгенерировать уникальный ID после макс. попыток
+     */
+    private function generate_unique_reference_id($wpdb, string $table): string
+    {
+        $max_retries = 5;
+
+        for ($attempt = 0; $attempt < $max_retries; $attempt++) {
+            $reference_id = Mariadb_Plugin::generate_reference_id();
+
+            // Быстрая предварительная проверка (без блокировки)
+            $exists = $wpdb->get_var($wpdb->prepare(
+                "SELECT 1 FROM `{$table}` WHERE reference_id = %s LIMIT 1",
+                $reference_id
+            ));
+
+            if (!$exists) {
+                return $reference_id;
+            }
+
+            error_log(sprintf(
+                '[Cashback] Reference ID collision: %s (attempt %d/%d)',
+                $reference_id,
+                $attempt + 1,
+                $max_retries
+            ));
+        }
+
+        throw new \Exception('Failed to generate unique reference ID after ' . $max_retries . ' attempts');
     }
 
     /**
