@@ -3,7 +3,7 @@
 ## Обзор плагина
 
 **Название:** Cashback Plugin
-**Назначение:** Система кешбэка для WooCommerce с партнерскими ссылками, выплатами и административным управлением
+**Назначение:** Система кешбэка для WooCommerce с партнерскими ссылками, выплатами, антифрод-защитой, API-интеграцией с CPA-сетями и административным управлением
 
 ### Технические требования
 
@@ -14,14 +14,21 @@
 
 ### Основные возможности
 
-- ✅ Начисление кешбэка с гибкими ставками
-- ✅ Партнерские URL с динамическими параметрами
-- ✅ Защищенная система выплат с идемпотентностью
-- ✅ AES-256-CBC шифрование реквизитов
+- ✅ Начисление кешбэка с гибкими ставками (индивидуальные и на уровне товара)
+- ✅ Партнерские URL с динамическими параметрами и сетевой архитектурой
+- ✅ Защищенная система выплат с идемпотентностью и reference ID
+- ✅ AES-256-GCM шифрование реквизитов (с обратной совместимостью AES-256-CBC)
+- ✅ Антифрод-модуль с browser fingerprinting и 7 автоматическими детекторами
+- ✅ API-клиент для CPA-сетей (Admitad, EPN) с OAuth2 и фоновой синхронизацией
+- ✅ Rate limiting и защита от click fraud (двухуровневый: per-product + global)
+- ✅ Серверное логирование кликов по партнёрским ссылкам (UUID click_id)
+- ✅ Статистика и аналитика для администратора (KPI дашборд)
+- ✅ Управление транзакциями в админке (2 вкладки: зарегистрированные / анонимные)
+- ✅ Управление партнёрскими сетями и их параметрами (БД вместо post_meta)
 - ✅ Административная панель управления
-- ✅ Система поддержки с тикетами
+- ✅ Система поддержки с тикетами и вложениями файлов
 - ✅ Мониторинг целостности данных
-- ✅ Аудит-лог критических операций
+- ✅ Аудит-лог критических операций с защитой от IP spoofing
 
 ### Совместимость WooCommerce
 
@@ -41,8 +48,8 @@
 Главный класс-оркестратор, управляющий жизненным циклом плагина:
 
 - Активация/деактивация
-- Загрузка зависимостей
-- Инициализация компонентов
+- Загрузка зависимостей (29 PHP файлов)
+- Инициализация компонентов (10 экземпляров)
 - Генерация ключа шифрования
 
 ### Схема компонентов
@@ -51,7 +58,7 @@
 CashbackPlugin (загрузчик)
 │
 ├── mariadb.php (Mariadb_Plugin)
-│   └── Управление БД: таблицы, триггеры, события
+│   └── Управление БД: таблицы, триггеры, события, reference_id
 │
 ├── cashback-withdrawal.php (CashbackWithdrawal)
 │   └── Вывод кешбэка с защитой от race conditions
@@ -63,13 +70,19 @@ CashbackPlugin (загрузчик)
 │   └── История выплат пользователя
 │
 ├── wc-affiliate-url-params.php (WC_Affiliate_URL_Params)
-│   └── Партнерские параметры URL
+│   └── Партнёрские URL: сетевая архитектура, rate limiting, click tracking, cashback display
 │
 ├── includes/
 │   ├── class-cashback-encryption.php (Cashback_Encryption)
-│   │   └── AES-256-CBC шифрование
-│   └── class-cashback-user-status.php (Cashback_User_Status)
-│       └── Проверка статуса и бана пользователя
+│   │   └── AES-256-GCM шифрование (v2) + legacy CBC (v1), аудит, IP spoofing защита
+│   ├── class-cashback-user-status.php (Cashback_User_Status)
+│   │   └── Проверка статуса и бана пользователя
+│   ├── class-cashback-api-client.php (Cashback_API_Client)
+│   │   └── API-клиент CPA-сетей (Admitad, EPN), OAuth2, шифрованные credentials
+│   ├── class-cashback-api-migration.php (Cashback_API_Migration)
+│   │   └── Миграции для таблиц validation_checkpoints и sync_log
+│   └── class-cashback-api-cron.php (Cashback_API_Cron)
+│       └── Фоновая синхронизация статусов каждые 2 часа
 │
 ├── admin/
 │   ├── payout-methods.php (Cashback_Payout_Methods_Admin)
@@ -82,16 +95,40 @@ CashbackPlugin (загрузчик)
 │   │   └── Справочник банков
 │   ├── health-check.php (Cashback_Health_Check)
 │   │   └── Мониторинг целостности
+│   ├── click-log.php (Cashback_Click_Log_Admin)
+│   │   └── Лог кликов по партнёрским ссылкам
+│   ├── transactions.php (Cashback_Transactions_Admin)
+│   │   └── Управление транзакциями (2 вкладки)
+│   ├── statistics.php (Cashback_Statistics_Admin)
+│   │   └── Дашборд статистики и KPI
+│   ├── class-cashback-admin-api-validation.php (Cashback_Admin_API_Validation)
+│   │   └── API валидация, синхронизация, credentials (3 вкладки)
 │   └── traits/AdminPaginationTrait.php
 │       └── Общая логика пагинации
 │
+├── partner/
+│   └── partner-management.php (Cashback_Partner_Management_Admin)
+│       └── Управление партнёрскими сетями и параметрами
+│
+├── antifraud/
+│   ├── class-fraud-db.php (Cashback_Fraud_DB)
+│   │   └── 3 таблицы: alerts, signals, fingerprints
+│   ├── class-fraud-settings.php (Cashback_Fraud_Settings)
+│   │   └── 14 настроек антифрода с валидацией
+│   ├── class-fraud-collector.php (Cashback_Fraud_Collector)
+│   │   └── Сбор fingerprint, IP, событий
+│   ├── class-fraud-detector.php (Cashback_Fraud_Detector)
+│   │   └── 7 проверок, risk scoring, email-уведомления
+│   └── class-fraud-admin.php (Cashback_Fraud_Admin)
+│       └── 3 вкладки: уведомления, подозрительные, настройки
+│
 └── support/
     ├── support-db.php (Cashback_Support_DB)
-    │   └── Таблицы тикетов и сообщений
+    │   └── Таблицы тикетов, сообщений, вложений + директория загрузок
     ├── admin-support.php
     │   └── Административная часть поддержки
-    └── user-support.php
-        └── Пользовательский кабинет поддержки
+    └── user-support.php (Cashback_User_Support)
+        └── Пользовательский кабинет поддержки с rate limiting
 ```
 
 ### Жизненный цикл плагина
@@ -102,39 +139,52 @@ CashbackPlugin (загрузчик)
 register_activation_hook() → CashbackPlugin::activate()
   1. Генерация ключа шифрования (32 байта → hex)
   2. Сохранение в wp-content/.cashback-encryption-key.php
-  3. Mariadb_Plugin::activate() - создание таблиц, триггеров, событий
-  4. Инициализация существующих пользователей
-  5. Создание таблиц поддержки
-  6. Планирование WP Cron задач
+  3. Mariadb_Plugin::activate() — 11 таблиц, аудит-лог, constraints, триггеры, события
+  4. Mariadb_Plugin::migrate_add_reference_id() — бэкфилл reference_id
+  5. Cashback_API_Migration::run() — таблицы validation_checkpoints, sync_log
+  6. Cashback_Support_DB::create_tables() + ensure_upload_dir() — поддержка + вложения
+  7. Cashback_Fraud_DB::create_tables() — 3 таблицы антифрода
+  8. Планирование 5 WP Cron задач
+  9. Cashback_API_Cron::init() — регистрация 2-часового интервала
+  10. flush_rewrite_rules()
 ```
 
 **Инициализация:**
 
 ```php
 plugins_loaded → CashbackPlugin::init()
-  1. load_dependencies() - подключение всех PHP файлов
-  2. initialize_components() - создание singleton экземпляров
-  3. declare_woocommerce_compatibility() - HPOS и блоки
+  1. load_dependencies() — 29 PHP файлов через require_once
+  2. initialize_components() — 10 singleton/экземпляров
+  3. Проверка ключа шифрования → admin_notices при отсутствии
+  4. declare_woocommerce_compatibility() — HPOS и блоки
 ```
 
 **Деактивация:**
 
 ```php
 register_deactivation_hook() → CashbackPlugin::deactivate()
-  1. Снятие WP Cron задач
-  2. Очистка кеша
+  Снятие 5 WP Cron задач:
+    - cashback_support_auto_delete_cron
+    - cashback_health_check_cron
+    - cashback_fraud_detection_cron
+    - cashback_fraud_cleanup_cron
+    - cashback_api_sync_statuses
 ```
 
 **Удаление:**
 
 ```php
 uninstall.php → cashback_plugin_uninstall()
-  1. Снятие cron-событий
-  2. DROP триггеров (14 шт.)
-  3. DROP событий (3 шт.)
-  4. DROP таблиц (11 шт.)
-  5. Удаление опций и transients
-  6. Удаление файла ключа шифрования
+  1. Снятие 4 cron-событий
+  2. DROP 16 триггеров
+  3. DROP 4 MySQL событий
+  4. Удаление файлов вложений поддержки (рекурсивно)
+  5. DROP 18 таблиц (в обратном порядке для FK)
+  6. Удаление 20+ опций (включая антифрод настройки)
+  7. Удаление post_meta партнёрских сетей
+  8. Удаление transients (rate limiting: cb_pp_*, cb_gl_*, cb_ip_*)
+  9. Удаление файла ключа шифрования
+  10. wp_cache_flush()
 ```
 
 ---
@@ -143,47 +193,117 @@ uninstall.php → cashback_plugin_uninstall()
 
 ### Корневые файлы
 
-| Файл                                                       | Назначение              | Ключевой класс            |
-| ---------------------------------------------------------- | ----------------------- | ------------------------- |
-| [cashback-plugin.php](cashback-plugin.php)                 | Точка входа, загрузчик  | `CashbackPlugin`          |
-| [mariadb.php](mariadb.php)                                 | Управление схемой БД    | `Mariadb_Plugin`          |
-| [cashback-withdrawal.php](cashback-withdrawal.php)         | Страница вывода кешбэка | `CashbackWithdrawal`      |
-| [cashback-history.php](cashback-history.php)               | История транзакций      | `CashbackHistory`         |
-| [history-payout.php](history-payout.php)                   | История выплат          | `HistoryPayout`           |
-| [wc-affiliate-url-params.php](wc-affiliate-url-params.php) | Партнерские URL         | `WC_Affiliate_URL_Params` |
-| [uninstall.php](uninstall.php)                             | Деинсталляция           | Функция                   |
+| Файл | Назначение | Ключевой класс |
+|------|-----------|----------------|
+| [cashback-plugin.php](cashback-plugin.php) | Точка входа, загрузчик | `CashbackPlugin` |
+| [mariadb.php](mariadb.php) | Управление схемой БД | `Mariadb_Plugin` |
+| [cashback-withdrawal.php](cashback-withdrawal.php) | Страница вывода кешбэка | `CashbackWithdrawal` |
+| [cashback-history.php](cashback-history.php) | История транзакций | `CashbackHistory` |
+| [history-payout.php](history-payout.php) | История выплат | `HistoryPayout` |
+| [wc-affiliate-url-params.php](wc-affiliate-url-params.php) | Партнерские URL, rate limiting, click tracking | `WC_Affiliate_URL_Params` |
+| [uninstall.php](uninstall.php) | Деинсталляция | Функция |
 
 ### Папка admin/
 
 **Административные интерфейсы** (требуют `manage_options`)
 
-| Файл                                                                     | Класс                             | Страница                           |
-| ------------------------------------------------------------------------ | --------------------------------- | ---------------------------------- |
-| [payout-methods.php](admin/payout-methods.php)                           | `Cashback_Payout_Methods_Admin`   | Способы выплаты (СБП, МИР и др.)   |
-| [payouts.php](admin/payouts.php)                                         | `Cashback_Payouts_Admin`          | Управление заявками на выплату     |
-| [users-management.php](admin/users-management.php)                       | `Cashback_Users_Management_Admin` | Управление пользователями и банами |
-| [bank-management.php](admin/bank-management.php)                         | `Cashback_Bank_Management_Admin`  | Справочник банков                  |
-| [health-check.php](admin/health-check.php)                               | `Cashback_Health_Check`           | Мониторинг (WP Cron задача)        |
-| [traits/AdminPaginationTrait.php](admin/traits/AdminPaginationTrait.php) | `AdminPaginationTrait`            | Общая логика пагинации             |
+| Файл | Класс | Страница |
+|------|-------|----------|
+| [payout-methods.php](admin/payout-methods.php) | `Cashback_Payout_Methods_Admin` | Способы выплаты (СБП, МИР и др.) |
+| [payouts.php](admin/payouts.php) | `Cashback_Payouts_Admin` | Управление заявками на выплату |
+| [users-management.php](admin/users-management.php) | `Cashback_Users_Management_Admin` | Управление пользователями и банами |
+| [bank-management.php](admin/bank-management.php) | `Cashback_Bank_Management_Admin` | Справочник банков |
+| [health-check.php](admin/health-check.php) | `Cashback_Health_Check` | Мониторинг (WP Cron задача) |
+| [click-log.php](admin/click-log.php) | `Cashback_Click_Log_Admin` | Лог кликов по партнёрским ссылкам |
+| [transactions.php](admin/transactions.php) | `Cashback_Transactions_Admin` | Управление транзакциями (2 вкладки) |
+| [statistics.php](admin/statistics.php) | `Cashback_Statistics_Admin` | Дашборд статистики и KPI |
+| [class-cashback-admin-api-validation.php](admin/class-cashback-admin-api-validation.php) | `Cashback_Admin_API_Validation` | API валидация и синхронизация (3 вкладки) |
+| [traits/AdminPaginationTrait.php](admin/traits/AdminPaginationTrait.php) | `AdminPaginationTrait` | Общая логика пагинации |
 
 ### Папка includes/
 
 **Вспомогательные классы**
 
-| Файл                                                                      | Класс                  | Назначение                                  |
-| ------------------------------------------------------------------------- | ---------------------- | ------------------------------------------- |
-| [class-cashback-encryption.php](includes/class-cashback-encryption.php)   | `Cashback_Encryption`  | Шифрование AES-256-CBC, маскирование, аудит |
-| [class-cashback-user-status.php](includes/class-cashback-user-status.php) | `Cashback_User_Status` | Проверка бана и статуса пользователя        |
+| Файл | Класс | Назначение |
+|------|-------|-----------|
+| [class-cashback-encryption.php](includes/class-cashback-encryption.php) | `Cashback_Encryption` | AES-256-GCM шифрование, маскирование, аудит, IP защита |
+| [class-cashback-user-status.php](includes/class-cashback-user-status.php) | `Cashback_User_Status` | Проверка бана и статуса пользователя |
+| [class-cashback-api-client.php](includes/class-cashback-api-client.php) | `Cashback_API_Client` | API-клиент CPA-сетей (Admitad, EPN), OAuth2 |
+| [class-cashback-api-migration.php](includes/class-cashback-api-migration.php) | `Cashback_API_Migration` | Миграции БД для API валидации |
+| [class-cashback-api-cron.php](includes/class-cashback-api-cron.php) | `Cashback_API_Cron` | Фоновая синхронизация (каждые 2 часа) |
+
+### Папка partner/
+
+**Управление партнёрскими сетями**
+
+| Файл | Класс | Назначение |
+|------|-------|-----------|
+| [partner-management.php](partner/partner-management.php) | `Cashback_Partner_Management_Admin` | CRUD партнёрских сетей и их параметров |
+
+### Папка antifraud/
+
+**Антифрод-модуль**
+
+| Файл | Класс | Назначение |
+|------|-------|-----------|
+| [class-fraud-db.php](antifraud/class-fraud-db.php) | `Cashback_Fraud_DB` | 3 таблицы + cleanup старых данных |
+| [class-fraud-settings.php](antifraud/class-fraud-settings.php) | `Cashback_Fraud_Settings` | 14 настроек с валидацией типов |
+| [class-fraud-collector.php](antifraud/class-fraud-collector.php) | `Cashback_Fraud_Collector` | Сбор fingerprint, IP, User-Agent |
+| [class-fraud-detector.php](antifraud/class-fraud-detector.php) | `Cashback_Fraud_Detector` | 7 проверок, risk scoring, email |
+| [class-fraud-admin.php](antifraud/class-fraud-admin.php) | `Cashback_Fraud_Admin` | Админ-панель: 3 вкладки, badge |
 
 ### Папка support/
 
-**Модуль поддержки** (тикет-система)
+**Модуль поддержки** (тикет-система с вложениями)
 
-| Файл                                           | Класс                 | Назначение                  |
-| ---------------------------------------------- | --------------------- | --------------------------- |
-| [support-db.php](support/support-db.php)       | `Cashback_Support_DB` | Таблицы тикетов и сообщений |
-| [admin-support.php](support/admin-support.php) | -                     | Административный интерфейс  |
-| [user-support.php](support/user-support.php)   | -                     | Пользовательский кабинет    |
+| Файл | Класс | Назначение |
+|------|-------|-----------|
+| [support-db.php](support/support-db.php) | `Cashback_Support_DB` | Таблицы тикетов, сообщений, вложений + директория |
+| [admin-support.php](support/admin-support.php) | - | Административный интерфейс |
+| [user-support.php](support/user-support.php) | `Cashback_User_Support` | Пользовательский кабинет с rate limiting |
+
+### Папка assets/
+
+**Стили и скрипты**
+
+```
+assets/
+├── css/
+│   ├── cashback-history.css
+│   ├── cashback-withdrawal.css
+│   ├── history-payout.css
+│   ├── admin-payouts.css
+│   ├── admin-users.css
+│   ├── admin-payout-methods.css
+│   ├── admin-banks.css
+│   ├── admin-health-check.css
+│   ├── admin-click-log.css
+│   ├── admin-transactions.css
+│   ├── admin-statistics.css
+│   ├── admin-partner-management.css
+│   ├── admin-api-validation.css
+│   ├── admin-fraud.css
+│   ├── admin-support.css
+│   └── user-support.css
+├── js/
+│   ├── cashback-history.js
+│   ├── cashback-withdrawal.js
+│   ├── history-payout.js
+│   ├── admin-payouts.js
+│   ├── admin-users.js
+│   ├── admin-payout-methods.js
+│   ├── admin-banks.js
+│   ├── admin-click-log.js
+│   ├── admin-transactions.js
+│   ├── admin-statistics.js
+│   ├── admin-partner-management.js
+│   ├── admin-api-validation.js
+│   ├── admin-fraud.js
+│   ├── admin-support.js
+│   ├── user-support.js
+│   └── fraud-fingerprint.js
+└── images/
+```
 
 ### Папка development/
 
@@ -202,15 +322,17 @@ development/
 │   ├── SECURITY.md        - Политика безопасности
 │   └── CONTRIBUTING.md    - Руководство для контрибьюторов
 └── vendor/                - Composer зависимости
-    ├── phpstan/phpstan
-    ├── szepeviktor/phpstan-wordpress
-    ├── php-stubs/wordpress-stubs
-    └── php-stubs/woocommerce-stubs
 ```
 
 ---
 
 ## База данных
+
+### Обзор
+
+**Всего таблиц:** 20 (11 основных + 1 аудит-лог + 3 антифрод + 3 поддержка + 2 API валидация)
+**Всего триггеров:** 16
+**Всего MySQL событий:** 4
 
 ### Таблицы
 
@@ -218,275 +340,463 @@ development/
 
 **Назначение:** Хранение всех покупок через партнерские ссылки
 
-| Поле                    | Тип           | Описание                                      |
-| ----------------------- | ------------- | --------------------------------------------- |
-| `id`                    | BIGINT PK     | Первичный ключ                                |
-| `user_id`               | BIGINT FK     | → wp_users.ID (CASCADE)                       |
-| `uniq_id`               | VARCHAR(255)  | ID транзакции от партнера                     |
-| `partner_name`          | VARCHAR(255)  | Название партнера                             |
-| `offer_name`            | VARCHAR(255)  | Название магазина                             |
-| `comission`             | DECIMAL(18,2) | Комиссия от партнера                          |
-| `cashback`              | DECIMAL(18,2) | Рассчитанный кешбэк                           |
-| `applied_cashback_rate` | DECIMAL(5,2)  | Примененная ставка (%)                        |
-| `order_status`          | ENUM          | `waiting`, `completed`, `declined`, `balance` |
-| `processed_at`          | DATETIME      | Дата обработки (начисления в баланс)          |
-| `processed_batch_id`    | CHAR(36)      | UUID батча для отладки                        |
-| `idempotency_key`       | VARCHAR(64)   | Защита от дубликатов                          |
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | BIGINT PK | Первичный ключ |
+| `user_id` | BIGINT FK | → wp_users.ID (RESTRICT) |
+| `order_number` | VARCHAR(255) | Номер заказа у партнёра |
+| `offer_id` | INT UNSIGNED | ID партнёрской программы в CPA-сети (advcampaign_id) |
+| `offer_name` | VARCHAR(255) | Название партнера (магазина) |
+| `order_status` | ENUM | `waiting`, `completed`, `declined`, `hold`, `balance` |
+| `partner` | VARCHAR(255) | Название CPA-сети |
+| `sum_order` | DECIMAL(10,2) | Сумма заказа |
+| `comission` | DECIMAL(10,2) | Комиссия от партнера |
+| `currency` | CHAR(3) | Валюта комиссии (ISO 4217, default `RUB`) |
+| `uniq_id` | VARCHAR(255) | ID конверсии в CPA |
+| `cashback` | DECIMAL(10,2) | Рассчитанный кешбэк |
+| `applied_cashback_rate` | DECIMAL(5,2) | Примененная ставка (%, default 60.00) |
+| `api_verified` | TINYINT(1) | 1 = транзакция сверена с API (триггер начисления) |
+| `action_date` | DATETIME | Реальное время покупки |
+| `click_time` | DATETIME | Время клика (антифрод: action_date − click_time = 0 → бот) |
+| `click_id` | CHAR(32) | UUID клика, связь с cashback_click_log |
+| `website_id` | INT UNSIGNED | ID площадки в CPA-сети |
+| `action_type` | VARCHAR(10) | sale/lead |
+| `processed_at` | DATETIME | Когда начислено в баланс |
+| `processed_batch_id` | CHAR(36) | UUID батча начисления |
+| `idempotency_key` | VARCHAR(64) | Защита от дубликатов |
+| `spam_click` | TINYINT(1) | 1 = подозрительный клик, кешбэк после ручной проверки |
+| `created_at` | TIMESTAMP | Дата создания |
+| `updated_at` | TIMESTAMP | Дата обновления |
 
 **Индексы:**
 
-- UNIQUE: `(uniq_id, partner_name)`
+- UNIQUE: `(uniq_id, partner)`
 - UNIQUE: `idempotency_key`
-- KEY: `user_id`
-- KEY: `order_status`
+- KEY: `user_id`, `idx_user_created`, `idx_processed`, `idx_processed_batch_id`
+- KEY: `idx_click_id`, `idx_offer_id`
+- KEY: `idx_balance_candidates` — составной: `(order_status, api_verified, processed_at, spam_click, cashback)`
 
 **CHECK Constraints:**
 
 - `applied_cashback_rate BETWEEN 0.00 AND 100.00`
 - `cashback >= 0`
+- `currency REGEXP '^[A-Z]{3}$'`
 
 ---
 
 #### 2. `cashback_user_balance` — Балансы пользователей
 
-**Назначение:** Хранение балансов в разрезе статусов
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `user_id` | BIGINT PK FK | → wp_users.ID (RESTRICT) |
+| `available_balance` | DECIMAL(18,2) | Доступно для вывода |
+| `pending_balance` | DECIMAL(18,2) | В обработке (заявка подана) |
+| `paid_balance` | DECIMAL(18,2) | Выплачено |
+| `frozen_balance` | DECIMAL(18,2) | Заморожено (бан) |
+| `version` | INT UNSIGNED | Оптимистичная блокировка |
+| `updated_at` | DATETIME | Дата обновления |
 
-| Поле                | Тип           | Описание                    |
-| ------------------- | ------------- | --------------------------- |
-| `user_id`           | BIGINT PK FK  | → wp_users.ID (CASCADE)     |
-| `available_balance` | DECIMAL(18,2) | Доступно для вывода         |
-| `pending_balance`   | DECIMAL(18,2) | В обработке (заявка подана) |
-| `paid_balance`      | DECIMAL(18,2) | Выплачено                   |
-| `frozen_balance`    | DECIMAL(18,2) | Заморожено (бан)            |
-| `version`           | INT UNSIGNED  | Оптимистичная блокировка    |
-
-**CHECK Constraints:**
-
-- Все 4 баланса >= 0
-
-**Связи:**
-
-- FK `user_id` → `wp_users.ID` ON DELETE CASCADE
+**CHECK Constraints:** Все 4 баланса >= 0
 
 ---
 
 #### 3. `cashback_payout_requests` — Заявки на выплату
 
-**Назначение:** Управление запросами на вывод средств
-
-| Поле                | Тип           | Описание                   |
-| ------------------- | ------------- | -------------------------- |
-| `id`                | BIGINT PK     | Первичный ключ             |
-| `user_id`           | BIGINT FK     | → wp_users.ID (CASCADE)    |
-| `total_amount`      | DECIMAL(18,2) | Сумма к выплате            |
-| `payout_account`    | VARCHAR(255)  | Реквизиты (deprecated)     |
-| `payout_full_name`  | VARCHAR(255)  | ФИО (deprecated)           |
-| `status`            | ENUM          | См. конечный автомат ниже  |
-| `encrypted_details` | TEXT          | AES-256-CBC реквизиты      |
-| `masked_details`    | TEXT          | JSON маскированных данных  |
-| `details_hash`      | CHAR(64)      | SHA-256 для антифрода      |
-| `idempotency_key`   | VARCHAR(64)   | Защита от дубликатов       |
-| `refunded_at`       | DATETIME      | Дата возврата (при failed) |
-
-**Статусы (ENUM):**
-
-- `waiting` — Ожидает обработки
-- `processing` — В работе
-- `paid` — Выплачен (финальный)
-- `failed` — Возврат в баланс (финальный)
-- `declined` — Отклонен/заморожен (финальный)
-- `needs_retry` — Требует повтора
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | BIGINT PK | Первичный ключ |
+| `reference_id` | VARCHAR(11) UNIQUE | Публичный ID формата WD-XXXXXXXX |
+| `user_id` | BIGINT FK | → wp_users.ID (RESTRICT) |
+| `total_amount` | DECIMAL(18,2) | Сумма к выплате |
+| `payout_method` | VARCHAR(50) | Slug способа выплаты |
+| `payout_account` | VARCHAR(255) | Реквизиты (legacy) |
+| `encrypted_details` | BLOB | AES-256-GCM зашифрованные реквизиты |
+| `masked_details` | TEXT | JSON маскированных данных |
+| `provider` | VARCHAR(100) | Идентификатор провайдера выплат |
+| `provider_payout_id` | VARCHAR(255) | ID операции у провайдера |
+| `idempotency_key` | CHAR(36) | UUID v4 идемпотентный ключ |
+| `attempts` | INT | Количество попыток |
+| `fail_reason` | TEXT | Причина ошибки |
+| `status` | ENUM | `waiting`, `processing`, `paid`, `failed`, `declined`, `needs_retry` |
+| `refunded_at` | DATETIME | Дата возврата (при failed) |
 
 **Индексы:**
 
-- UNIQUE: `idempotency_key`
-- KEY: `(user_id, status)`
-
-**CHECK Constraints:**
-
-- `total_amount > 0`
+- UNIQUE: `reference_id`, `idempotency_key`
+- KEY: `idx_user_status`, `idx_status_updated`, `idx_provider_payout_id`
+- KEY: `idx_payout_method_slug`, `idx_user_created`
 
 ---
 
 #### 4. `cashback_user_profile` — Профили пользователей
 
-**Назначение:** Настройки кешбэка и реквизиты пользователя
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `user_id` | BIGINT PK FK | → wp_users.ID (CASCADE) |
+| `payout_method_id` | BIGINT FK | → cashback_payout_methods.id (SET NULL) |
+| `payout_account` | VARCHAR(255) | Телефон/карта/кошелёк (legacy) |
+| `payout_full_name` | VARCHAR(255) | ФИО для выплат (legacy) |
+| `encrypted_details` | BLOB | AES-256-GCM зашифрованные реквизиты |
+| `masked_details` | TEXT | Маскированные реквизиты (JSON) |
+| `details_hash` | CHAR(64) | SHA-256 хеш для антифрода |
+| `bank_id` | BIGINT FK | → cashback_banks.id (SET NULL) |
+| `cashback_rate` | DECIMAL(5,2) | Индивидуальная ставка (0-100%, default 60) |
+| `is_verified` | TINYINT(1) | 1 = реквизиты подтверждены |
+| `payout_details_updated_at` | DATETIME | Дата обновления реквизитов |
+| `min_payout_amount` | DECIMAL(18,2) | Минимальная сумма вывода (default 100) |
+| `opt_out` | TINYINT(1) | Отказ от участия |
+| `status` | ENUM | `active`, `noactive`, `banned`, `deleted` |
+| `banned_at` | DATETIME | Дата бана |
+| `ban_reason` | TEXT | Причина бана |
+| `last_active_at` | DATETIME | Последняя активность |
 
-| Поле                | Тип            | Описание                                  |
-| ------------------- | -------------- | ----------------------------------------- |
-| `user_id`           | BIGINT PK FK   | → wp_users.ID (CASCADE)                   |
-| `cashback_rate`     | DECIMAL(5,2)   | Индивидуальная ставка (0-100%)            |
-| `min_payout_amount` | DECIMAL(18,2)  | Минимальная сумма вывода                  |
-| `payout_method`     | VARCHAR(50) FK | → cashback_payout_methods.slug            |
-| `bank_code`         | VARCHAR(9) FK  | → cashback_banks.bank_code                |
-| `status`            | ENUM           | `active`, `noactive`, `banned`, `deleted` |
-| `banned_at`         | DATETIME       | Дата бана                                 |
-| `ban_reason`        | TEXT           | Причина бана                              |
+**Индексы:**
 
-**Связи:**
-
-- FK `payout_method` → `cashback_payout_methods.slug` ON DELETE SET NULL
-- FK `bank_code` → `cashback_banks.bank_code` ON DELETE SET NULL
-
-**CHECK Constraints:**
-
-- `cashback_rate BETWEEN 0.00 AND 100.00`
+- KEY: `idx_active_check` — `(status, last_active_at, created_at)`
+- KEY: `idx_payout_method`, `idx_bank_id`, `idx_details_hash`
 
 ---
 
 #### 5. `cashback_payout_methods` — Способы выплат
 
-**Справочник:** СБП, МИР, Сбербанк и т.д.
-
-| Поле          | Тип                | Описание       |
-| ------------- | ------------------ | -------------- |
-| `id`          | BIGINT PK          | Первичный ключ |
-| `name`        | VARCHAR(255)       | Название       |
-| `slug`        | VARCHAR(50) UNIQUE | Идентификатор  |
-| `description` | TEXT               | Описание       |
-| `is_active`   | TINYINT(1)         | Активность     |
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | BIGINT PK | Первичный ключ |
+| `slug` | VARCHAR(50) UNIQUE | Идентификатор (sbp, mir и др.) |
+| `name` | VARCHAR(100) | Название |
+| `is_active` | TINYINT(1) | Активность |
+| `sort_order` | INT | Порядок сортировки |
 
 ---
 
 #### 6. `cashback_banks` — Справочник банков
 
-| Поле         | Тип               | Описание         |
-| ------------ | ----------------- | ---------------- |
-| `id`         | BIGINT PK         | Первичный ключ   |
-| `bank_code`  | VARCHAR(9) UNIQUE | БИК банка        |
-| `name`       | VARCHAR(255)      | Полное название  |
-| `short_name` | VARCHAR(100)      | Краткое название |
-| `is_active`  | TINYINT(1)        | Активность       |
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | BIGINT PK | Первичный ключ |
+| `bank_code` | VARCHAR(50) UNIQUE | Код банка (sber, tinkoff и др.) |
+| `name` | VARCHAR(100) | Полное название |
+| `short_name` | VARCHAR(50) | Краткое название |
+| `is_active` | TINYINT(1) | Активность |
+| `sort_order` | INT | Порядок сортировки |
+
+**Индексы:** `idx_active_sort_name`, `idx_name_active`
 
 ---
 
-#### 7. `cashback_webhooks` — Сырые вебхуки
+#### 7. `cashback_affiliate_networks` — Партнёрские сети
 
-**Назначение:** Логирование всех входящих webhook'ов
+**Назначение:** Справочник CPA-сетей с API-конфигурацией
 
-| Поле           | Тип       | Описание                        |
-| -------------- | --------- | ------------------------------- |
-| `id`           | BIGINT PK | Первичный ключ                  |
-| `payload`      | LONGTEXT  | JSON тело запроса               |
-| `payload_norm` | CHAR(64)  | SHA-256(payload) - дедупликация |
-| `received_at`  | DATETIME  | Дата получения                  |
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | BIGINT PK | Первичный ключ |
+| `name` | VARCHAR(255) | Название |
+| `slug` | VARCHAR(100) UNIQUE | Идентификатор |
+| `notes` | TEXT | Примечание |
+| `sort_order` | INT | Порядок сортировки |
+| `is_active` | TINYINT(1) | Активность |
+| `api_base_url` | VARCHAR(255) | Базовый URL API (добавлено миграцией) |
+| `api_credentials` | BLOB | Зашифрованные credentials (добавлено миграцией) |
+| `api_user_field` | VARCHAR(100) | Поле для user ID в API |
+| `api_click_field` | VARCHAR(100) | Поле для click ID в API |
+| `api_status_map` | JSON | Маппинг статусов API → локальные |
+| `api_actions_endpoint` | VARCHAR(255) | Эндпоинт получения действий |
+| `api_token_endpoint` | VARCHAR(255) | Эндпоинт OAuth2 токена |
+| `api_website_id` | VARCHAR(100) | ID площадки в CPA-сети |
+
+---
+
+#### 8. `cashback_affiliate_network_params` — Параметры сетей
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | BIGINT PK | Первичный ключ |
+| `network_id` | BIGINT FK | → cashback_affiliate_networks.id (CASCADE) |
+| `param_name` | VARCHAR(100) | Название параметра (subid, click_id) |
+| `param_type` | VARCHAR(100) | Тип значения |
+| `default_value` | VARCHAR(255) | Значение по умолчанию |
+
+---
+
+#### 9. `cashback_click_log` — Лог кликов
+
+**Назначение:** Серверное логирование всех кликов по партнёрским ссылкам
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | BIGINT PK | Первичный ключ |
+| `click_id` | CHAR(32) UNIQUE | UUID клика без дефисов, передаётся как subID |
+| `user_id` | BIGINT | WP user ID (0 для гостей) |
+| `session_id` | VARCHAR(128) | Идентификатор сессии |
+| `product_id` | BIGINT | ID товара WooCommerce |
+| `cpa_network` | VARCHAR(100) | Название CPA-сети |
+| `offer_id` | VARCHAR(255) | ID оффера |
+| `affiliate_url` | TEXT | Полный URL с параметрами |
+| `ip_address` | VARCHAR(45) | IPv4/IPv6 адрес |
+| `user_agent` | TEXT | User-Agent |
+| `referer` | TEXT | Внутренний referer |
+| `utm_source` | VARCHAR(255) | UTM source |
+| `utm_medium` | VARCHAR(255) | UTM medium |
+| `utm_campaign` | VARCHAR(255) | UTM campaign |
+| `country` | VARCHAR(2) | Код страны (ISO 3166-1 alpha-2) |
+| `spam_click` | TINYINT(1) | 1 = подозрительный клик |
+| `created_at` | DATETIME(6) | Время клика (UTC) |
 
 **Индексы:**
 
-- UNIQUE: `payload_norm`
+- UNIQUE: `click_id`
+- KEY: `idx_user_id`, `idx_product_id`, `idx_cpa_network`, `idx_created_at`
+- KEY: `idx_ip_address`, `idx_session_id`
+- KEY: `idx_spam_by_ip`, `idx_spam_by_product` — составные для анализа
 
 ---
 
-#### 8. `cashback_audit_log` — Аудит-лог
+#### 10. `cashback_webhooks` — Сырые вебхуки
 
-**Назначение:** Логирование критических операций
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | BIGINT PK | Первичный ключ |
+| `received_at` | DATETIME(6) | Дата получения |
+| `payload` | LONGTEXT | JSON тело запроса |
+| `network_slug` | VARCHAR(64) | Идентификатор сети |
+| `payload_hash` | CHAR(64) | SHA-256(payload) — дедупликация |
 
-| Поле          | Тип          | Описание          |
-| ------------- | ------------ | ----------------- |
-| `id`          | BIGINT PK    | Первичный ключ    |
-| `action`      | VARCHAR(50)  | Тип действия      |
-| `entity_type` | VARCHAR(50)  | Тип сущности      |
-| `entity_id`   | VARCHAR(255) | ID сущности       |
-| `actor_id`    | BIGINT       | ID администратора |
-| `ip_address`  | VARCHAR(45)  | IP адрес          |
-| `user_agent`  | TEXT         | User-Agent        |
-| `created_at`  | DATETIME     | Дата создания     |
-
-**Типы действий:**
-
-- `payout_details_decrypted` — Расшифровка реквизитов
-- `payout_declined_on_ban` — Заявка отклонена при бане
-- `user_banned` — Пользователь забанен
-- `user_unbanned` — Пользователь разбанен
-
-**Индексы:**
-
-- KEY: `(action, actor_id)`
-- KEY: `entity_type`
+**Индексы:** UNIQUE `payload_hash`, KEY `idx_received_at`, `idx_network_slug`
 
 ---
 
-#### 9. `cashback_unregistered_transactions` — Незарегистрированные транзакции
+#### 11. `cashback_unregistered_transactions` — Незарегистрированные
 
 **Назначение:** Вебхуки от пользователей, которых нет в системе
 
-Структура аналогична `cashback_transactions`, но без FK на `wp_users`.
+Структура аналогична `cashback_transactions`, но `user_id` — VARCHAR(255), без FK на `wp_users`.
 
 ---
 
-#### 10. `cashback_support_tickets` — Тикеты поддержки
+#### 12. `cashback_audit_log` — Аудит-лог
 
-| Поле         | Тип          | Описание                         |
-| ------------ | ------------ | -------------------------------- |
-| `id`         | BIGINT PK    | Первичный ключ                   |
-| `user_id`    | BIGINT FK    | → wp_users.ID (CASCADE)          |
-| `subject`    | VARCHAR(255) | Тема                             |
-| `priority`   | ENUM         | `urgent`, `normal`, `not_urgent` |
-| `status`     | ENUM         | `open`, `answered`, `closed`     |
-| `created_at` | DATETIME     | Дата создания                    |
-| `updated_at` | DATETIME     | Последнее обновление             |
-| `closed_at`  | DATETIME     | Дата закрытия                    |
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | BIGINT PK | Первичный ключ |
+| `action` | VARCHAR(100) | Тип действия |
+| `actor_id` | BIGINT | ID пользователя-инициатора |
+| `entity_type` | VARCHAR(50) | Тип сущности |
+| `entity_id` | BIGINT | ID сущности |
+| `ip_address` | VARCHAR(45) | IP адрес (с защитой от спуфинга) |
+| `user_agent` | TEXT | User-Agent |
+| `details` | LONGTEXT | Доп. данные в JSON |
+| `created_at` | DATETIME | Дата создания |
+
+**Индексы:** `idx_action_actor`, `idx_entity`, `idx_created`
 
 ---
 
-#### 11. `cashback_support_messages` — Сообщения в тикетах
+#### 13. `cashback_support_tickets` — Тикеты поддержки
 
-| Поле         | Тип        | Описание                                |
-| ------------ | ---------- | --------------------------------------- |
-| `id`         | BIGINT PK  | Первичный ключ                          |
-| `ticket_id`  | BIGINT FK  | → cashback_support_tickets.id (CASCADE) |
-| `user_id`    | BIGINT FK  | → wp_users.ID (CASCADE)                 |
-| `message`    | TEXT       | Текст сообщения                         |
-| `is_admin`   | TINYINT(1) | От админа?                              |
-| `is_read`    | TINYINT(1) | Прочитано?                              |
-| `created_at` | DATETIME   | Дата создания                           |
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | BIGINT PK | Первичный ключ |
+| `user_id` | BIGINT FK | → wp_users.ID (CASCADE) |
+| `subject` | VARCHAR(255) | Тема |
+| `priority` | ENUM | `urgent`, `normal`, `not_urgent` |
+| `status` | ENUM | `open`, `answered`, `closed` |
+| `created_at` | DATETIME | Дата создания |
+| `updated_at` | DATETIME | Последнее обновление |
+| `closed_at` | DATETIME | Дата закрытия |
+
+---
+
+#### 14. `cashback_support_messages` — Сообщения в тикетах
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | BIGINT PK | Первичный ключ |
+| `ticket_id` | BIGINT FK | → cashback_support_tickets.id (CASCADE) |
+| `user_id` | BIGINT FK | → wp_users.ID (CASCADE) |
+| `message` | TEXT | Текст сообщения |
+| `is_admin` | TINYINT(1) | От админа? |
+| `is_read` | TINYINT(1) | Прочитано? |
+| `created_at` | DATETIME | Дата создания |
+
+---
+
+#### 15. `cashback_support_attachments` — Вложения
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | BIGINT PK | Первичный ключ |
+| `message_id` | BIGINT FK | → cashback_support_messages.id (CASCADE) |
+| `ticket_id` | BIGINT FK | → cashback_support_tickets.id (CASCADE) |
+| `user_id` | BIGINT FK | → wp_users.ID |
+| `file_name` | VARCHAR(255) | Оригинальное имя файла |
+| `stored_name` | VARCHAR(255) | Хеш-имя на диске (без расширения) |
+| `file_size` | BIGINT | Размер в байтах |
+| `mime_type` | VARCHAR(100) | MIME-тип (проверка через finfo) |
+| `created_at` | DATETIME | Дата создания |
+
+**Безопасность вложений:**
+
+- Файлы хранятся без расширений (защита от прямого исполнения)
+- MIME-тип определяется через `finfo_file()` (не из расширения)
+- Директория: `/wp-content/cashback-support/` с `.htaccess` (deny from all)
+- Допустимые типы: PDF, DOC/DOCX, XLS/XLSX, JPG/PNG, GIF (настраивается)
+- Максимальный размер: 5 MB (настраивается)
+
+---
+
+#### 16. `cashback_fraud_alerts` — Антифрод: алерты
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | BIGINT PK | Первичный ключ |
+| `user_id` | BIGINT FK | → wp_users.ID (CASCADE) |
+| `alert_type` | VARCHAR(50) | Тип алерта (см. ниже) |
+| `severity` | ENUM | `low`, `medium`, `high`, `critical` |
+| `risk_score` | DECIMAL(5,2) | Оценка риска 0-100 |
+| `status` | ENUM | `open`, `reviewing`, `confirmed`, `dismissed` |
+| `summary` | TEXT | Краткое описание |
+| `details` | LONGTEXT | JSON с evidence |
+| `reviewed_by` | BIGINT FK | ID админа-ревьюера |
+| `reviewed_at` | DATETIME | Дата ревью |
+| `review_note` | TEXT | Заметка ревьюера |
+
+**Типы алертов:** `multi_account_ip`, `multi_account_fp`, `shared_details`, `cancellation_rate`, `velocity`, `amount_anomaly`, `new_account_risk`
+
+---
+
+#### 17. `cashback_fraud_signals` — Антифрод: сигналы
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | BIGINT PK | Первичный ключ |
+| `alert_id` | BIGINT FK | → cashback_fraud_alerts.id (CASCADE) |
+| `signal_type` | VARCHAR(50) | Тип сигнала |
+| `weight` | DECIMAL(5,2) | Вес (вклад в risk_score) |
+| `evidence` | LONGTEXT | JSON с доказательствами |
+
+**Типы сигналов:** `ip_match`, `fingerprint_match`, `shared_details`, `cancellation_rate`, `velocity`, `amount_spike`, `new_account_withdrawal`
+
+---
+
+#### 18. `cashback_user_fingerprints` — Антифрод: отпечатки
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | BIGINT PK | Первичный ключ |
+| `user_id` | BIGINT FK | → wp_users.ID (CASCADE) |
+| `ip_address` | VARCHAR(45) | IP адрес |
+| `fingerprint_hash` | CHAR(64) | SHA-256 browser fingerprint |
+| `user_agent_hash` | CHAR(64) | SHA-256 User-Agent |
+| `event_type` | ENUM | `login`, `page_view`, `withdrawal`, `registration` |
+| `created_at` | DATETIME | Время записи |
+
+**Индексы:** `idx_user_id`, `idx_ip_address`, `idx_fingerprint`, `idx_ip_user`, `idx_fingerprint_user`, `idx_created`
+
+---
+
+#### 19. `cashback_validation_checkpoints` — API: контрольные точки
+
+**Назначение:** Результаты сверки локальных данных с API CPA-сетей
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `user_id` | BIGINT | ID пользователя |
+| `network_slug` | VARCHAR(100) | Идентификатор сети |
+| `last_validated_date` | DATE | Дата последней валидации |
+| `api_sum_approved` | DECIMAL | Сумма одобренных в API |
+| `api_sum_pending` | DECIMAL | Сумма pending в API |
+| `api_sum_declined` | DECIMAL | Сумма отклонённых в API |
+| `local_sum_approved` | DECIMAL | Сумма одобренных локально |
+| `local_sum_pending` | DECIMAL | Сумма pending локально |
+| `local_sum_declined` | DECIMAL | Сумма отклонённых локально |
+| `validation_status` | ENUM | `match`, `mismatch`, `pending`, `error` |
+| `discrepancy_amount` | DECIMAL | Размер расхождения |
+| `matched_count` | INT | Количество совпадений |
+| `mismatch_count` | INT | Количество расхождений |
+| `missing_local_count` | INT | Отсутствуют локально |
+| `missing_api_count` | INT | Отсутствуют в API |
+
+---
+
+#### 20. `cashback_sync_log` — API: лог синхронизации
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | BIGINT PK | Первичный ключ |
+| `network_slug` | VARCHAR(100) | Идентификатор сети |
+| `transaction_id` | BIGINT | ID локальной транзакции |
+| `action_id` | VARCHAR(255) | ID действия в API |
+| `old_status` | VARCHAR(50) | Старый статус |
+| `new_status` | VARCHAR(50) | Новый статус |
+| `api_payment` | DECIMAL | Сумма по API |
+| `sync_type` | ENUM | `cron`, `manual`, `webhook`, `auto_decline` |
+| `synced_at` | DATETIME | Время синхронизации |
 
 ---
 
 ### Триггеры
 
-**Всего триггеров:** 14
+**Всего триггеров:** 16
 
-#### Группа 1: Автоматический расчет кешбэка
+#### Группа 1: Автоматический расчет кешбэка (4 триггера)
 
-| Триггер                                         | Событие       | Таблица                            | Логика                                                                                            |
-| ----------------------------------------------- | ------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `calculate_cashback_before_insert`              | BEFORE INSERT | cashback_transactions              | Читает `cashback_rate` из `user_profile`, вычисляет `cashback = ROUND(comission * rate / 100, 2)` |
-| `calculate_cashback_before_update`              | BEFORE UPDATE | cashback_transactions              | Пересчет при изменении `comission`                                                                |
-| `calculate_cashback_before_insert_unregistered` | BEFORE INSERT | cashback_unregistered_transactions | Фиксированная ставка 60%                                                                          |
-| `calculate_cashback_before_update_unregistered` | BEFORE UPDATE | cashback_unregistered_transactions | Пересчет при изменении `comission`                                                                |
+| Триггер | Событие | Таблица | Логика |
+|---------|---------|---------|--------|
+| `calculate_cashback_before_insert` | BEFORE INSERT | cashback_transactions | Читает `cashback_rate` из `user_profile`, `cashback = ROUND(comission * rate / 100, 2)` |
+| `calculate_cashback_before_update` | BEFORE UPDATE | cashback_transactions | Пересчет при изменении `comission` (использует `applied_cashback_rate`) |
+| `calculate_cashback_before_insert_unregistered` | BEFORE INSERT | cashback_unregistered_transactions | Фиксированная ставка 60% |
+| `calculate_cashback_before_update_unregistered` | BEFORE UPDATE | cashback_unregistered_transactions | Пересчет при изменении `comission` |
 
-#### Группа 2: Защита от удаления/изменения финальных записей
+#### Группа 2: Валидация переходов статусов (4 триггера)
 
-| Триггер                                   | Событие       | Таблица                  | Логика                                         |
-| ----------------------------------------- | ------------- | ------------------------ | ---------------------------------------------- |
-| `cashback_tr_prevent_delete_final_status` | BEFORE DELETE | cashback_transactions    | SIGNAL: запрет удаления со статусом `balance`  |
-| `cashback_tr_prevent_update_final_status` | BEFORE UPDATE | cashback_transactions    | SIGNAL: запрет изменения со статусом `balance` |
-| `tr_prevent_delete_paid_payout`           | BEFORE DELETE | cashback_payout_requests | SIGNAL: запрет удаления `paid`                 |
-| `tr_prevent_update_paid_payout`           | BEFORE UPDATE | cashback_payout_requests | SIGNAL: запрет изменения `paid`                |
-| `tr_prevent_delete_failed_payout`         | BEFORE DELETE | cashback_payout_requests | SIGNAL: запрет удаления `failed`               |
-| `tr_prevent_update_failed_payout`         | BEFORE UPDATE | cashback_payout_requests | SIGNAL: запрет изменения `failed`              |
+| Триггер | Событие | Таблица | Логика |
+|---------|---------|---------|--------|
+| `cashback_tr_prevent_delete_final_status` | BEFORE DELETE | cashback_transactions | SIGNAL: запрет удаления со статусом `balance` |
+| `cashback_tr_validate_status_transition` | BEFORE UPDATE | cashback_transactions | **Конечный автомат**: balance — полная блокировка; нельзя вернуть в waiting; в balance — только из completed; в hold — только из completed; из declined — только в completed |
+| `cashback_tr_validate_status_transition_unregistered` | BEFORE UPDATE | cashback_unregistered_transactions | Аналогичные правила |
 
-#### Группа 3: Управление баном пользователя
+**Конечный автомат статусов транзакций:**
 
-| Триггер                           | Событие       | Таблица               | Логика                                                                    |
-| --------------------------------- | ------------- | --------------------- | ------------------------------------------------------------------------- |
-| `tr_banned_user_update_banned_at` | BEFORE UPDATE | cashback_user_profile | При смене статуса на `banned`: устанавливает `banned_at = NOW()`          |
-| `tr_freeze_balance_on_ban`        | AFTER UPDATE  | cashback_user_profile | При бане: `frozen += available + pending`, `available = 0`, `pending = 0` |
-| `tr_clear_ban_on_unban`           | BEFORE UPDATE | cashback_user_profile | При разбане: сбрасывает `banned_at = NULL`, `ban_reason = NULL`           |
-| `tr_unfreeze_balance_on_unban`    | AFTER UPDATE  | cashback_user_profile | При разбане: `available += frozen`, `frozen = 0`                          |
+```
+waiting ──→ completed ──→ balance (финальный)
+   │            │
+   │            ├──→ hold (заморожено рекламодателем)
+   │            │
+   ↓            ↓
+declined ──→ completed (апелляция)
+```
+
+#### Группа 3: Защита финальных заявок на выплату (4 триггера)
+
+| Триггер | Событие | Таблица | Логика |
+|---------|---------|---------|--------|
+| `tr_prevent_delete_paid_payout` | BEFORE DELETE | cashback_payout_requests | SIGNAL: запрет удаления `paid` |
+| `tr_prevent_update_paid_payout` | BEFORE UPDATE | cashback_payout_requests | SIGNAL: запрет изменения `paid` |
+| `tr_prevent_delete_failed_payout` | BEFORE DELETE | cashback_payout_requests | SIGNAL: запрет удаления `failed` |
+| `tr_prevent_update_failed_payout` | BEFORE UPDATE | cashback_payout_requests | SIGNAL: запрет изменения `failed` |
+
+#### Группа 4: Управление баном пользователя (4 триггера)
+
+| Триггер | Событие | Таблица | Логика |
+|---------|---------|---------|--------|
+| `tr_banned_user_update_banned_at` | BEFORE UPDATE | cashback_user_profile | При смене на `banned`: `banned_at = NOW()` |
+| `tr_freeze_balance_on_ban` | AFTER UPDATE | cashback_user_profile | При бане: `frozen += available + pending`, `available = 0`, `pending = 0` |
+| `tr_clear_ban_on_unban` | BEFORE UPDATE | cashback_user_profile | При разбане: `banned_at = NULL`, `ban_reason = NULL` |
+| `tr_unfreeze_balance_on_unban` | AFTER UPDATE | cashback_user_profile | При разбане: `available += frozen`, `frozen = 0` |
 
 ---
 
 ### MySQL события (Cron на уровне БД)
 
-**Всего событий:** 3 (выполняются ежедневно)
+**Всего событий:** 4
 
-| Событие                                     | Расписание        | Назначение                                                                                                                                                                                                                  |
-| ------------------------------------------- | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cashback_ev_confirmed_cashback`            | Ежедневно в 03:00 | Начисляет кешбэк в баланс: берет транзакции со статусом `completed` возрастом >= 1 день, переводит в `balance`, начисляет `available_balance`. Защита: `GET_LOCK('cashback_event_lock', 0)` + `processed_batch_id = UUID()` |
-| `cashback_ev_cleanup_cashback_webhooks_old` | Ежедневно в 04:00 | Удаляет вебхуки старше 6 месяцев                                                                                                                                                                                            |
-| `cashback_ev_mark_inactive_profiles`        | Ежедневно в 05:00 | Переводит профили в статус `noactive` если `last_active_at < NOW() - INTERVAL 6 MONTH`                                                                                                                                      |
+| Событие | Расписание | Назначение |
+|---------|-----------|-----------|
+| `cashback_ev_confirmed_cashback` | Ежедневно | Начисление кешбэка: `completed` + `api_verified=1` + `spam_click=0` + возраст >= 7 дней → `balance`. Защита: `GET_LOCK`, `processed_batch_id = UUID()`, временная таблица |
+| `cashback_ev_cleanup_cashback_webhooks_old` | Ежедневно | Удаление вебхуков старше 6 месяцев (LIMIT 5000) |
+| `cashback_ev_cleanup_click_log` | Ежедневно | Удаление кликов старше 90 дней (LIMIT 5000) |
+| `cashback_ev_mark_inactive_profiles` | Ежедневно | `active` → `noactive` если `last_active_at` > 6 месяцев (LIMIT 1000, с GET_LOCK) |
 
 ---
 
@@ -495,39 +805,42 @@ development/
 ### CashbackPlugin — Загрузчик
 
 **Файл:** [cashback-plugin.php](cashback-plugin.php)
-**Паттерн:** Singleton
 
-#### Ключевые методы
+#### load_dependencies() — 29 файлов
 
-```php
-public static function activate()
+```
+includes/class-cashback-encryption.php
+includes/class-cashback-user-status.php
+mariadb.php, cashback-history.php, cashback-withdrawal.php
+history-payout.php, wc-affiliate-url-params.php
+admin/traits/AdminPaginationTrait.php
+admin/payout-methods.php, admin/users-management.php
+admin/payouts.php, admin/bank-management.php
+admin/health-check.php, admin/click-log.php
+admin/transactions.php, admin/statistics.php
+partner/partner-management.php
+support/support-db.php, support/admin-support.php, support/user-support.php
+antifraud/class-fraud-db.php, class-fraud-settings.php
+antifraud/class-fraud-collector.php, class-fraud-detector.php, class-fraud-admin.php
+includes/class-cashback-api-client.php, class-cashback-api-migration.php
+includes/class-cashback-api-cron.php
+admin/class-cashback-admin-api-validation.php
 ```
 
-- Генерирует ключ шифрования `CB_ENCRYPTION_KEY` (32 байта → 64 hex символа)
-- Сохраняет в `wp-content/.cashback-encryption-key.php`
-- Вызывает `Mariadb_Plugin::activate()` для создания БД
-- Создает таблицы поддержки
-- Планирует WP Cron задачи
+#### initialize_components() — 10 экземпляров
 
 ```php
-private function load_dependencies()
+Mariadb_Plugin::get_instance()
+CashbackHistory::get_instance()
+CashbackWithdrawal::get_instance()
+HistoryPayout::get_instance()
+new WC_Affiliate_URL_Params()
+Cashback_User_Support::get_instance()
+Cashback_Fraud_Collector::get_instance()
+new Cashback_Fraud_Admin()              // только is_admin()
+Cashback_Admin_API_Validation::get_instance()  // только is_admin()
+Cashback_API_Cron::init()
 ```
-
-- Подключает все PHP файлы через `require_once`
-- Порядок: вспомогательные классы → основные компоненты → админка → поддержка
-
-```php
-private function initialize_components()
-```
-
-- Создает singleton экземпляры всех классов
-- Порядок важен: сначала зависимости, потом зависящие компоненты
-
-#### Хуки
-
-- `plugins_loaded` → `init()` — загрузка компонентов
-- `init` → `load_textdomain()` — переводы
-- `before_woocommerce_init` → `declare_woocommerce_compatibility()` — HPOS
 
 ---
 
@@ -536,138 +849,53 @@ private function initialize_components()
 **Файл:** [mariadb.php](mariadb.php)
 **Паттерн:** Singleton
 
-#### Ключевые методы
+#### activate() — Последовательность
+
+1. `create_tables()` — 11 таблиц + `create_audit_log_table()` + `add_table_constraints()`
+2. `migrate_add_reference_id()` — добавление колонки + бэкфилл
+3. `create_triggers()` — 16 триггеров
+4. `create_events()` — 4 MySQL события
+5. `initialize_existing_users()` — профили и балансы
+
+#### generate_reference_id()
 
 ```php
-public static function activate()
+public static function generate_reference_id(): string
 ```
 
-Последовательность:
-
-1. `validate_table_prefix()` — regex проверка префикса
-2. `create_tables()` — 9 таблиц через `dbDelta()`
-3. `create_audit_log_table()` — таблица аудита
-4. `create_triggers()` — 14 триггеров
-5. `create_events()` — 3 MySQL события
-6. `initialize_existing_users()` — инициализация текущих пользователей
-7. `migrate_payout_method_fk()` — добавление FK если отсутствует
-8. `add_performance_indexes()` — индексы для пагинации
-9. `add_encryption_columns()` — колонки для шифрования
-10. `migrate_encrypt_existing_data()` — шифрование старых данных
-
-```php
-public function add_user_to_cashback_tables(int $user_id)
-```
-
-Вызывается хуком `user_register`:
-
-- `add_user_to_profile()` — `INSERT IGNORE` в `cashback_user_profile` (status=active, rate=60%)
-- `add_user_to_balance()` — `INSERT IGNORE` в `cashback_user_balance` (все балансы = 0)
-
-#### Миграции
-
-```php
-private function migrate_encrypt_existing_data()
-```
-
-- Обрабатывает по 100 записей за раз
-- Шифрует `payout_account`, `payout_full_name`, `bank_code`
-- Генерирует `masked_details` JSON
-- Вычисляет `details_hash` SHA-256
+- Формат: `WD-XXXXXXXX` (8 символов из безопасного алфавита)
+- Алфавит: `23456789ABCDEFGHJKMNPQRSTUVWXYZ` (30 символов, без 0/O, 1/I/L)
+- Генерация через `random_bytes()` — криптографически стойкая
+- Коллизии обрабатываются через UNIQUE KEY + retry loop
 
 ---
 
 ### CashbackWithdrawal — Вывод кешбэка
 
 **Файл:** [cashback-withdrawal.php](cashback-withdrawal.php)
-**Паттерн:** Singleton
 
 #### Endpoint
 
 - **URL:** `/my-account/cashback-withdrawal/`
-- **Позиция в меню:** После "Заказы"
 
 #### AJAX обработчики
 
-| Action                                | Nonce                       | Назначение                 |
-| ------------------------------------- | --------------------------- | -------------------------- |
-| `wp_ajax_process_cashback_withdrawal` | `cashback_withdrawal_nonce` | Создание заявки на выплату |
-| `wp_ajax_get_user_balance`            | `cashback_withdrawal_nonce` | Получение текущего баланса |
-| `wp_ajax_save_payout_settings`        | `cashback_withdrawal_nonce` | Сохранение реквизитов      |
-| `wp_ajax_search_banks`                | `cashback_withdrawal_nonce` | Автокомплит банков         |
+| Action | Nonce | Назначение |
+|--------|-------|-----------|
+| `process_cashback_withdrawal` | `cashback_withdrawal_nonce` | Создание заявки на выплату |
+| `get_user_balance` | `cashback_withdrawal_nonce` | Получение текущего баланса |
+| `save_payout_settings` | `cashback_withdrawal_nonce` | Сохранение реквизитов |
+| `search_banks` | `cashback_withdrawal_nonce` | Автокомплит банков |
 
 #### Защита от race conditions
 
-```php
-public function process_cashback_withdrawal()
-```
+**5 уровней защиты:**
 
-**Механизмы:**
-
-1. **MySQL Named Lock:**
-
-```php
-$lock_name = 'user_withdrawal_' . $user_id;
-$wpdb->query($wpdb->prepare("SELECT GET_LOCK(%s, 10)", $lock_name));
-```
-
-2. **Транзакция с SELECT FOR UPDATE:**
-
-```php
-$wpdb->query('START TRANSACTION');
-$balance = $wpdb->get_row($wpdb->prepare(
-    "SELECT * FROM {$balance_table} WHERE user_id = %d FOR UPDATE",
-    $user_id
-));
-```
-
-3. **Идемпотентность:**
-
-```php
-$idempotency_key = hash('sha256',
-    $user_id . '_' .
-    microtime(true) . '_' .
-    wp_create_nonce('cashback_withdrawal_' . $user_id) . '_' .
-    bin2hex(random_bytes(16))
-);
-// UNIQUE KEY на idempotency_key предотвращает дубликаты
-```
-
-4. **Оптимистичная блокировка:**
-
-```php
-$updated = $wpdb->query($wpdb->prepare(
-    "UPDATE {$balance_table}
-     SET available_balance = available_balance - %f,
-         pending_balance = pending_balance + %f,
-         version = version + 1
-     WHERE user_id = %d AND version = %d",
-    $amount, $amount, $user_id, $current_version
-));
-if ($updated === 0) {
-    throw new Exception('Version conflict');
-}
-```
-
-5. **Освобождение блокировки:**
-
-```php
-$wpdb->query($wpdb->prepare("DO RELEASE_LOCK(%s)", $lock_name));
-```
-
-#### Шифрование реквизитов
-
-```php
-$encrypted_data = Cashback_Encryption::encrypt_details([
-    'account' => $payout_account,
-    'full_name' => $payout_full_name,
-    'bank' => $bank_code
-]);
-// Возвращает:
-// - encrypted_details (base64)
-// - masked_details (JSON: {account: "+7903***4567", full_name: "И**** П****"})
-// - details_hash (SHA-256)
-```
+1. **MySQL Named Lock:** `GET_LOCK('user_withdrawal_' . $user_id, 10)`
+2. **Транзакция с SELECT FOR UPDATE:** Блокировка строки баланса
+3. **Идемпотентность:** `hash('sha256', ...)` + UNIQUE KEY
+4. **Оптимистичная блокировка:** `WHERE version = ?` → `version + 1`
+5. **Reference ID:** `Mariadb_Plugin::generate_reference_id()` с retry
 
 ---
 
@@ -675,59 +903,15 @@ $encrypted_data = Cashback_Encryption::encrypt_details([
 
 **Файл:** [cashback-history.php](cashback-history.php)
 
-#### Endpoint
-
-- **URL:** `/my-account/cashback-history/`
-- **Константы:**
-  - `PER_PAGE = 10`
-  - `MAX_ALLOWED_PAGES = 1000` (защита от DoS)
-
-#### AJAX пагинация
-
-```php
-add_action('wp_ajax_load_page_transactions', [$this, 'handle_load_page_transactions']);
-```
-
-**Безопасность:**
-
-- `check_ajax_referer('load_page_transactions_nonce', 'nonce', false)`
-- Данные только своего пользователя: `WHERE user_id = %d`
-
 #### Статусы транзакций
 
-| Статус      | Отображение        | Описание                                  |
-| ----------- | ------------------ | ----------------------------------------- |
-| `waiting`   | В ожидании         | Покупка зафиксирована, ждет подтверждения |
-| `completed` | Подтвержден        | Подтверждено партнером, ждет начисления   |
-| `declined`  | Отклонен           | Отклонено партнером                       |
-| `balance`   | Зачислен на баланс | Начислено в `available_balance`           |
-
----
-
-### HistoryPayout — История выплат
-
-**Файл:** [history-payout.php](history-payout.php)
-
-#### Endpoint
-
-- **URL:** `/my-account/history-payout/`
-
-#### Особенности
-
-- Забаненным пользователям показывает историю в режиме read-only
-- Использует `masked_details` для отображения реквизитов
-- Кеширует названия способов выплат в свойстве класса
-
-#### Статусы выплат
-
-| Статус        | Отображение       | Описание                            |
-| ------------- | ----------------- | ----------------------------------- |
-| `waiting`     | Ожидает обработки | Заявка создана, ждет администратора |
-| `processing`  | В обработке       | Администратор обрабатывает          |
-| `paid`        | Выплачен          | Средства выплачены (финальный)      |
-| `failed`      | Возврат в баланс  | Ошибка выплаты, средства возвращены |
-| `declined`    | Заморожена        | Отклонено, средства заморожены      |
-| `needs_retry` | Требует повтора   | Временная ошибка                    |
+| Статус | Отображение | Описание |
+|--------|------------|----------|
+| `waiting` | В ожидании | Покупка зафиксирована |
+| `completed` | Подтвержден | Подтверждено партнером |
+| `hold` | На проверке | Удержание рекламодателем |
+| `declined` | Отклонен | Отклонено партнером |
+| `balance` | Зачислен на баланс | Начислено в `available_balance` |
 
 ---
 
@@ -735,1054 +919,458 @@ add_action('wp_ajax_load_page_transactions', [$this, 'handle_load_page_transacti
 
 **Файл:** [wc-affiliate-url-params.php](wc-affiliate-url-params.php)
 
-#### Назначение
+#### Сетевая архитектура
 
-Добавляет до 3 кастомных параметров к URL внешних WooCommerce товаров.
+Вместо хранения параметров в post_meta каждого товара, используется привязка товара к партнёрской сети:
 
-#### Особенности
+- Каждый внешний товар привязан к `cashback_affiliate_networks` через `_affiliate_network_id` (post_meta)
+- Сеть определяет шаблон параметров через `cashback_affiliate_network_params`
+- Автоматическая подстановка: `user` → user_id, `uuid` → click_id
 
-**Динамическая подстановка:**
+#### Rate Limiting (двухуровневый)
 
-```php
-if ($value === 'user') {
-    $user_id = get_current_user_id();
-    $value = $user_id > 0 ? $user_id : 'USER_PLACEHOLDER_' . $param_num;
-}
+```
+PER-PRODUCT (IP + product_id):
+  SPAM порог: > 3 клика за 60 сек
+  BLOCK порог: >= 10 кликов
+
+GLOBAL (IP, любой товар):
+  SPAM порог: > 10 кликов за 60 сек
+  BLOCK порог: >= 60 кликов (CGNAT-safe)
 ```
 
-**Кеширование:**
+**Прогрессия:** normal → spam (логируется, `spam_click=1`) → blocked (HTTP 429)
 
-```php
-$cache_key = 'affiliate_params_' . $product_id;
-wp_cache_set($cache_key, $params, 'wc_affiliate_url_params', 3600);
-```
+#### Click Tracking
 
-#### Хранение
+- Серверный редирект через `handle_click_redirect()`
+- Запись в `cashback_click_log`: user_id, product_id, click_id (UUID), IP, timestamp
+- `click_id` связывает клик → транзакцию для диспутов с CPA
 
-- **Meta ключи:** `_affiliate_param_1_key`, `_affiliate_param_1_value`, ...
-- **Проверка типа:** Поля показываются только для External/Affiliate продуктов
+#### Cashback Display
 
-#### Безопасность
-
-```php
-// При сохранении:
-if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) return;
-if (!isset($_POST['_wpnonce']) || !wp_verify_nonce(...)) return;
-if (!current_user_can('edit_product', $post_id)) return;
-
-// При выводе:
-$url = add_query_arg($params, esc_url($product_url));
-```
+- Отображение размера кешбэка на карточке и странице товара
+- Рассчитывается на основе индивидуальной ставки пользователя + сети/товара
+- Для гостей: предупреждение "Зарегистрируйтесь для получения кешбэка"
 
 ---
 
 ### Cashback_Encryption — Шифрование
 
 **Файл:** [includes/class-cashback-encryption.php](includes/class-cashback-encryption.php)
-**Паттерн:** Статический класс
 
 #### Алгоритм
 
-**AES-256-CBC:**
+**v2: AES-256-GCM (authenticated encryption):**
 
 - Ключ: `CB_ENCRYPTION_KEY` (64 hex = 32 байта)
-- IV: Уникальный 16-байтный вектор для каждой записи
-- Формат хранения: `base64(IV || ciphertext)`
+- IV: 12 байт (уникальный для каждой записи)
+- Auth Tag: 16 байт
+- Формат: `"v2:" . base64(iv[12] . tag[16] . ciphertext)`
+
+**v1: AES-256-CBC (legacy, только чтение):**
+
+- IV: 16 байт
+- Формат: `"v1:" . base64(iv[16] . ciphertext)` или `base64(iv[16] . ciphertext)` (без префикса)
 
 #### Ключевые методы
 
 ```php
-public static function encrypt(string $plaintext): string
-```
+public static function encrypt(string $plaintext): string     // → "v2:base64(...)"
+public static function decrypt(string $encrypted): string     // auto-detect v1/v2
+public static function is_configured(): bool                  // CB_ENCRYPTION_KEY валиден?
+public static function is_legacy_encrypted(string $encrypted): bool
 
-- Генерирует случайный IV: `openssl_random_pseudo_bytes(16)`
-- Шифрует: `openssl_encrypt($plaintext, 'aes-256-cbc', $key, 0, $iv)`
-- Возвращает: `base64_encode($iv . $ciphertext)`
-
-```php
-public static function decrypt(string $encrypted): string
-```
-
-- Декодирует: `base64_decode($encrypted)`
-- Извлекает IV: первые 16 байт
-- Расшифровывает: `openssl_decrypt($ciphertext, 'aes-256-cbc', $key, 0, $iv)`
-
-```php
 public static function encrypt_details(array $details): array
-```
+// Возвращает: encrypted_details, masked_details (JSON), details_hash (SHA-256)
 
-Возвращает:
+public static function decrypt_details(string $encrypted): array
+// Возвращает: ['account' => ..., 'full_name' => ..., 'bank' => ...]
 
-```php
-[
-    'encrypted_details' => base64(...),
-    'masked_details' => '{"account":"+7903***4567","full_name":"И**** П****","bank":"044525225"}',
-    'details_hash' => sha256(json_encode($details, JSON_UNESCAPED_UNICODE))
-]
-```
-
-#### Маскирование
-
-```php
 public static function mask_account(string $account): string
-```
+// "4276 1234 5678 4523" → "**** **** **** 4523"
+// "+79031234567" → "+7903***4567"
 
-- Телефон: `+79031234567` → `+7903***4567`
-- Карта: `1234567812345678` → `**** **** **** 5678`
-- Общий случай: первые 4 + `***` + последние 4
-
-```php
 public static function mask_name(string $name): string
-```
+// "Иванов Петр Сидорович" → "И**** П**** С****"
 
-- `Иванов Петр Сидорович` → `И**** П**** С****`
-- `John Doe` → `J**** D****`
+public static function hash_details(array $details): string
+// SHA-256 от канонического JSON (lowercase, без пробелов, ksort)
+```
 
 #### Аудит-лог
 
 ```php
 public static function write_audit_log(
     string $action,
-    string $entity_type,
-    string $entity_id,
-    ?int $actor_id = null
-): bool
+    int $actor_id,
+    ?string $entity_type = null,
+    ?int $entity_id = null,
+    ?array $extra_details = null
+): void
 ```
 
-Записывает в `cashback_audit_log`:
+#### Защита от IP Spoofing
 
-- `ip_address`: через `get_client_ip()` (поддержка прокси)
-- `user_agent`: `$_SERVER['HTTP_USER_AGENT']`
-- `created_at`: `current_time('mysql')`
+```php
+public static function get_client_ip(): string
+```
+
+- Прокси-заголовки (X-Forwarded-For, CF-Connecting-IP) читаются **только** если `REMOTE_ADDR` ∈ `CASHBACK_TRUSTED_PROXIES`
+- Из прокси-заголовков принимаются **только публичные IP** (не приватные/зарезервированные)
+- Цепочка X-Forwarded-For: берётся первый IP
 
 ---
 
-### Cashback_User_Status — Статус пользователя
+## Антифрод-модуль
 
-**Файл:** [includes/class-cashback-user-status.php](includes/class-cashback-user-status.php)
-**Паттерн:** Статический класс
+### Cashback_Fraud_DB — Таблицы
 
-#### Методы
+**Файл:** [antifraud/class-fraud-db.php](antifraud/class-fraud-db.php)
+
+Создаёт 3 таблицы: `cashback_fraud_alerts`, `cashback_fraud_signals`, `cashback_user_fingerprints`.
+
+**Очистка:** `cleanup_old_data()` — удаляет fingerprints старше N дней, dismissed алерты старше 90 дней.
+
+### Cashback_Fraud_Settings — Настройки
+
+**Файл:** [antifraud/class-fraud-settings.php](antifraud/class-fraud-settings.php)
+
+14 настроек в `wp_options` с префиксом `cashback_fraud_`:
+
+| Настройка | Тип | Default | Описание |
+|-----------|-----|---------|----------|
+| `fraud_enabled` | bool | true | Включить антифрод |
+| `max_users_per_ip` | int | 3 | Макс. пользователей с одного IP |
+| `max_users_per_fingerprint` | int | 2 | Макс. пользователей с одного fingerprint |
+| `max_withdrawals_per_day` | int | 3 | Макс. выводов в день |
+| `max_withdrawals_per_week` | int | 7 | Макс. выводов в неделю |
+| `cancellation_rate_threshold` | float | 50.0 | Порог отмен (%) |
+| `cancellation_min_transactions` | int | 5 | Мин. транзакций для проверки отмен |
+| `amount_anomaly_multiplier` | float | 5.0 | Множитель аномалии суммы |
+| `new_account_cooling_days` | int | 7 | Дни до первого вывода |
+| `auto_hold_amount` | float | 5000.00 | Авто-холд при сумме выше |
+| `max_accounts_per_details_hash` | int | 1 | Макс. аккаунтов на одни реквизиты |
+| `fingerprint_retention_days` | int | 180 | Хранение fingerprints (дни) |
+| `auto_flag_threshold` | float | 70.0 | Порог авто-флага |
+| `email_notification_enabled` | bool | true | Email админу при алерте |
+
+### Cashback_Fraud_Collector — Сбор данных
+
+**Файл:** [antifraud/class-fraud-collector.php](antifraud/class-fraud-collector.php)
+
+**Собирает:**
+
+- IP адрес (через `get_client_ip()`)
+- Browser fingerprint hash (SHA-256, от FingerprintJS на клиенте)
+- User-Agent hash (SHA-256)
+- Тип события: `login`, `page_view`, `withdrawal`, `registration`
+
+**AJAX:** `cashback_fraud_fingerprint` — приём fingerprint от клиента (rate limit: 1 раз в 10 минут на пользователя)
+
+**Хуки:** `wp_login` (login event), `user_register` (registration event)
+
+### Cashback_Fraud_Detector — Детектор
+
+**Файл:** [antifraud/class-fraud-detector.php](antifraud/class-fraud-detector.php)
+
+#### 7 автоматических проверок
+
+| Проверка | Макс. score | Описание |
+|----------|------------|----------|
+| `check_shared_ip()` | 15.0 | Несколько пользователей с одного IP |
+| `check_shared_fingerprint()` | 30.0 | Несколько пользователей с одним fingerprint |
+| `check_shared_payment_details()` | 40.0 | Одни реквизиты на разных аккаунтах (по `details_hash`) |
+| `check_cancellation_rate()` | 0-25.0 | Высокий % отклонённых транзакций |
+| `check_withdrawal_velocity()` | 20.0 | Превышение лимитов частоты вывода |
+| `check_amount_anomalies()` | 20.0 | Аномальный скачок суммы кешбэка |
+| `check_new_account_withdrawals()` | 15.0 | Вывод с нового аккаунта (cooling period) |
+
+#### Severity mapping
+
+- 0-25: `low`
+- 26-50: `medium`
+- 51-75: `high`
+- 76-100: `critical`
+
+#### Дедупликация алертов
 
 ```php
-public static function is_user_banned(int $user_id): bool
+private static function alert_exists(int $user_id, string $alert_type): bool
 ```
 
-- Запрос к `cashback_user_profile`
-- Проверяет: `status = 'banned'`
+- `open`/`reviewing` — всегда считаются активными
+- `confirmed`/`dismissed` — в пределах 30 дней
+
+#### Cron
 
 ```php
-public static function get_ban_info(int $user_id): ?array
+add_action('cashback_fraud_detection_cron', function(): void {
+    Cashback_Fraud_Detector::run_all_checks();
+});
 ```
 
-Возвращает:
+Расписание: `hourly` (каждый час)
+
+### Cashback_Fraud_Admin — Админ-панель
+
+**Файл:** [antifraud/class-fraud-admin.php](antifraud/class-fraud-admin.php)
+
+**Страница:** `cashback-antifraud` (подменю Кэшбэк)
+
+**Вкладки:**
+
+1. **Уведомления** — Dashboard алертов
+2. **Подозрительные** — Ревью и управление
+3. **Настройки** — Конфигурация порогов
+
+**Badge:** Количество open алертов в меню (кешируется на 1 час)
+
+**AJAX handlers:**
+
+| Action | Назначение |
+|--------|-----------|
+| `fraud_review_alert` | Смена статуса алерта |
+| `fraud_get_alert_details` | Полные данные + сигналы |
+| `fraud_save_settings` | Сохранение настроек |
+| `fraud_run_scan_now` | Немедленный запуск сканирования |
+| `fraud_ban_user` | Бан из модального окна алерта |
+
+---
+
+## API-интеграция с CPA-сетями
+
+### Cashback_API_Client — API-клиент
+
+**Файл:** [includes/class-cashback-api-client.php](includes/class-cashback-api-client.php)
+**Паттерн:** Singleton
+
+**Поддерживаемые сети:** Admitad (api.admitad.com), EPN (api.epn.bz)
+
+#### Ключевые методы
 
 ```php
-[
-    'banned_at' => '2024-01-15 10:30:00',
-    'ban_reason' => 'Нарушение правил'
-]
+public function save_credentials(int $network_id, array $credentials): bool
+// AES-256 шифрование перед сохранением
+
+public function background_sync(): array
+// Синхронизация статусов со всех сетей
+
+public function validate_user(int $user_id, string $network_slug): array
+// Сверка транзакций пользователя с API
+
+public function get_oauth_token(int $network_id): ?string
+// OAuth2 токен с кешированием
 ```
 
-```php
-public static function get_banned_message(?array $ban_info): string
-```
+#### OAuth2 Flow
 
-Генерирует пользовательское сообщение:
+1. `POST {api_token_endpoint}` с `client_id`, `client_secret`
+2. Кеширование токена (request scope)
+3. `Authorization: Bearer {token}` для запросов
+4. Автоматический refresh при истечении
 
-```
-Ваш аккаунт заблокирован.
-Дата блокировки: 15.01.2024 10:30
-Причина: Нарушение правил
-```
+#### Reconciliation
+
+- **Match:** `API.subid1` == `DB.click_id` (UUID из cashback_click_log)
+- **Compare:** status, payment/comission, cart/sum_order
+- **Filter:** `API.subid2` == `DB.user_id`
+
+### Cashback_API_Migration — Миграции
+
+**Файл:** [includes/class-cashback-api-migration.php](includes/class-cashback-api-migration.php)
+
+Создаёт таблицы `cashback_validation_checkpoints` и `cashback_sync_log`, добавляет API-колонки в `cashback_affiliate_networks`.
+
+### Cashback_API_Cron — Фоновая синхронизация
+
+**Файл:** [includes/class-cashback-api-cron.php](includes/class-cashback-api-cron.php)
+
+**Cron hook:** `cashback_api_sync_statuses`
+**Интервал:** `cashback_every_2_hours` (7200 секунд)
+
+**Что делает:**
+
+1. Вызывает `Cashback_API_Client::background_sync()`
+2. Обновляет локальные статусы транзакций
+3. Логирует результаты в `cashback_sync_log`
+4. Сохраняет результат в `wp_option` для отображения в админке
+
+**Методы:** `run_sync()`, `manual_sync()`, `deactivate()`
+
+### Cashback_Admin_API_Validation — Админ-страница
+
+**Файл:** [admin/class-cashback-admin-api-validation.php](admin/class-cashback-admin-api-validation.php)
+
+**Страница:** `cashback-api-validation` (подменю Кэшбэк)
+
+**Вкладки:**
+
+1. **Credentials** — API конфигурация сетей
+2. **Validation Results** — Статус контрольных точек
+3. **Sync Log** — История синхронизации
+
+**AJAX handlers:**
+
+| Action | Назначение |
+|--------|-----------|
+| `cashback_validate_user` | Валидация пользователя через API |
+| `cashback_save_api_credentials` | Обновление credentials |
+| `cashback_manual_sync` | Запуск синхронизации вручную |
+| `cashback_get_sync_log` | Получение лога с пагинацией |
+| `cashback_get_validation_status` | Статус checkpoint для user × network |
+| `cashback_edit_transaction` | Inline-редактирование транзакции |
+| `cashback_add_transaction` | Добавление транзакции из API |
+| `cashback_overwrite_transaction` | Замена локальных данных на API |
 
 ---
 
 ## Административные компоненты
 
-### Cashback_Payout_Methods_Admin — Способы выплат
+### Cashback_Statistics_Admin — Статистика
 
-**Файл:** [admin/payout-methods.php](admin/payout-methods.php)
+**Файл:** [admin/statistics.php](admin/statistics.php)
+**Паттерн:** Singleton
 
-#### Меню
+**KPI дашборд:**
 
-**Создает главное меню:**
-
-```php
-add_menu_page(
-    'Кэшбэк',
-    'Кэшбэк',
-    'manage_options',
-    'cashback-overview',
-    null,
-    'dashicons-money-alt',
-    30
-);
-```
-
-**Подменю:**
-
-```php
-add_submenu_page(
-    'cashback-overview',
-    'Способы выплаты',
-    'Способы выплаты',
-    'manage_options',
-    'cashback-payout-methods',
-    [$this, 'render_page']
-);
-```
-
-#### AJAX операции
-
-- `wp_ajax_update_payout_method` — inline редактирование
-- `wp_ajax_add_payout_method` — добавление нового метода
-
-#### Поля
-
-- `name` — название (например, "СБП")
-- `slug` — идентификатор (например, "sbp")
-- `description` — описание для пользователей
-- `is_active` — активность (1/0)
+1. **Комиссии:** Общая сумма комиссий
+2. **Кешбэк:** Общая сумма кешбэка
+3. **Профит:** Комиссия − Кешбэк
+4. **Транзакции:** Разбивка по статусам (completed, waiting + balance, declined)
+5. **Выплаты:** По статусам (paid, processing, waiting, failed, declined)
+6. **Балансы:** Available, pending, paid, frozen
+7. **Фильтры:** date_from, date_to (YYYY-MM-DD)
 
 ---
 
-### Cashback_Payouts_Admin — Управление выплатами
+### Cashback_Transactions_Admin — Транзакции
 
-**Файл:** [admin/payouts.php](admin/payouts.php)
+**Файл:** [admin/transactions.php](admin/transactions.php)
+
+**Вкладки:**
+
+1. **Зарегистрированные** — с привязкой к wp_users
+2. **Незарегистрированные** — анонимные покупки
+
+**Возможности:**
+
+- Пагинация (20 записей)
+- Фильтры: статус, поиск
+- Inline-редактирование
+
+---
+
+### Cashback_Click_Log_Admin — Лог кликов
+
+**Файл:** [admin/click-log.php](admin/click-log.php)
 **Trait:** `AdminPaginationTrait`
 
-#### Меню
+**Отображает:** user_id, product_id, click_id (UUID), IP, timestamp, CPA-сеть, spam_click
+**Фильтры:** дата, пользователь, товар
 
-```php
-add_submenu_page(
-    'cashback-overview',
-    'Выплаты',
-    'Выплаты',
-    'manage_options',
-    'cashback-payouts',
-    [$this, 'render_page']
-);
-```
+---
 
-#### AJAX операции
+### Cashback_Partner_Management_Admin — Управление партнёрами
 
-| Action                           | Назначение                                     |
-| -------------------------------- | ---------------------------------------------- |
-| `wp_ajax_update_payout_request`  | Изменение статуса выплаты + обновление баланса |
-| `wp_ajax_get_payout_request`     | Получение данных заявки для модального окна    |
-| `wp_ajax_decrypt_payout_details` | Расшифровка реквизитов (только `processing`)   |
+**Файл:** [partner/partner-management.php](partner/partner-management.php)
+
+**AJAX handlers:**
+
+| Action | Nonce | Назначение |
+|--------|-------|-----------|
+| `update_partner` | `update_partner_nonce` | Редактирование сети |
+| `add_partner` | `add_partner_nonce` | Добавление сети |
+| `save_network_params` | `save_network_params_nonce` | Bulk-сохранение параметров |
+| `get_network_params` | `get_network_params_nonce` | Получение параметров сети |
+| `delete_network_param` | `delete_network_param_nonce` | Удаление параметра |
+| `update_network_param` | `update_network_param_nonce` | Редактирование параметра |
+
+---
+
+### Cashback_Payouts_Admin — Выплаты
+
+**Файл:** [admin/payouts.php](admin/payouts.php)
 
 #### Конечный автомат статусов
 
 ```
-Возможные переходы:
+waiting ──┬──→ processing
+          ├──→ paid
+          ├──→ failed
+          ├──→ declined
+          └──→ needs_retry
 
-waiting ──┬──> processing
-          ├──> paid
-          ├──> failed
-          ├──> declined
-          └──> needs_retry
+processing ──┬──→ paid
+             ├──→ failed
+             ├──→ declined
+             └──→ needs_retry
 
-processing ──┬──> paid
-             ├──> failed
-             ├──> declined
-             └──> needs_retry
+needs_retry ──┬──→ processing
+              ├──→ paid
+              ├──→ failed
+              └──→ declined
 
-needs_retry ──┬──> processing
-              ├──> paid
-              ├──> failed
-              └──> declined
-
-paid ───> (финальный, изменения запрещены триггером)
-failed ───> (финальный, изменения запрещены триггером)
-declined ───> (финальный)
+paid ───→ (финальный, защищён триггером)
+failed ───→ (финальный, защищён триггером)
+declined ───→ (финальный)
 ```
 
 #### Логика обновления баланса
 
-```php
-private function update_user_balance_on_payout(
-    int $user_id,
-    float $amount,
-    string $new_status,
-    string $old_status
-): bool
-```
-
-**При смене статуса на `paid`:**
-
-```sql
-UPDATE cashback_user_balance
-SET pending_balance = pending_balance - amount,
-    paid_balance = paid_balance + amount,
-    version = version + 1
-WHERE user_id = ? AND version = ?
-```
-
-**При смене на `failed`:**
-
-```sql
-UPDATE cashback_user_balance
-SET pending_balance = pending_balance - amount,
-    available_balance = available_balance + amount,
-    version = version + 1
-WHERE user_id = ? AND version = ?
-
-UPDATE cashback_payout_requests
-SET refunded_at = NOW()
-WHERE id = ?
-```
-
-**При смене на `declined`:**
-
-```sql
-UPDATE cashback_user_balance
-SET pending_balance = pending_balance - amount,
-    frozen_balance = frozen_balance + amount,
-    version = version + 1
-WHERE user_id = ? AND version = ?
-```
+- **paid:** `pending -= amount`, `paid += amount`
+- **failed:** `pending -= amount`, `available += amount`, `refunded_at = NOW()`
+- **declined:** `pending -= amount`, `frozen += amount`
 
 #### Расшифровка реквизитов
 
-```php
-public function handle_decrypt_payout_details()
-```
-
-**Требования:**
-
-- Статус заявки: `processing`
-- Права: `manage_options` ИЛИ `manage_woocommerce`
-- Аудит: Записывает `payout_details_decrypted` в `cashback_audit_log`
-
-**Возвращает:**
-
-```json
-{
-  "success": true,
-  "data": {
-    "account": "+79031234567",
-    "full_name": "Иванов Петр",
-    "bank": "044525225"
-  }
-}
-```
-
-#### Фильтры
-
-- По статусу: dropdown
-- По дате: `date_from` и `date_to` (валидация через regex)
-- По пользователю: search по `user_login`, `user_email`
+Доступна только при `status = 'processing'`, записывается в аудит-лог.
 
 ---
 
-### Cashback_Users_Management_Admin — Управление пользователями
+### Cashback_Users_Management_Admin — Пользователи
 
 **Файл:** [admin/users-management.php](admin/users-management.php)
-**Trait:** `AdminPaginationTrait`
 
-#### Меню
+#### Логика бана
 
-```php
-add_submenu_page(
-    'cashback-overview',
-    'Пользователи',
-    'Пользователи',
-    'manage_options',
-    'cashback-users',
-    [$this, 'render_page']
-);
-```
-
-#### AJAX операции
-
-- `wp_ajax_update_user_profile` — обновление профиля
-- `wp_ajax_get_user_profile` — получение данных профиля
-
-#### Поля профиля
-
-| Поле                | Тип           | Валидация                                 |
-| ------------------- | ------------- | ----------------------------------------- |
-| `cashback_rate`     | DECIMAL(5,2)  | 0-100, проверка через `bccomp()`          |
-| `min_payout_amount` | DECIMAL(18,2) | >= 0                                      |
-| `status`            | ENUM          | `active`, `noactive`, `banned`, `deleted` |
-| `ban_reason`        | TEXT          | Обязательно при бане                      |
-
-#### Логика бана пользователя
-
-```php
-private function handle_user_ban(
-    int $user_id,
-    string $ban_reason,
-    wpdb $wpdb
-): bool
-```
-
-**Последовательность:**
-
-1. **Транзакция начинается**
-
-2. **Блокировка активных заявок:**
-
-```sql
-SELECT id, total_amount
-FROM cashback_payout_requests
-WHERE user_id = ? AND status IN ('waiting', 'processing', 'needs_retry')
-FOR UPDATE
-```
-
-3. **Отклонение заявок:**
-
-```sql
-UPDATE cashback_payout_requests
-SET status = 'declined',
-    fail_reason = '(Аккаунт забанен)'
-WHERE id IN (...)
-```
-
-4. **Заморозка баланса (триггер `tr_freeze_balance_on_ban`):**
-
-```sql
--- Автоматически:
-UPDATE cashback_user_balance
-SET frozen_balance = frozen_balance + available_balance + pending_balance,
-    available_balance = 0,
-    pending_balance = 0
-WHERE user_id = ?
-```
-
-5. **Аудит-лог:**
-
-```php
-Cashback_Encryption::write_audit_log('payout_declined_on_ban', 'payout_request', $request_id);
-Cashback_Encryption::write_audit_log('user_banned', 'user_profile', $user_id);
-```
-
-6. **Email уведомление:**
-
-```php
-wp_mail(
-    $user_email,
-    'Ваш аккаунт заблокирован',
-    "Причина: {$ban_reason}\nДата: {$banned_at}"
-);
-```
-
-7. **Коммит транзакции**
+1. START TRANSACTION
+2. Поиск и блокировка активных заявок (FOR UPDATE)
+3. Отклонение заявок → `declined` с причиной "(Аккаунт забанен)"
+4. Триггер `tr_freeze_balance_on_ban` замораживает балансы
+5. Аудит-лог
+6. COMMIT
+7. Email-уведомление пользователю
 
 #### Логика разбана
 
-```php
-private function handle_user_unban(int $user_id, wpdb $wpdb): bool
-```
-
-**Последовательность:**
-
-1. **Обновление причин отклонения:**
-
-```sql
-UPDATE cashback_payout_requests
-SET fail_reason = REPLACE(fail_reason, '(Аккаунт забанен)', '(Аккаунт был забанен)')
-WHERE user_id = ?
-  AND status = 'declined'
-  AND (fail_reason LIKE '%(Аккаунт забанен)%' OR fail_reason LIKE '%Account banned%')
-```
-
-2. **Размораживание баланса (триггер `tr_unfreeze_balance_on_unban`):**
-
-```sql
--- Автоматически:
-UPDATE cashback_user_balance
-SET available_balance = available_balance + frozen_balance,
-    frozen_balance = 0
-WHERE user_id = ?
-```
-
-3. **Аудит-лог:**
-
-```php
-Cashback_Encryption::write_audit_log('user_unbanned', 'user_profile', $user_id);
-```
+1. Обновление причин: "(Аккаунт забанен)" → "(Аккаунт был забанен)"
+2. Триггер `tr_unfreeze_balance_on_unban` размораживает
+3. Аудит-лог
 
 ---
 
-### Cashback_Bank_Management_Admin — Управление банками
+## Модуль поддержки
 
-**Файл:** [admin/bank-management.php](admin/bank-management.php)
+### Cashback_User_Support
 
-#### Меню
+**Файл:** [support/user-support.php](support/user-support.php)
+**Endpoint:** `/my-account/cashback-support/`
 
-```php
-add_submenu_page(
-    'cashback-overview',
-    'Банки',
-    'Банки',
-    'manage_options',
-    'cashback-banks',
-    [$this, 'render_page']
-);
-```
+**Rate Limiting:**
 
-#### AJAX операции
+- Создание тикета: 1 раз в 5 минут
+- Ответ: 5 в минуту
+- Загрузка файла: 3 в минуту
+- Через transients: `cb_support_rate_{user_id}_{action}`
 
-- `wp_ajax_update_bank` — обновление банка
-- `wp_ajax_add_bank` — добавление с проверкой уникальности
+**AJAX:**
 
-#### Проверка уникальности при добавлении
-
-```php
-$existing = $wpdb->get_var($wpdb->prepare(
-    "SELECT id FROM {$banks_table}
-     WHERE bank_code = %s OR name = %s OR short_name = %s",
-    $bank_code, $name, $short_name
-));
-if ($existing) {
-    wp_send_json_error(['message' => 'Банк с таким БИК или названием уже существует']);
-}
-```
-
-#### Фильтры
-
-- Поиск: `LIKE` по `name`, `short_name`, `bank_code`
-- По активности: `is_active = 1/0`
-
----
-
-### Cashback_Health_Check — Мониторинг
-
-**Файл:** [admin/health-check.php](admin/health-check.php)
-**Паттерн:** Статический класс
-
-#### WP Cron
-
-```php
-add_action('cashback_health_check_cron', [self::class, 'run_health_checks']);
-```
-
-**Расписание:** Ежедневно (планируется в `CashbackPlugin::activate()`)
-
-#### Проверки
-
-| Проверка                          | Серьезность | Что проверяет                                                                                     |
-| --------------------------------- | ----------- | ------------------------------------------------------------------------------------------------- |
-| `check_negative_balances()`       | CRITICAL    | Отрицательные значения в `available_balance`, `pending_balance`, `paid_balance`, `frozen_balance` |
-| `check_stale_payouts()`           | WARNING     | Заявки в статусе `waiting` старше 30 дней                                                         |
-| `check_balance_payout_mismatch()` | WARNING     | `pending_balance > 0` без соответствующих активных заявок                                         |
-| `check_orphaned_users()`          | WARNING     | Пользователи WordPress без профиля или баланса                                                    |
-
-#### Отчет
-
-**Email администратору:**
-
-- Тема: `[CRITICAL]` или `[WARNING]` + название сайта
-- Получатель: `get_option('admin_email')`
-- Формат: Plain text с детальной информацией по каждой проблеме
-
-**Дублирование в error_log:**
-
-```php
-error_log('[Cashback Health Check] ' . $level . ': ' . $message);
-```
-
----
-
-## Рабочие процессы
-
-### 1. Регистрация пользователя
-
-```
-Пользователь заполняет форму регистрации WordPress
-    ↓
-WordPress создает запись в wp_users
-    ↓
-Срабатывает хук: do_action('user_register', $user_id)
-    ↓
-Mariadb_Plugin::add_user_to_cashback_tables($user_id)
-    ↓
-INSERT IGNORE INTO cashback_user_profile:
-    - user_id = $user_id
-    - cashback_rate = 60.00
-    - status = 'active'
-    - min_payout_amount = 500.00
-    ↓
-INSERT IGNORE INTO cashback_user_balance:
-    - user_id = $user_id
-    - available_balance = 0
-    - pending_balance = 0
-    - paid_balance = 0
-    - frozen_balance = 0
-    - version = 0
-    ↓
-Готово: пользователь может получать кешбэк
-```
-
----
-
-### 2. Обработка партнерской ссылки
-
-```
-Администратор создает внешний WooCommerce товар
-    ↓
-В метабоксе Product Data заполняет партнерские параметры:
-    - Параметр 1: subid1 = user
-    - Параметр 2: source = woocommerce
-    ↓
-Сохраняется в post meta:
-    - _affiliate_param_1_key = 'subid1'
-    - _affiliate_param_1_value = 'user'
-    - _affiliate_param_2_key = 'source'
-    - _affiliate_param_2_value = 'woocommerce'
-    ↓
-Пользователь (ID=42) заходит на страницу товара
-    ↓
-WC_Affiliate_URL_Params::modify_external_url($url, $product)
-    ↓
-Чтение параметров из post meta (с кешированием)
-    ↓
-Замена динамических значений:
-    - 'user' → get_current_user_id() → 42
-    ↓
-Формирование URL:
-    https://partner.com/offer?subid1=42&source=woocommerce
-    ↓
-Пользователь кликает → переход на сайт партнера
-    ↓
-Партнер фиксирует клик с subid1=42
-```
-
----
-
-### 3. Начисление кешбэка
-
-```
-Пользователь совершает покупку на сайте партнера
-    ↓
-Партнер отправляет webhook на сайт
-    ↓
-Webhook обработчик (не включен в текущую документацию):
-    1. Записывает в cashback_webhooks (дедупликация по payload_norm)
-    2. Парсит данные вебхука
-    3. Создает запись в cashback_transactions
-    ↓
-INSERT INTO cashback_transactions:
-    - user_id = 42
-    - uniq_id = 'ABC123' (от партнера)
-    - partner_name = 'Admitad'
-    - offer_name = 'Магазин Электроники'
-    - comission = 1500.00
-    - order_status = 'waiting'
-    - idempotency_key = hash(...)
-    ↓
-Триггер calculate_cashback_before_insert:
-    1. Читает cashback_rate из cashback_user_profile (60%)
-    2. Вычисляет: cashback = ROUND(1500 * 60 / 100, 2) = 900.00
-    3. Записывает applied_cashback_rate = 60.00
-    ↓
-Запись сохранена:
-    - cashback = 900.00
-    - order_status = 'waiting'
-    ↓
-Партнер подтверждает покупку (через webhook или API)
-    ↓
-UPDATE cashback_transactions SET order_status = 'completed'
-    ↓
-Ежедневно в 03:00 запускается MySQL Event:
-    cashback_ev_confirmed_cashback
-    ↓
-Event:
-    1. GET_LOCK('cashback_event_lock', 0) — защита от параллельного запуска
-    2. Выбирает транзакции:
-       - order_status = 'completed'
-       - created_at < NOW() - INTERVAL 1 DAY
-       - processed_at IS NULL
-    3. UPDATE cashback_transactions:
-       - processed_at = NOW()
-       - processed_batch_id = UUID()
-    4. Начисляет в баланс:
-       INSERT INTO cashback_user_balance (user_id, available_balance)
-       VALUES (42, 900.00)
-       ON DUPLICATE KEY UPDATE
-       available_balance = available_balance + 900.00
-    5. UPDATE cashback_transactions SET order_status = 'balance'
-    6. RELEASE_LOCK
-    ↓
-Триггер cashback_tr_prevent_update_final_status:
-    - Блокирует дальнейшие изменения записей со статусом 'balance'
-    ↓
-Готово: кешбэк начислен на баланс пользователя
-```
-
----
-
-### 4. Запрос выплаты
-
-```
-Пользователь (ID=42) переходит в /my-account/cashback-withdrawal/
-    ↓
-CashbackWithdrawal::render_withdrawal_page()
-    - Проверка: Cashback_User_Status::is_user_banned(42) → false
-    - Показывает форму с текущим балансом
-    ↓
-Пользователь заполняет:
-    - Сумма: 1500.00
-    - Способ выплаты: sbp (СБП)
-    - Счет: +79031234567
-    - ФИО: Иванов Петр
-    - Банк: 044525225 (Сбербанк)
-    ↓
-Нажимает "Отправить заявку"
-    ↓
-AJAX: wp_ajax_process_cashback_withdrawal
-    ↓
-CashbackWithdrawal::process_cashback_withdrawal()
-    ↓
-1. Проверка безопасности:
-    - wp_verify_nonce('cashback_withdrawal_nonce')
-    - is_user_logged_in()
-    - Cashback_User_Status::is_user_banned(42) → false
-    ↓
-2. Валидация суммы:
-    - bccomp(1500, 0, 2) > 0 → OK
-    - Проверка min_payout_amount
-    ↓
-3. Получение блокировки:
-    SELECT GET_LOCK('user_withdrawal_42', 10) → 1
-    ↓
-4. Начало транзакции:
-    START TRANSACTION
-    ↓
-5. Блокировка строки баланса:
-    SELECT * FROM cashback_user_balance
-    WHERE user_id = 42
-    FOR UPDATE
-    ↓
-    Результат:
-    - available_balance = 2500.00
-    - pending_balance = 0
-    - version = 5
-    ↓
-6. Проверка достаточности средств:
-    bccomp(2500, 1500, 2) >= 0 → OK
-    ↓
-7. Шифрование реквизитов:
-    Cashback_Encryption::encrypt_details([
-        'account' => '+79031234567',
-        'full_name' => 'Иванов Петр',
-        'bank' => '044525225'
-    ])
-    ↓
-    Возвращает:
-    - encrypted_details: "base64(...)"
-    - masked_details: '{"account":"+7903***4567","full_name":"И**** П****","bank":"044525225"}'
-    - details_hash: "sha256(...)"
-    ↓
-8. Генерация ключа идемпотентности:
-    idempotency_key = hash('sha256',
-        '42_1734523234.5678_' .
-        wp_create_nonce('cashback_withdrawal_42') . '_' .
-        bin2hex(random_bytes(16))
-    )
-    ↓
-9. Создание заявки:
-    INSERT INTO cashback_payout_requests:
-        - user_id = 42
-        - total_amount = 1500.00
-        - encrypted_details = "base64(...)"
-        - masked_details = '{"account":"+7903***4567",...}'
-        - details_hash = "sha256(...)"
-        - status = 'waiting'
-        - idempotency_key = "..."
-        - created_at = NOW()
-    ↓
-    UNIQUE KEY на idempotency_key предотвращает дубликаты
-    ↓
-10. Обновление баланса (оптимистичная блокировка):
-    UPDATE cashback_user_balance
-    SET available_balance = available_balance - 1500,
-        pending_balance = pending_balance + 1500,
-        version = version + 1
-    WHERE user_id = 42 AND version = 5
-    ↓
-    Проверка: affected_rows = 1 → OK
-    ↓
-11. Коммит транзакции:
-    COMMIT
-    ↓
-12. Освобождение блокировки:
-    DO RELEASE_LOCK('user_withdrawal_42')
-    ↓
-13. Ответ пользователю:
-    wp_send_json_success([
-        'message' => 'Заявка успешно создана',
-        'new_balance' => 1000.00
-    ])
-    ↓
-Готово: Заявка в статусе 'waiting', деньги переведены в pending_balance
-```
-
----
-
-### 5. Обработка выплаты администратором
-
-```
-Администратор заходит в WordPress Admin → Кэшбэк → Выплаты
-    ↓
-Cashback_Payouts_Admin::render_page()
-    - Показывает таблицу заявок с фильтрами
-    ↓
-Администратор находит заявку пользователя ID=42 (status='waiting')
-    ↓
-Кликает "Взять в работу"
-    ↓
-AJAX: wp_ajax_update_payout_request
-    ↓
-Cashback_Payouts_Admin::handle_update_payout_request()
-    ↓
-1. Проверка прав:
-    - current_user_can('manage_options') → true
-    ↓
-2. Получение данных:
-    - payout_id = 123
-    - new_status = 'processing'
-    ↓
-3. Начало транзакции:
-    START TRANSACTION
-    ↓
-4. Блокировка заявки:
-    SELECT * FROM cashback_payout_requests
-    WHERE id = 123
-    FOR UPDATE
-    ↓
-    Результат:
-    - user_id = 42
-    - total_amount = 1500.00
-    - status = 'waiting'
-    ↓
-5. Проверка допустимости перехода:
-    allowed_transitions = [
-        'waiting' => ['processing', 'paid', 'failed', 'declined', 'needs_retry']
-    ]
-    ↓
-    'waiting' → 'processing' → OK
-    ↓
-6. Обновление статуса:
-    UPDATE cashback_payout_requests
-    SET status = 'processing',
-        updated_at = NOW()
-    WHERE id = 123
-    ↓
-7. Коммит:
-    COMMIT
-    ↓
-8. Администратор видит расшифрованные реквизиты:
-    Кликает кнопку "Показать реквизиты"
-    ↓
-    AJAX: wp_ajax_decrypt_payout_details
-    ↓
-    Cashback_Payouts_Admin::handle_decrypt_payout_details()
-    ↓
-    - Проверка: status = 'processing' → OK
-    - Проверка прав: manage_options OR manage_woocommerce → OK
-    ↓
-    Расшифровка:
-    Cashback_Encryption::decrypt_details($encrypted_details)
-    ↓
-    Возвращает:
-    {
-        "account": "+79031234567",
-        "full_name": "Иванов Петр",
-        "bank": "044525225"
-    }
-    ↓
-    Аудит-лог:
-    Cashback_Encryption::write_audit_log(
-        'payout_details_decrypted',
-        'payout_request',
-        '123',
-        get_current_user_id()
-    )
-    ↓
-9. Администратор выполняет выплату в банке
-    ↓
-10. Администратор меняет статус на 'paid'
-    ↓
-    AJAX: wp_ajax_update_payout_request (status='paid')
-    ↓
-    START TRANSACTION
-    ↓
-    SELECT ... FOR UPDATE заявки
-    ↓
-    Проверка перехода: 'processing' → 'paid' → OK
-    ↓
-    update_user_balance_on_payout(42, 1500, 'paid', 'processing'):
-        UPDATE cashback_user_balance
-        SET pending_balance = pending_balance - 1500,
-            paid_balance = paid_balance + 1500,
-            version = version + 1
-        WHERE user_id = 42 AND version = current_version
-    ↓
-    UPDATE cashback_payout_requests
-    SET status = 'paid', updated_at = NOW()
-    WHERE id = 123
-    ↓
-    COMMIT
-    ↓
-11. Триггер tr_prevent_update_paid_payout:
-    - Блокирует дальнейшие изменения заявки со статусом 'paid'
-    ↓
-Готово: Выплата завершена, средства в paid_balance
-```
-
----
-
-### 6. Бан/разбан пользователя
-
-#### Бан
-
-```
-Администратор: Кэшбэк → Пользователи → находит пользователя ID=42
-    ↓
-Кликает "Редактировать"
-    ↓
-Меняет:
-    - status: 'active' → 'banned'
-    - ban_reason: 'Нарушение правил сервиса'
-    ↓
-AJAX: wp_ajax_update_user_profile
-    ↓
-Cashback_Users_Management_Admin::handle_update_user_profile()
-    ↓
-1. Проверка прав: manage_options → OK
-    ↓
-2. Валидация:
-    - status = 'banned'
-    - ban_reason не пустой → OK
-    ↓
-3. Начало транзакции:
-    START TRANSACTION
-    ↓
-4. Обновление профиля:
-    UPDATE cashback_user_profile
-    SET status = 'banned',
-        ban_reason = 'Нарушение правил сервиса'
-    WHERE user_id = 42
-    ↓
-5. Триггер tr_banned_user_update_banned_at:
-    SET NEW.banned_at = NOW()
-    ↓
-    Результат:
-    - status = 'banned'
-    - banned_at = '2024-01-15 10:30:00'
-    - ban_reason = 'Нарушение правил сервиса'
-    ↓
-6. Триггер tr_freeze_balance_on_ban (AFTER UPDATE):
-    UPDATE cashback_user_balance
-    SET frozen_balance = frozen_balance + available_balance + pending_balance,
-        available_balance = 0,
-        pending_balance = 0
-    WHERE user_id = 42
-    ↓
-    Пример:
-    - available_balance: 1000 → 0
-    - pending_balance: 500 → 0
-    - frozen_balance: 0 → 1500
-    ↓
-7. handle_user_ban(42, 'Нарушение правил сервиса', $wpdb):
-    ↓
-    7.1. Поиск активных заявок:
-        SELECT id, total_amount
-        FROM cashback_payout_requests
-        WHERE user_id = 42
-          AND status IN ('waiting', 'processing', 'needs_retry')
-        FOR UPDATE
-        ↓
-        Найдено: заявка ID=125, amount=500
-    ↓
-    7.2. Отклонение заявок:
-        UPDATE cashback_payout_requests
-        SET status = 'declined',
-            fail_reason = '(Аккаунт забанен)',
-            updated_at = NOW()
-        WHERE id = 125
-    ↓
-    7.3. Аудит-лог:
-        write_audit_log('payout_declined_on_ban', 'payout_request', '125')
-        write_audit_log('user_banned', 'user_profile', '42')
-    ↓
-8. Коммит:
-    COMMIT
-    ↓
-9. Email пользователю:
-    wp_mail(
-        'user@example.com',
-        'Ваш аккаунт заблокирован',
-        "Причина: Нарушение правил сервиса\nДата: 15.01.2024 10:30"
-    )
-    ↓
-Готово: Пользователь забанен, балансы заморожены, заявки отклонены
-```
-
-#### Разбан
-
-```
-Администратор: Кэшбэк → Пользователи → пользователь ID=42
-    ↓
-Кликает "Редактировать"
-    ↓
-Меняет:
-    - status: 'banned' → 'active'
-    ↓
-AJAX: wp_ajax_update_user_profile
-    ↓
-1. Проверка прав: manage_options → OK
-    ↓
-2. Начало транзакции:
-    START TRANSACTION
-    ↓
-3. Обновление профиля:
-    UPDATE cashback_user_profile
-    SET status = 'active'
-    WHERE user_id = 42
-    ↓
-4. Триггер tr_clear_ban_on_unban (BEFORE UPDATE):
-    IF OLD.status = 'banned' AND NEW.status != 'banned' THEN
-        SET NEW.banned_at = NULL;
-        SET NEW.ban_reason = NULL;
-    END IF
-    ↓
-    Результат:
-    - status = 'active'
-    - banned_at = NULL
-    - ban_reason = NULL
-    ↓
-5. Триггер tr_unfreeze_balance_on_unban (AFTER UPDATE):
-    UPDATE cashback_user_balance
-    SET available_balance = available_balance + frozen_balance,
-        frozen_balance = 0
-    WHERE user_id = 42
-    ↓
-    Пример:
-    - frozen_balance: 1500 → 0
-    - available_balance: 0 → 1500
-    ↓
-6. handle_user_unban(42, $wpdb):
-    ↓
-    6.1. Обновление причин отклонения:
-        UPDATE cashback_payout_requests
-        SET fail_reason = REPLACE(fail_reason, '(Аккаунт забанен)', '(Аккаунт был забанен)')
-        WHERE user_id = 42
-          AND status = 'declined'
-          AND fail_reason LIKE '%(Аккаунт забанен)%'
-    ↓
-    6.2. Аудит-лог:
-        write_audit_log('user_unbanned', 'user_profile', '42')
-    ↓
-7. Коммит:
-    COMMIT
-    ↓
-Готово: Пользователь разбанен, замороженные средства возвращены
-```
+- `support_create_ticket`
+- `support_user_reply`
+- `support_user_close_ticket`
+- `support_load_ticket`
+- `support_download_file`
 
 ---
 
@@ -1792,390 +1380,166 @@ AJAX: wp_ajax_update_user_profile
 
 #### Actions
 
-| Хук                                 | Файл                                             | Назначение                                           |
-| ----------------------------------- | ------------------------------------------------ | ---------------------------------------------------- |
-| `user_register`                     | [mariadb.php](mariadb.php)                       | Инициализация нового пользователя в таблицах кешбэка |
-| `plugins_loaded`                    | [cashback-plugin.php](cashback-plugin.php)       | Загрузка и инициализация плагина                     |
-| `init`                              | [cashback-plugin.php](cashback-plugin.php)       | Загрузка переводов                                   |
-| `before_woocommerce_init`           | [cashback-plugin.php](cashback-plugin.php)       | Декларация совместимости с HPOS                      |
-| `admin_menu`                        | [admin/\*.php](admin/)                           | Добавление страниц в админку                         |
-| `wp_enqueue_scripts`                | [\*.php](.)                                      | Подключение стилей и скриптов на фронтенде           |
-| `admin_enqueue_scripts`             | [admin/\*.php](admin/)                           | Подключение стилей и скриптов в админке              |
-| `cashback_health_check_cron`        | [admin/health-check.php](admin/health-check.php) | Ежедневная проверка целостности                      |
-| `cashback_support_auto_delete_cron` | [support/support-db.php](support/support-db.php) | Удаление старых тикетов                              |
+| Хук | Файл | Назначение |
+|-----|------|-----------|
+| `user_register` | mariadb.php | Инициализация нового пользователя |
+| `plugins_loaded` | cashback-plugin.php | Загрузка и инициализация |
+| `init` | cashback-plugin.php | Загрузка переводов |
+| `before_woocommerce_init` | cashback-plugin.php | HPOS совместимость |
+| `admin_menu` | admin/*.php | Добавление страниц в админку |
+| `wp_login` | class-fraud-collector.php | Запись fingerprint при логине |
+| `cashback_health_check_cron` | health-check.php | Ежедневная проверка целостности |
+| `cashback_support_auto_delete_cron` | support-db.php | Удаление старых тикетов |
+| `cashback_fraud_detection_cron` | class-fraud-detector.php | Ежечасная антифрод-проверка |
+| `cashback_fraud_cleanup_cron` | class-fraud-db.php | Ежедневная очистка fingerprints |
+| `cashback_api_sync_statuses` | class-cashback-api-cron.php | Синхронизация с CPA каждые 2 часа |
 
 #### Filters
 
-| Хук                                   | Файл                                                       | Назначение                                 |
-| ------------------------------------- | ---------------------------------------------------------- | ------------------------------------------ |
-| `woocommerce_account_menu_items`      | [cashback-\*.php](.)                                       | Добавление пунктов в меню личного кабинета |
-| `woocommerce_product_add_to_cart_url` | [wc-affiliate-url-params.php](wc-affiliate-url-params.php) | Модификация URL внешних товаров            |
-| `woocommerce_loop_add_to_cart_link`   | [wc-affiliate-url-params.php](wc-affiliate-url-params.php) | Добавление data-атрибутов к ссылкам        |
+| Хук | Файл | Назначение |
+|-----|------|-----------|
+| `woocommerce_account_menu_items` | cashback-*.php, user-support.php | Пункты в меню личного кабинета |
+| `woocommerce_product_add_to_cart_url` | wc-affiliate-url-params.php | Модификация URL внешних товаров |
+| `woocommerce_loop_add_to_cart_link` | wc-affiliate-url-params.php | Добавление data-атрибутов к ссылкам |
+| `cron_schedules` | class-cashback-api-cron.php | Регистрация 2-часового интервала |
 
 ### WooCommerce endpoints
 
-| Endpoint              | Класс              | URL                                |
-| --------------------- | ------------------ | ---------------------------------- |
+| Endpoint | Класс | URL |
+|----------|-------|-----|
 | `cashback-withdrawal` | CashbackWithdrawal | `/my-account/cashback-withdrawal/` |
-| `cashback-history`    | CashbackHistory    | `/my-account/cashback-history/`    |
-| `history-payout`      | HistoryPayout      | `/my-account/history-payout/`      |
+| `cashback-history` | CashbackHistory | `/my-account/cashback-history/` |
+| `history-payout` | HistoryPayout | `/my-account/history-payout/` |
+| `cashback-support` | Cashback_User_Support | `/my-account/cashback-support/` |
 
 ### AJAX обработчики
 
 #### Фронтенд (требуют авторизации)
 
-| Action                        | Класс              | Nonce                          | Назначение                   |
-| ----------------------------- | ------------------ | ------------------------------ | ---------------------------- |
-| `process_cashback_withdrawal` | CashbackWithdrawal | `cashback_withdrawal_nonce`    | Создание заявки на выплату   |
-| `get_user_balance`            | CashbackWithdrawal | `cashback_withdrawal_nonce`    | Получение баланса            |
-| `save_payout_settings`        | CashbackWithdrawal | `cashback_withdrawal_nonce`    | Сохранение реквизитов        |
-| `search_banks`                | CashbackWithdrawal | `cashback_withdrawal_nonce`    | Автокомплит банков           |
-| `load_page_transactions`      | CashbackHistory    | `load_page_transactions_nonce` | Пагинация истории транзакций |
-| `load_page_payouts`           | HistoryPayout      | `load_page_payouts_nonce`      | Пагинация истории выплат     |
+| Action | Класс | Nonce | Назначение |
+|--------|-------|-------|-----------|
+| `process_cashback_withdrawal` | CashbackWithdrawal | `cashback_withdrawal_nonce` | Создание заявки |
+| `get_user_balance` | CashbackWithdrawal | `cashback_withdrawal_nonce` | Получение баланса |
+| `save_payout_settings` | CashbackWithdrawal | `cashback_withdrawal_nonce` | Сохранение реквизитов |
+| `search_banks` | CashbackWithdrawal | `cashback_withdrawal_nonce` | Автокомплит банков |
+| `load_page_transactions` | CashbackHistory | `load_page_transactions_nonce` | Пагинация транзакций |
+| `load_page_payouts` | HistoryPayout | `load_page_payouts_nonce` | Пагинация выплат |
+| `cashback_fraud_fingerprint` | Cashback_Fraud_Collector | nonce | Приём fingerprint |
+| `support_create_ticket` | Cashback_User_Support | nonce | Создание тикета |
+| `support_user_reply` | Cashback_User_Support | nonce | Ответ в тикете |
+| `support_user_close_ticket` | Cashback_User_Support | nonce | Закрытие тикета |
+| `support_load_ticket` | Cashback_User_Support | nonce | Загрузка тикета |
+| `support_download_file` | Cashback_User_Support | nonce | Скачивание файла |
 
 #### Админка (требуют `manage_options`)
 
-| Action                   | Класс                           | Nonce                          | Назначение                      |
-| ------------------------ | ------------------------------- | ------------------------------ | ------------------------------- |
-| `update_payout_request`  | Cashback_Payouts_Admin          | `update_payout_request_nonce`  | Изменение статуса выплаты       |
-| `get_payout_request`     | Cashback_Payouts_Admin          | `get_payout_request_nonce`     | Получение данных заявки         |
-| `decrypt_payout_details` | Cashback_Payouts_Admin          | `decrypt_payout_details_nonce` | Расшифровка реквизитов          |
-| `update_user_profile`    | Cashback_Users_Management_Admin | `update_user_profile_nonce`    | Обновление профиля пользователя |
-| `get_user_profile`       | Cashback_Users_Management_Admin | `get_user_profile_nonce`       | Получение данных профиля        |
-| `update_bank`            | Cashback_Bank_Management_Admin  | `update_bank_nonce`            | Обновление банка                |
-| `add_bank`               | Cashback_Bank_Management_Admin  | `add_bank_nonce`               | Добавление банка                |
-| `update_payout_method`   | Cashback_Payout_Methods_Admin   | `update_payout_method_nonce`   | Обновление способа выплат       |
-| `add_payout_method`      | Cashback_Payout_Methods_Admin   | `add_payout_method_nonce`      | Добавление способа выплат       |
+| Action | Класс | Назначение |
+|--------|-------|-----------|
+| `update_payout_request` | Cashback_Payouts_Admin | Изменение статуса выплаты |
+| `get_payout_request` | Cashback_Payouts_Admin | Получение данных заявки |
+| `decrypt_payout_details` | Cashback_Payouts_Admin | Расшифровка реквизитов |
+| `update_user_profile` | Cashback_Users_Management_Admin | Обновление профиля |
+| `get_user_profile` | Cashback_Users_Management_Admin | Получение данных профиля |
+| `update_bank` | Cashback_Bank_Management_Admin | Обновление банка |
+| `add_bank` | Cashback_Bank_Management_Admin | Добавление банка |
+| `update_payout_method` | Cashback_Payout_Methods_Admin | Обновление способа выплат |
+| `add_payout_method` | Cashback_Payout_Methods_Admin | Добавление способа выплат |
+| `update_partner` | Cashback_Partner_Management_Admin | Редактирование сети |
+| `add_partner` | Cashback_Partner_Management_Admin | Добавление сети |
+| `save_network_params` | Cashback_Partner_Management_Admin | Параметры сети |
+| `get_network_params` | Cashback_Partner_Management_Admin | Получение параметров |
+| `delete_network_param` | Cashback_Partner_Management_Admin | Удаление параметра |
+| `update_network_param` | Cashback_Partner_Management_Admin | Редактирование параметра |
+| `fraud_review_alert` | Cashback_Fraud_Admin | Ревью алерта |
+| `fraud_get_alert_details` | Cashback_Fraud_Admin | Данные алерта |
+| `fraud_save_settings` | Cashback_Fraud_Admin | Настройки антифрода |
+| `fraud_run_scan_now` | Cashback_Fraud_Admin | Запуск сканирования |
+| `fraud_ban_user` | Cashback_Fraud_Admin | Бан из алерта |
+| `cashback_validate_user` | Cashback_Admin_API_Validation | Валидация через API |
+| `cashback_save_api_credentials` | Cashback_Admin_API_Validation | Сохранение credentials |
+| `cashback_manual_sync` | Cashback_Admin_API_Validation | Ручная синхронизация |
+| `cashback_get_sync_log` | Cashback_Admin_API_Validation | Лог синхронизации |
+| `cashback_get_validation_status` | Cashback_Admin_API_Validation | Статус валидации |
+| `cashback_edit_transaction` | Cashback_Admin_API_Validation | Редактирование транзакции |
+| `cashback_add_transaction` | Cashback_Admin_API_Validation | Добавление транзакции |
+| `cashback_overwrite_transaction` | Cashback_Admin_API_Validation | Перезапись транзакции |
 
 ### WP Cron задачи
 
-| Хук                                 | Расписание | Файл                                             | Назначение                                |
-| ----------------------------------- | ---------- | ------------------------------------------------ | ----------------------------------------- |
-| `cashback_health_check_cron`        | daily      | [admin/health-check.php](admin/health-check.php) | Проверка целостности данных + email-отчет |
-| `cashback_support_auto_delete_cron` | daily      | [support/support-db.php](support/support-db.php) | Удаление закрытых тикетов старше 1 месяца |
+| Хук | Расписание | Файл | Назначение |
+|-----|-----------|------|-----------|
+| `cashback_health_check_cron` | daily | health-check.php | Проверка целостности + email |
+| `cashback_support_auto_delete_cron` | daily | support-db.php | Удаление закрытых тикетов > 1 месяц |
+| `cashback_fraud_detection_cron` | hourly | class-fraud-detector.php | 7 антифрод-проверок |
+| `cashback_fraud_cleanup_cron` | daily | class-fraud-db.php | Очистка старых fingerprints |
+| `cashback_api_sync_statuses` | every 2h | class-cashback-api-cron.php | Синхронизация с CPA-сетями |
 
 ---
 
 ## Безопасность
 
-### Аутентификация и авторизация
+### Шифрование
 
-#### Фронтенд
+#### AES-256-GCM (v2) — текущий стандарт
 
-```php
-// Все AJAX обработчики проверяют:
-if (!is_user_logged_in()) {
-    wp_send_json_error(['message' => 'Требуется авторизация']);
-}
+- **Authenticated encryption:** встроенная проверка целостности (auth tag)
+- Ключ: 256 бит, IV: 12 байт, Tag: 16 байт
+- Формат: `"v2:" . base64(iv . tag . ciphertext)`
 
-// Доступ только к своим данным:
-$user_id = get_current_user_id();
-$query = "SELECT * FROM table WHERE user_id = %d";
-```
+#### AES-256-CBC (v1) — обратная совместимость
 
-#### Админка
-
-```php
-// Все админ-страницы:
-if (!current_user_can('manage_options')) {
-    wp_die(__('У вас нет доступа к этой странице.'));
-}
-
-// Расшифровка реквизитов:
-if (!current_user_can('manage_options') && !current_user_can('manage_woocommerce')) {
-    wp_send_json_error(['message' => 'Недостаточно прав']);
-}
-```
-
-#### Партнерские параметры
-
-```php
-// При сохранении:
-if (!current_user_can('edit_product', $post_id)) {
-    return;
-}
-```
-
----
-
-### Защита форм (CSRF)
-
-**Все формы и AJAX используют WordPress nonces:**
-
-```php
-// Генерация nonce в форме:
-wp_nonce_field('cashback_withdrawal_nonce', '_wpnonce');
-
-// Проверка в обработчике:
-if (!isset($_POST['_wpnonce']) || !wp_verify_nonce($_POST['_wpnonce'], 'cashback_withdrawal_nonce')) {
-    wp_send_json_error(['message' => 'Неверный токен безопасности']);
-}
-
-// Или через check_ajax_referer:
-check_ajax_referer('load_page_transactions_nonce', 'nonce', false);
-```
-
----
-
-### Санитизация входных данных
-
-**Все входящие данные обрабатываются:**
-
-```php
-// POST/GET данные:
-$amount = isset($_POST['amount']) ? floatval(wp_unslash($_POST['amount'])) : 0;
-$account = isset($_POST['account']) ? sanitize_text_field(wp_unslash($_POST['account'])) : '';
-$reason = isset($_POST['ban_reason']) ? wp_kses_post(wp_unslash($_POST['ban_reason'])) : '';
-
-// ID:
-$user_id = absint($_POST['user_id']);
-$payout_id = intval($_POST['payout_id']);
-
-// Email:
-$email = sanitize_email($_POST['email']);
-
-// URL:
-$url = esc_url_raw($_POST['url']);
-```
-
----
-
-### Экранирование вывода
-
-**Все данные при выводе экранируются:**
-
-```php
-// HTML контент:
-echo esc_html($user_name);
-
-// Атрибуты:
-echo '<input value="' . esc_attr($value) . '">';
-
-// URL:
-echo '<a href="' . esc_url($link) . '">';
-
-// JavaScript строки:
-echo '<script>var data = ' . wp_json_encode($data) . ';</script>';
-
-// Разрешенный HTML (для контента):
-echo wp_kses_post($description);
-```
-
----
-
-### Шифрование чувствительных данных
-
-#### Алгоритм
-
-**AES-256-CBC:**
-
-- Ключ: 256 бит (32 байта, 64 hex символа)
-- IV: Уникальный для каждой записи (16 байт)
-- Функции: `openssl_encrypt()`, `openssl_decrypt()`
-
-#### Генерация ключа
-
-```php
-// В CashbackPlugin::activate():
-$key = bin2hex(random_bytes(32)); // Криптографически стойкий генератор
-$file_content = "<?php\ndefine('CB_ENCRYPTION_KEY', '{$key}');\n";
-file_put_contents(WP_CONTENT_DIR . '/.cashback-encryption-key.php', $file_content);
-```
+- Только для чтения старых данных
+- Новые записи всегда шифруются GCM
 
 #### Что шифруется
 
-- Номер счета (телефон, карта)
+- Номер счёта/карты/телефона
 - ФИО получателя
-- Код банка (БИК)
+- Код банка
+- API credentials CPA-сетей
 
-#### Что маскируется
+### Защита от Click Fraud
 
-При отображении используется `masked_details` JSON:
+**Двухуровневый rate limiting:**
 
-```json
-{
-  "account": "+7903***4567",
-  "full_name": "И**** П****",
-  "bank": "044525225"
-}
-```
+1. **Per-product:** IP + product_id — 3 клика/60с (spam), 10 (block)
+2. **Global:** IP — 10 кликов/60с (spam), 60 (block, CGNAT-safe)
 
-#### Антифрод
+**Дополнительно:**
 
-```php
-// SHA-256 хеш для обнаружения изменений:
-$details_hash = hash('sha256', json_encode($details, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
-```
+- Bot-detection по User-Agent (отдельный слой)
+- `spam_click=1` → кешбэк только после ручной проверки
+- Логирование всех кликов в `cashback_click_log`
+- `click_id` для связи клик → транзакция
 
----
+### Антифрод-детекция
 
-### Защита от SQL Injection
+- 7 автоматических проверок (ежечасно)
+- Browser fingerprinting (FingerprintJS)
+- Risk scoring (0-100) с severity levels
+- Дедупликация алертов (30 дней)
+- Email-уведомления администратору
+- Возможность бана из модального окна алерта
 
-**Все SQL-запросы используют подготовленные выражения:**
+### Защита файлов вложений
 
-```php
-// Правильно:
-$result = $wpdb->get_row($wpdb->prepare(
-    "SELECT * FROM {$table} WHERE user_id = %d AND status = %s",
-    $user_id,
-    $status
-));
+- Файлы хранятся **без расширений** (защита от прямого исполнения)
+- MIME-тип определяется через `finfo_file()` (не из расширения)
+- Директория защищена `.htaccess` (deny from all)
+- Белый список расширений (настраивается)
+- Лимит размера файла (настраивается)
 
-// НЕПРАВИЛЬНО (никогда не использовать):
-// $result = $wpdb->get_row("SELECT * FROM {$table} WHERE user_id = {$user_id}");
-```
-
-**LIKE-поиск:**
+### Защита от IP Spoofing
 
 ```php
-$search_term = $wpdb->esc_like($search);
-$query = $wpdb->prepare(
-    "SELECT * FROM {$table} WHERE name LIKE %s",
-    '%' . $search_term . '%'
-);
+Cashback_Encryption::get_client_ip()
 ```
 
----
-
-### Защита от XSS
-
-**Принцип:** Никогда не доверять пользовательским данным при выводе
-
-```php
-// Правильно:
-echo '<div>' . esc_html($user_input) . '</div>';
-echo '<input value="' . esc_attr($user_input) . '">';
-
-// НЕПРАВИЛЬНО:
-// echo '<div>' . $user_input . '</div>';
-```
-
----
-
-### Защита от Race Conditions
-
-#### MySQL Named Locks
-
-```php
-// Получение блокировки (10 секунд таймаут):
-$wpdb->query($wpdb->prepare("SELECT GET_LOCK(%s, 10)", $lock_name));
-
-// Критическая секция
-// ...
-
-// Освобождение блокировки:
-$wpdb->query($wpdb->prepare("DO RELEASE_LOCK(%s)", $lock_name));
-```
-
-#### SELECT FOR UPDATE
-
-```php
-$wpdb->query('START TRANSACTION');
-
-$balance = $wpdb->get_row($wpdb->prepare(
-    "SELECT * FROM {$table} WHERE user_id = %d FOR UPDATE",
-    $user_id
-));
-
-// Работа с заблокированной строкой
-// ...
-
-$wpdb->query('COMMIT');
-```
-
-#### Оптимистичная блокировка
-
-```php
-// Чтение текущей версии:
-$current_version = $balance->version;
-
-// Обновление с проверкой версии:
-$updated = $wpdb->query($wpdb->prepare(
-    "UPDATE {$table}
-     SET available_balance = available_balance - %f,
-         version = version + 1
-     WHERE user_id = %d AND version = %d",
-    $amount, $user_id, $current_version
-));
-
-if ($updated === 0) {
-    // Конфликт версий - кто-то изменил запись
-    throw new Exception('Conflict: balance was modified by another process');
-}
-```
-
----
-
-### Защита от дубликатов (Idempotency)
-
-**UNIQUE KEY на idempotency_key:**
-
-```php
-// Генерация уникального ключа:
-$idempotency_key = hash('sha256',
-    $user_id . '_' .
-    microtime(true) . '_' .
-    wp_create_nonce('cashback_withdrawal_' . $user_id) . '_' .
-    bin2hex(random_bytes(16))
-);
-
-// INSERT с idempotency_key:
-$wpdb->insert($table, [
-    'user_id' => $user_id,
-    'total_amount' => $amount,
-    'idempotency_key' => $idempotency_key,
-    // ...
-]);
-
-// При дубликате MySQL вернет ошибку Duplicate entry
-```
-
----
-
-### Защита от DoS
-
-**Лимиты пагинации:**
-
-```php
-// В CashbackHistory:
-const MAX_ALLOWED_PAGES = 1000;
-
-if ($page > self::MAX_ALLOWED_PAGES) {
-    wp_send_json_error(['message' => 'Страница не найдена']);
-}
-```
-
-**MySQL события с блокировками:**
-
-```sql
--- Защита от параллельного запуска:
-IF GET_LOCK('cashback_event_lock', 0) = 1 THEN
-    -- Выполнение события
-    -- ...
-    DO RELEASE_LOCK('cashback_event_lock');
-END IF;
-```
-
----
+- Прокси-заголовки читаются **только** если `REMOTE_ADDR` ∈ `CASHBACK_TRUSTED_PROXIES`
+- Из заголовков принимаются **только публичные IP** (`FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE`)
+- Приоритет: CF-Connecting-IP → X-Forwarded-For → X-Real-IP
 
 ### Аудит-лог
-
-**Логирование критических операций:**
-
-```php
-Cashback_Encryption::write_audit_log(
-    string $action,           // 'payout_details_decrypted'
-    string $entity_type,      // 'payout_request'
-    string $entity_id,        // '123'
-    ?int $actor_id = null     // ID администратора
-);
-```
-
-**Сохраняется:**
-
-- IP адрес (с поддержкой прокси)
-- User-Agent
-- Timestamp
 
 **Типы действий:**
 
@@ -2184,44 +1548,27 @@ Cashback_Encryption::write_audit_log(
 - `user_banned` — Бан пользователя
 - `user_unbanned` — Разбан пользователя
 
----
+**Сохраняется:** IP (с защитой от спуфинга), User-Agent, timestamp, entity, details (JSON)
 
-### Валидация префикса таблицы
+### Защита от Race Conditions
 
-```php
-private function validate_table_prefix(string $prefix): bool
-{
-    if (!preg_match('/^[a-zA-Z0-9_]+$/', $prefix)) {
-        error_log('[Cashback] Invalid table prefix detected');
-        return false;
-    }
-    return true;
-}
-```
+1. **MySQL Named Locks:** `GET_LOCK('user_withdrawal_' . $user_id, 10)`
+2. **SELECT FOR UPDATE:** Блокировка строк в транзакции
+3. **Оптимистичная блокировка:** `WHERE version = ?` → `version + 1`
+4. **Идемпотентность:** UNIQUE KEY на `idempotency_key`
+5. **MySQL Event Lock:** `GET_LOCK('cashback_event_lock', 0)` + `processed_batch_id`
 
----
+### Защита от SQL Injection
 
-### Защита от прямого доступа
+Все SQL через `$wpdb->prepare()` с `%d`, `%s`, `%f`, `%i`.
 
-**Все PHP файлы начинаются с:**
+### Защита от XSS
 
-```php
-if (!defined('ABSPATH')) {
-    exit;
-}
-```
+`esc_html()`, `esc_attr()`, `esc_url()`, `wp_json_encode()`, `wp_kses_post()`.
 
-**uninstall.php:**
+### CSRF Protection
 
-```php
-if (!defined('WP_UNINSTALL_PLUGIN') || !WP_UNINSTALL_PLUGIN) {
-    exit;
-}
-
-if (!current_user_can('activate_plugins')) {
-    exit;
-}
-```
+Все формы и AJAX через WordPress nonces: `wp_nonce_field()`, `wp_verify_nonce()`, `check_ajax_referer()`.
 
 ---
 
@@ -2230,48 +1577,17 @@ if (!current_user_can('activate_plugins')) {
 ### Изменения схемы БД
 
 **Файл:** [mariadb.php](mariadb.php)
-**Методы:**
 
 - `create_tables()` — добавление новых таблиц
-- `create_triggers()` — модификация триггеров
+- `create_triggers()` — модификация триггеров (конечный автомат статусов)
 - `create_events()` — изменение MySQL событий
-
-**Миграции:**
-Создавать новые методы типа `migrate_add_new_column()` и вызывать в `activate()`
-
----
+- Миграции: создавать `migrate_*()` и вызывать в `activate()`
 
 ### Логика выплат
 
 **Файл:** [cashback-withdrawal.php](cashback-withdrawal.php)
-**Ключевые методы:**
 
-- `process_cashback_withdrawal()` — логика создания заявки
-- `validate_withdrawal_data()` — валидация данных
-
-**Важно:**
-
-- Сохранять защиту от race conditions (GET_LOCK + FOR UPDATE + version)
-- Не удалять идемпотентность
-- Сохранять шифрование реквизитов
-
----
-
-### Административное управление
-
-**Файл:** [admin/payouts.php](admin/payouts.php)
-**Ключевые методы:**
-
-- `handle_update_payout_request()` — смена статуса
-- `update_user_balance_on_payout()` — обновление баланса
-
-**Важно:**
-
-- Соблюдать конечный автомат статусов
-- Сохранять транзакционность
-- Не обходить триггеры БД
-
----
+**Важно:** Сохранять 5 уровней защиты от race conditions, шифрование реквизитов, reference_id.
 
 ### Криптография
 
@@ -2279,25 +1595,21 @@ if (!current_user_can('activate_plugins')) {
 
 **Важно:**
 
-- НЕ изменять алгоритм шифрования без миграции данных
-- НЕ изменять формат хранения (base64(IV || ciphertext))
-- При смене алгоритма: написать миграцию для перешифровки
+- НЕ изменять формат v2 (GCM) без миграции
+- НЕ удалять поддержку v1 (CBC) пока есть старые данные
+- `write_audit_log()` сигнатура: `(action, actor_id, ?entity_type, ?entity_id, ?extra_details)`
 
----
+### Антифрод
 
-### Управление пользователями
+**Файл:** [antifraud/class-fraud-detector.php](antifraud/class-fraud-detector.php)
 
-**Файл:** [admin/users-management.php](admin/users-management.php)
-**Критические методы:**
+**Важно:** Дедупликация алертов через `alert_exists()`, severity mapping.
 
-- `handle_user_ban()` — логика бана
-- `handle_user_unban()` — логика разбана
+### Партнёрские ссылки
 
-**Важно:**
+**Файл:** [wc-affiliate-url-params.php](wc-affiliate-url-params.php)
 
-- Сохранять транзакционность при бане
-- Не забывать про email-уведомления
-- Сохранять аудит-лог
+**Важно:** Rate limiting (2 уровня), click tracking с UUID, spam_click flag.
 
 ---
 
@@ -2305,134 +1617,32 @@ if (!current_user_can('activate_plugins')) {
 
 ### PHPStan
 
-**Конфигурация:** [development/phpstan.neon](development/phpstan.neon)
-
-```yaml
-parameters:
-  level: 5
-  paths:
-    - ../
-  excludePaths:
-    - ../development/
-    - ../assets/
-  bootstrapFiles:
-    - config/phpstan-bootstrap.php
-```
-
-**Запуск:**
-
 ```bash
 cd development
 composer install
 vendor/bin/phpstan analyse
 ```
 
----
+**Конфигурация:** [development/phpstan.neon](development/phpstan.neon) (level 5)
 
-### PHPCS (PHP_CodeSniffer)
-
-**Стандарты:** WordPress, WordPress-Extra
-
-**Конфигурация:** [development/.phpcs.xml.dist](development/.phpcs.xml.dist)
-
-**Запуск:**
+### PHPCS
 
 ```bash
 cd development
 vendor/bin/phpcs ../ --standard=WordPress --extensions=php --ignore=development/,assets/
 ```
 
-**Автофикс:**
-
-```bash
-vendor/bin/phpcbf ../ --standard=WordPress --extensions=php
-```
-
----
-
-### Composer зависимости
-
-**Файл:** [development/composer.json](development/composer.json)
-
-```json
-{
-  "require-dev": {
-    "phpstan/phpstan": "^1.10",
-    "szepeviktor/phpstan-wordpress": "^1.3",
-    "php-stubs/wordpress-stubs": "^6.2",
-    "php-stubs/woocommerce-stubs": "^7.0",
-    "squizlabs/php_codesniffer": "^3.7",
-    "wp-coding-standards/wpcs": "^3.0"
-  }
-}
-```
-
----
-
-### Структура development/
-
-```
-development/
-├── composer.json              - Зависимости
-├── composer.lock              - Lock-файл
-├── phpstan.neon               - Конфигурация PHPStan
-├── .phpcs.xml.dist            - Конфигурация PHPCS
-├── config/
-│   └── phpstan-bootstrap.php  - Загрузчик констант для PHPStan
-├── docs/
-│   ├── README.md              - Общая документация
-│   ├── CHANGELOG.md           - История изменений
-│   ├── SECURITY.md            - Политика безопасности
-│   └── CONTRIBUTING.md        - Руководство для контрибьюторов
-└── vendor/                    - Composer пакеты
-```
-
----
-
-## Полезные команды
-
-### Git
-
-```bash
-# Статус
-git status
-
-# Коммит изменений
-git add .
-git commit -m "Описание изменений"
-
-# Просмотр истории
-git log --oneline
-```
-
-### WP-CLI (если установлен)
-
-```bash
-# Информация о плагине
-wp plugin list | grep mariadb
-
-# Активация/деактивация
-wp plugin activate mariadb
-wp plugin deactivate mariadb
-
-# Экспорт БД
-wp db export backup.sql
-
-# Проверка таблиц
-wp db query "SHOW TABLES LIKE 'wp_cashback_%'"
-```
-
 ### MySQL
 
-```bash
-# Просмотр триггеров
+```sql
+-- Триггеры
 SHOW TRIGGERS LIKE 'cashback_%';
 
-# Просмотр событий
+-- События
 SHOW EVENTS WHERE Db = 'database_name';
 
-# Проверка блокировок
-SELECT * FROM information_schema.INNODB_LOCKS;
+-- Event scheduler (обязательно ON)
+SET GLOBAL event_scheduler = ON;
 ```
 
 ---
@@ -2444,45 +1654,23 @@ SELECT * FROM information_schema.INNODB_LOCKS;
 - **README:** [INSTALL.md](INSTALL.md)
 - **Changelog:** [development/docs/CHANGELOG.md](development/docs/CHANGELOG.md)
 - **Security:** [development/docs/SECURITY.md](development/docs/SECURITY.md)
-- **Contributing:** [development/docs/CONTRIBUTING.md](development/docs/CONTRIBUTING.md)
-
-### Требования к среде
-
-```php
-// Проверка в cashback-plugin.php:
-PHP_VERSION >= 7.4
-WordPress >= 6.2
-WooCommerce >= 5.0
-```
 
 ### Серверные требования
 
-- MySQL >= 5.7 или MariaDB >= 10.2 (для триггеров и событий)
-- Поддержка `openssl` расширения PHP
-- Включенный `event_scheduler` в MySQL:
-
-```sql
-SET GLOBAL event_scheduler = ON;
-```
+- MySQL >= 5.7 или MariaDB >= 10.2
+- PHP расширение `openssl`
+- `event_scheduler = ON` в MySQL
+- Запись в `wp-content/` (для ключа шифрования)
+- Запись в `wp-content/cashback-support/` (для вложений)
 
 ---
 
-## Заключение
-
-Этот документ описывает полную архитектуру плагина Cashback (MariaDB). Для дополнительной информации обращайтесь к исходному коду и комментариям в файлах.
-
-**Принципы разработки:**
+## Принципы разработки
 
 - Безопасность прежде всего
 - Транзакционность критических операций
 - Идемпотентность запросов
 - Аудит чувствительных действий
 - Валидация на всех уровнях
-
-**Основные технологии:**
-
-- WordPress + WooCommerce
-- MySQL/MariaDB (триггеры, события)
-- AES-256-CBC шифрование
-- Оптимистичная блокировка
-- Named locks для защиты от гонок
+- Authenticated encryption (GCM)
+- Rate limiting на всех публичных эндпоинтах
