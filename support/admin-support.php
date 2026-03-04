@@ -743,13 +743,11 @@ class Cashback_Support_Admin
         if ($enabled) {
             // При включении убедимся что таблицы существуют
             Cashback_Support_DB::create_tables();
-            // Endpoint зарегистрирован в этом запросе — можно сбросить правила сразу
-            flush_rewrite_rules();
-        } else {
-            // При отключении endpoint ещё зарегистрирован в текущем запросе,
-            // поэтому откладываем flush до следующего запроса, где endpoint не будет добавлен
-            set_transient('cashback_support_flush_rules', 1, 60);
         }
+
+        // Откладываем flush до следующего запроса, когда endpoint будет
+        // зарегистрирован (при включении) или снят (при отключении)
+        set_transient('cashback_support_flush_rules', 1, 60);
 
         wp_send_json_success(['enabled' => $enabled]);
     }

@@ -94,8 +94,70 @@ class Mariadb_Plugin
 
         $charset_collate = "DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
 
-        // Таблица cashback_payout_requests с защитой от дублирования
-        $table1 = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_payout_requests` (
+        // ---------------------------------------------------------------
+        // Фаза 1: Создание таблиц без FOREIGN KEY / CHECK / GENERATED
+        // WordPress dbDelta() и некоторые конфигурации MySQL/MariaDB
+        // не поддерживают эти конструкции внутри CREATE TABLE.
+        // Ограничения добавляются отдельно в Фазе 2.
+        // ---------------------------------------------------------------
+
+        // Таблица способов выплат (справочник, без зависимостей)
+        $table_payout_methods = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_payout_methods` (
+            `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            `slug` varchar(50) NOT NULL COMMENT 'Уникальный идентификатор (например: sbp, mir, yoomoney)',
+            `name` varchar(100) NOT NULL COMMENT 'Отображаемое название (например: СБП, МИР, ЮMoney)',
+            `is_active` tinyint(1) NOT NULL DEFAULT 1 COMMENT '1 = способ доступен для выбора',
+            `sort_order` int(11) NOT NULL DEFAULT 0 COMMENT 'Порядок сортировки в интерфейсе',
+            `created_at` datetime DEFAULT current_timestamp(),
+            `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uniq_slug` (`slug`)
+        ) ENGINE=InnoDB {$charset_collate} COMMENT='Способы выплат пользователей';";
+
+        // Таблица банков (справочник, без зависимостей)
+        $table_banks = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_banks` (
+            `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            `bank_code` varchar(50) NOT NULL COMMENT 'Уникальный код банка (например: sber, tinkoff, vtbc)',
+            `name` varchar(100) NOT NULL COMMENT 'Полное название банка',
+            `short_name` varchar(50) DEFAULT NULL COMMENT 'Краткое название банка',
+            `is_active` tinyint(1) NOT NULL DEFAULT 1 COMMENT '1 = банк доступен для выбора',
+            `sort_order` int(11) NOT NULL DEFAULT 0 COMMENT 'Порядок сортировки в интерфейсе',
+            `created_at` datetime DEFAULT current_timestamp(),
+            `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uniq_bank_code` (`bank_code`),
+            KEY `idx_active_sort_name` (`is_active`,`sort_order`,`name`) COMMENT 'Оптимизация выборки активных банков с сортировкой',
+            KEY `idx_name_active` (`name`,`is_active`) COMMENT 'Оптимизация поиска банков по названию'
+        ) ENGINE=InnoDB {$charset_collate} COMMENT='Список банков для выплат';";
+
+        // Таблица партнерских сетей (справочник, без зависимостей)
+        $table_affiliate_networks = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_affiliate_networks` (
+            `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            `name` varchar(255) NOT NULL COMMENT 'Название партнера',
+            `slug` varchar(100) NOT NULL COMMENT 'Уникальный идентификатор',
+            `notes` text DEFAULT NULL COMMENT 'Примечание',
+            `sort_order` int(11) NOT NULL DEFAULT 0 COMMENT 'Порядок сортировки',
+            `is_active` tinyint(1) NOT NULL DEFAULT 1 COMMENT '1 = активен',
+            `created_at` datetime DEFAULT current_timestamp(),
+            `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uniq_slug` (`slug`),
+            KEY `idx_active_sort` (`is_active`,`sort_order`,`name`)
+        ) ENGINE=InnoDB {$charset_collate} COMMENT='Партнерские сети';";
+
+        // Таблица параметров партнерских сетей (FK добавляется в Фазе 2)
+        $table_affiliate_network_params = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_affiliate_network_params` (
+            `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            `network_id` bigint(20) unsigned NOT NULL COMMENT 'ID партнерской сети',
+            `param_name` varchar(100) NOT NULL COMMENT 'Название параметра',
+            `param_type` varchar(100) DEFAULT NULL COMMENT 'Значение параметра',
+            `default_value` varchar(255) DEFAULT NULL COMMENT 'Значение по умолчанию',
+            PRIMARY KEY (`id`),
+            KEY `idx_network_id` (`network_id`)
+        ) ENGINE=InnoDB {$charset_collate} COMMENT='Параметры партнерских сетей';";
+
+        // Таблица cashback_payout_requests (FK и CHECK добавляются в Фазе 2)
+        $table_payout_requests = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_payout_requests` (
             `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
             `reference_id` varchar(11) NOT NULL DEFAULT '' COMMENT 'Публичный ID заявки формата WD-XXXXXXXX',
             `user_id` bigint(20) unsigned NOT NULL,
@@ -114,27 +176,24 @@ class Mariadb_Plugin
             `created_at` datetime DEFAULT current_timestamp(),
             `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp(),
             PRIMARY KEY (`id`),
-            UNIQUE KEY `uk_reference_id` (`reference_id`) COMMENT 'Уникальный публичный идентификатор заявки',
-            UNIQUE KEY `uk_idempotency` (`idempotency_key`) COMMENT 'Гарантирует уникальность заявки на выплату',
+            UNIQUE KEY `uk_reference_id` (`reference_id`),
+            UNIQUE KEY `uk_idempotency` (`idempotency_key`),
             KEY `idx_user_status` (`user_id`,`status`),
             KEY `idx_status_updated` (`status`,`updated_at`),
             KEY `idx_provider_payout_id` (`provider_payout_id`),
             KEY `idx_refunded` (`refunded_at`),
             KEY `idx_payout_method_slug` (`payout_method`),
-            KEY `idx_user_created` (`user_id`,`created_at` DESC),
-            CONSTRAINT `fk_payout_user` FOREIGN KEY (`user_id`) REFERENCES `{$wpdb->prefix}users` (`ID`) ON DELETE RESTRICT,
-            CHECK (total_amount > 0)
+            KEY `idx_user_created` (`user_id`,`created_at` DESC)
         ) ENGINE=InnoDB {$charset_collate} COMMENT='Заявки на выплаты с защитой от дублирования';";
 
-        // Таблица cashback_transactions
-        $table2 = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_transactions` (
+        // Таблица cashback_transactions (FK и CHECK добавляются в Фазе 2)
+        $table_transactions = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_transactions` (
             `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
             `user_id` bigint(20) unsigned NOT NULL COMMENT 'id пользователя на сайте',
-            `order_number` varchar(255) NOT NULL COMMENT 'Номер заказа у партнгера', 
+            `order_number` varchar(255) NOT NULL COMMENT 'Номер заказа у партнгера',
             `offer_id` int unsigned DEFAULT NULL COMMENT 'ID партнёрской программы в CPA-сети (advcampaign_id). Стабилен, в отличие от offer_name',
             `offer_name` varchar(255) DEFAULT NULL COMMENT 'Название конкретного партнера например Алиэкспресс',
-            `order_status` enum('waiting','completed','declined','hold','balance') NOT NULL DEFAULT 'waiting' COMMENT 'Статусы конверсии (В ожидании, 
-            Подтверждена, Отклонена, Зачислена на баланс)',
+            `order_status` enum('waiting','completed','declined','hold','balance') NOT NULL DEFAULT 'waiting' COMMENT 'Статусы конверсии',
             `partner` varchar(255) DEFAULT NULL COMMENT 'Название CPA',
             `sum_order` decimal(10,2) DEFAULT NULL COMMENT 'Сумма заказа или покупки',
             `comission` decimal(10,2) DEFAULT NULL COMMENT 'Комиссия выплачиваемая за покупку',
@@ -144,9 +203,9 @@ class Mariadb_Plugin
             `applied_cashback_rate` decimal(5,2) NOT NULL DEFAULT 60.00 COMMENT 'Процент кэшбэка на момент создания транзакции',
             `api_verified` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = Транзакция сверена с API. Основной триггер начисления в баланс',
             `action_date` datetime DEFAULT NULL COMMENT 'Реальное время покупки. НЕ путать с created_at (время получения хука)',
-            `click_time` datetime DEFAULT NULL COMMENT 'Время клика. Для антифрода: action_date - click_time = 0 → бот',
+            `click_time` datetime DEFAULT NULL COMMENT 'Время клика. Для антифрода: action_date - click_time = 0 бот',
             `click_id` char(32) DEFAULT NULL COMMENT 'UUID клика, связь с cashback_click_log.click_id',
-            `website_id` int unsigned DEFAULT NULL COMMENT 'ID площадки в CPA-сети из',
+            `website_id` int unsigned DEFAULT NULL COMMENT 'ID площадки в CPA-сети',
             `action_type` varchar(10) DEFAULT NULL COMMENT 'sale/lead. Для корректного расчёта при нескольких тарифах',
             `processed_at` datetime DEFAULT NULL COMMENT 'Когда транзакция была учтена в балансе',
             `processed_batch_id` char(36) DEFAULT NULL COMMENT 'UUID батча начисления',
@@ -154,34 +213,20 @@ class Mariadb_Plugin
             `spam_click` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = транзакция из подозрительного клика, кэшбэк только после ручной проверки',
             `created_at` timestamp NULL DEFAULT current_timestamp(),
             `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
-    PRIMARY KEY (`id`),
-    UNIQUE KEY `unique_uniq_partner` (`uniq_id`,`partner`),
-    UNIQUE KEY `idx_idempotency_key` (`idempotency_key`),
-    KEY `user_id` (`user_id`),
-    KEY `idx_user_created` (`user_id`,`created_at` DESC),
-    KEY `idx_processed` (`processed_at`),
-    KEY `idx_processed_batch_id` (`processed_batch_id`),
-    KEY `idx_click_id` (`click_id`),
-    KEY `idx_offer_id` (`offer_id`),
-
-    KEY `idx_balance_candidates` (`order_status`,`api_verified`,`processed_at`,`spam_click`,`cashback`),
-
-    CONSTRAINT `fk_transactions_user`
-        FOREIGN KEY (`user_id`)
-        REFERENCES `{$wpdb->prefix}users` (`ID`)
-        ON DELETE RESTRICT,
-    CONSTRAINT `chk_applied_cashback_rate_range`
-        CHECK (`applied_cashback_rate` BETWEEN 0.00 AND 100.00),
-    CONSTRAINT `chk_cashback_positive`
-        CHECK (`cashback` >= 0),
-    CONSTRAINT `chk_currency_format`
-        CHECK (`currency` REGEXP '^[A-Z]{3}$')
-) ENGINE=InnoDB {$charset_collate};";
-
-
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `unique_uniq_partner` (`uniq_id`,`partner`),
+            UNIQUE KEY `idx_idempotency_key` (`idempotency_key`),
+            KEY `user_id` (`user_id`),
+            KEY `idx_user_created` (`user_id`,`created_at` DESC),
+            KEY `idx_processed` (`processed_at`),
+            KEY `idx_processed_batch_id` (`processed_batch_id`),
+            KEY `idx_click_id` (`click_id`),
+            KEY `idx_offer_id` (`offer_id`),
+            KEY `idx_balance_candidates` (`order_status`,`api_verified`,`processed_at`,`spam_click`,`cashback`)
+        ) ENGINE=InnoDB {$charset_collate};";
 
         // Таблица cashback_unregistered_transactions
-        $table3 = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_unregistered_transactions` (
+        $table_unregistered = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_unregistered_transactions` (
             `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
             `user_id` varchar(255) NOT NULL,
             `order_number` varchar(255) NOT NULL,
@@ -197,7 +242,7 @@ class Mariadb_Plugin
             `applied_cashback_rate` decimal(5,2) NOT NULL DEFAULT 60.00 COMMENT 'Процент кэшбэка на момент создания транзакции',
             `api_verified` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = Транзакция сверена с API. Основной триггер начисления в баланс',
             `action_date` datetime DEFAULT NULL COMMENT 'Реальное время покупки. НЕ путать с created_at (время получения хука)',
-            `click_time` datetime DEFAULT NULL COMMENT 'Время клика. Для антифрода: action_date - click_time = 0 → бот',
+            `click_time` datetime DEFAULT NULL COMMENT 'Время клика. Для антифрода: action_date - click_time = 0 бот',
             `click_id` char(32) DEFAULT NULL COMMENT 'UUID клика, связь с cashback_click_log.click_id',
             `website_id` int unsigned DEFAULT NULL COMMENT 'ID площадки в CPA-сети',
             `action_type` varchar(10) DEFAULT NULL COMMENT 'sale/lead. Для корректного расчёта при нескольких тарифах',
@@ -212,42 +257,33 @@ class Mariadb_Plugin
             UNIQUE KEY `idx_idempotency_key` (`idempotency_key`)
         ) ENGINE=InnoDB {$charset_collate} COMMENT='Вэбхуки принятые от неавторизованных пользователей';";
 
-        // Таблица cashback_user_balance
-        $table4 = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_user_balance` (
+        // Таблица cashback_user_balance (FK и CHECK добавляются в Фазе 2)
+        $table_balance = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_user_balance` (
             `user_id` bigint(20) unsigned NOT NULL,
             `available_balance` decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'Доступный баланс пользователя',
             `pending_balance`   decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'В ожидании выплаты',
             `paid_balance`      decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'Выплачен',
             `frozen_balance`    decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'Заблокирован',
             `version` int unsigned NOT NULL DEFAULT 0 COMMENT 'Версия строки для защиты от гонок',
-            `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
-            ON UPDATE CURRENT_TIMESTAMP,
-            PRIMARY KEY (`user_id`),
-            CONSTRAINT `fk_balance_user`
-            FOREIGN KEY (`user_id`)
-            REFERENCES `{$wpdb->prefix}users` (`ID`)
-            ON DELETE RESTRICT,
-            CHECK (available_balance >= 0),
-            CHECK (pending_balance >= 0),
-            CHECK (paid_balance >= 0),
-            CHECK (frozen_balance >= 0)
+            `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (`user_id`)
         ) ENGINE=InnoDB {$charset_collate} COMMENT='Балансы пользователей кэшбэк-сервиса';";
 
-        // Таблица cashback_webhooks
-        $table5 = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_webhooks` (
+        // Таблица cashback_webhooks (GENERATED и CHECK убраны для совместимости)
+        $table_webhooks = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_webhooks` (
             `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
             `received_at` datetime(6) NOT NULL DEFAULT current_timestamp(6),
-            `payload` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL CHECK (json_valid(`payload`)),
+            `payload` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
             `network_slug` varchar(64) DEFAULT NULL,
-            `payload_hash` char(64) GENERATED ALWAYS AS (sha2(json_normalize(`payload`),256)) STORED,
+            `payload_hash` char(64) DEFAULT NULL COMMENT 'SHA-256 хеш payload для дедупликации',
             PRIMARY KEY (`id`),
             UNIQUE KEY `uk_payload_hash` (`payload_hash`),
             KEY `idx_received_at` (`received_at`),
             KEY `idx_network_slug` (`network_slug`)
         ) ENGINE=InnoDB {$charset_collate} COMMENT='Сырые уникальные webhooks';";
 
-        // Таблица cashback_user_profile
-        $table6 = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_user_profile` (
+        // Таблица cashback_user_profile (FK добавляются в Фазе 2)
+        $table_profile = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_user_profile` (
             `user_id` bigint(20) unsigned NOT NULL,
             `payout_method_id` bigint(20) unsigned DEFAULT NULL COMMENT 'ID способа выплаты, привязанного к wp_cashback_payout_methods.id',
             `payout_account` varchar(255) DEFAULT NULL COMMENT 'Телефон, номер карты или кошелёк',
@@ -256,7 +292,7 @@ class Mariadb_Plugin
             `masked_details` TEXT DEFAULT NULL COMMENT 'Маскированные реквизиты для отображения (JSON)',
             `details_hash` char(64) DEFAULT NULL COMMENT 'SHA-256 хеш реквизитов для антифрода',
             `bank_id` bigint(20) unsigned DEFAULT NULL COMMENT 'ID банка, привязанного к wp_cashback_banks.id',
-            `cashback_rate` decimal(5,2) NOT NULL DEFAULT 60.00 COMMENT 'Процент кэшбэка (60 = 60%)' CHECK (`cashback_rate` BETWEEN 0.00 AND 100.00),
+            `cashback_rate` decimal(5,2) NOT NULL DEFAULT 60.00 COMMENT 'Процент кэшбэка (60 = 60%)',
             `is_verified` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = реквизиты подтверждены',
             `payout_details_updated_at` datetime DEFAULT NULL COMMENT 'Дата и время обновления реквизитов',
             `min_payout_amount` decimal(18,2) DEFAULT 100.00 COMMENT 'Минимальная сумма выплаты',
@@ -271,52 +307,8 @@ class Mariadb_Plugin
             KEY `idx_active_check` (`status`,`last_active_at`,`created_at`),
             KEY `idx_payout_method` (`payout_method_id`),
             KEY `idx_bank_id` (`bank_id`),
-            KEY `idx_details_hash` (`details_hash`),
-            CONSTRAINT `fk_profile_wp_user` FOREIGN KEY (`user_id`) REFERENCES `{$wpdb->prefix}users` (`ID`) ON DELETE CASCADE,
-            CONSTRAINT `fk_payout_method` FOREIGN KEY (`payout_method_id`) REFERENCES `{$wpdb->prefix}cashback_payout_methods` (`id`) ON DELETE SET NULL,
-            CONSTRAINT `fk_bank_id` FOREIGN KEY (`bank_id`) REFERENCES `{$wpdb->prefix}cashback_banks` (`id`) ON DELETE SET NULL
+            KEY `idx_details_hash` (`details_hash`)
         ) ENGINE=InnoDB {$charset_collate};";
-
-        // Таблица способов выплат
-        $table7 = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_payout_methods` (
-            `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-            `slug` varchar(50) NOT NULL COMMENT 'Уникальный идентификатор (например: sbp, mir, yoomoney)',
-            `name` varchar(100) NOT NULL COMMENT 'Отображаемое название (например: СБП, МИР, ЮMoney)',
-            `is_active` tinyint(1) NOT NULL DEFAULT 1 COMMENT '1 = способ доступен для выбора',
-            `sort_order` int(11) NOT NULL DEFAULT 0 COMMENT 'Порядок сортировки в интерфейсе',
-            `created_at` datetime DEFAULT current_timestamp(),
-            `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp(),
-            PRIMARY KEY (`id`),
-            UNIQUE KEY `uniq_slug` (`slug`)
-        ) ENGINE=InnoDB {$charset_collate} COMMENT='Способы выплат пользователей';";
-
-        // Таблица партнерских сетей
-        $table_affiliate_networks = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_affiliate_networks` (
-            `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-            `name` varchar(255) NOT NULL COMMENT 'Название партнера',
-            `slug` varchar(100) NOT NULL COMMENT 'Уникальный идентификатор',
-            `notes` text DEFAULT NULL COMMENT 'Примечание',
-            `sort_order` int(11) NOT NULL DEFAULT 0 COMMENT 'Порядок сортировки',
-            `is_active` tinyint(1) NOT NULL DEFAULT 1 COMMENT '1 = активен',
-            `created_at` datetime DEFAULT current_timestamp(),
-            `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp(),
-            PRIMARY KEY (`id`),
-            UNIQUE KEY `uniq_slug` (`slug`),
-            KEY `idx_active_sort` (`is_active`,`sort_order`,`name`)
-        ) ENGINE=InnoDB {$charset_collate} COMMENT='Партнерские сети';";
-
-        // Таблица параметров партнерских сетей
-        $table_affiliate_network_params = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_affiliate_network_params` (
-            `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-            `network_id` bigint(20) unsigned NOT NULL COMMENT 'ID партнерской сети',
-            `param_name` varchar(100) NOT NULL COMMENT 'Название параметра',
-            `param_type` varchar(100) DEFAULT NULL COMMENT 'Значение параметра',
-            `default_value` varchar(255) DEFAULT NULL COMMENT 'Значение по умолчанию',
-            PRIMARY KEY (`id`),
-            KEY `idx_network_id` (`network_id`),
-            CONSTRAINT `fk_network_params` FOREIGN KEY (`network_id`)
-                REFERENCES `{$wpdb->prefix}cashback_affiliate_networks`(`id`) ON DELETE CASCADE
-        ) ENGINE=InnoDB {$charset_collate} COMMENT='Параметры партнерских сетей';";
 
         // Таблица логирования кликов по партнерским ссылкам
         $table_click_log = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_click_log` (
@@ -349,34 +341,52 @@ class Mariadb_Plugin
             KEY `idx_spam_by_product` (`created_at`,`spam_click`,`product_id`)
         ) ENGINE=InnoDB {$charset_collate} COMMENT='Лог кликов по партнерским ссылкам';";
 
-        // Таблица банков
-        $table8 = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_banks` (
-            `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-            `bank_code` varchar(50) NOT NULL COMMENT 'Уникальный код банка (например: sber, tinkoff, vtbc)',
-            `name` varchar(100) NOT NULL COMMENT 'Полное название банка',
-            `short_name` varchar(50) DEFAULT NULL COMMENT 'Краткое название банка',
-            `is_active` tinyint(1) NOT NULL DEFAULT 1 COMMENT '1 = банк доступен для выбора',
-            `sort_order` int(11) NOT NULL DEFAULT 0 COMMENT 'Порядок сортировки в интерфейсе',
-            `created_at` datetime DEFAULT current_timestamp(),
-            `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp(),
-            PRIMARY KEY (`id`),
-            UNIQUE KEY `uniq_bank_code` (`bank_code`),
-            KEY `idx_active_sort_name` (`is_active`,`sort_order`,`name`) COMMENT 'Оптимизация выборки активных банков с сортировкой',
-            KEY `idx_name_active` (`name`,`is_active`) COMMENT 'Оптимизация поиска банков по названию'
-        ) ENGINE=InnoDB {$charset_collate} COMMENT='Список банков для выплат';";
+        // Порядок создания: сначала справочники, потом зависимые таблицы
+        $tables = [
+            'cashback_payout_methods'          => $table_payout_methods,
+            'cashback_banks'                   => $table_banks,
+            'cashback_affiliate_networks'      => $table_affiliate_networks,
+            'cashback_affiliate_network_params' => $table_affiliate_network_params,
+            'cashback_payout_requests'         => $table_payout_requests,
+            'cashback_transactions'            => $table_transactions,
+            'cashback_unregistered_transactions' => $table_unregistered,
+            'cashback_user_balance'            => $table_balance,
+            'cashback_webhooks'                => $table_webhooks,
+            'cashback_user_profile'            => $table_profile,
+            'cashback_click_log'               => $table_click_log,
+        ];
 
-        require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
-        dbDelta($table1);
-        dbDelta($table2);
-        dbDelta($table3);
-        dbDelta($table4);
-        dbDelta($table5);
-        dbDelta($table7); // Создаем payout_methods ПЕРЕД user_profile
-        dbDelta($table8); // Создаем banks ПЕРЕД user_profile
-        dbDelta($table_affiliate_networks); // Создаем affiliate_networks
-        dbDelta($table_affiliate_network_params); // Создаем affiliate_network_params (FK на affiliate_networks)
-        dbDelta($table6); // Создаем user_profile после payout_methods и banks
-        dbDelta($table_click_log); // Создаем click_log
+        $failed_tables = [];
+
+        foreach ($tables as $table_name => $sql) {
+            $full_table_name = $wpdb->prefix . $table_name;
+
+            // Используем $wpdb->query() напрямую вместо dbDelta()
+            // dbDelta() парсит CREATE TABLE IF NOT EXISTS некорректно
+            // (regex захватывает "IF" как имя таблицы) и не поддерживает
+            // CONSTRAINT, CHECK, FOREIGN KEY, GENERATED конструкции
+            $result = $wpdb->query($sql);
+
+            if ($result === false) {
+                $failed_tables[] = $table_name . ': ' . $wpdb->last_error;
+                error_log("[Cashback] Failed to create table {$full_table_name}: " . $wpdb->last_error);
+            } else {
+                // Проверяем что таблица действительно существует
+                $exists = $wpdb->get_var(
+                    $wpdb->prepare("SHOW TABLES LIKE %s", $full_table_name)
+                );
+                if (!$exists) {
+                    $failed_tables[] = $table_name . ': table not created (no error reported)';
+                    error_log("[Cashback] Table {$full_table_name} was not created despite no error being reported");
+                }
+            }
+        }
+
+        if (!empty($failed_tables)) {
+            throw new Exception(
+                'Failed to create tables: ' . implode('; ', $failed_tables)
+            );
+        }
 
         // Инициализация начальных данных в справочные таблицы
         $this->insert_default_payout_methods();
@@ -385,7 +395,92 @@ class Mariadb_Plugin
         // Таблица аудит-лога
         $this->create_audit_log_table();
 
-        error_log('Mariadb Plugin: Tables created successfully');
+        // Фаза 2: Добавление FOREIGN KEY и CHECK ограничений (не фатально)
+        $this->add_table_constraints();
+
+        error_log('[Cashback] All tables created successfully');
+    }
+
+    /**
+     * Добавление FOREIGN KEY и CHECK ограничений к таблицам.
+     * Вынесено из CREATE TABLE для совместимости:
+     * - WordPress dbDelta() не поддерживает CONSTRAINT/FK/CHECK
+     * - FK между InnoDB и MyISAM невозможен (wp_users может быть MyISAM)
+     * - CHECK не поддерживается в MySQL < 8.0.16
+     * Ошибки не фатальны — таблицы работают и без ограничений на уровне БД.
+     */
+    private function add_table_constraints(): void
+    {
+        global $wpdb;
+
+        $constraints = [
+            // cashback_payout_requests
+            "ALTER TABLE `{$wpdb->prefix}cashback_payout_requests`
+                ADD CONSTRAINT `fk_payout_user` FOREIGN KEY (`user_id`)
+                REFERENCES `{$wpdb->prefix}users` (`ID`) ON DELETE RESTRICT",
+
+            // cashback_transactions
+            "ALTER TABLE `{$wpdb->prefix}cashback_transactions`
+                ADD CONSTRAINT `fk_transactions_user` FOREIGN KEY (`user_id`)
+                REFERENCES `{$wpdb->prefix}users` (`ID`) ON DELETE RESTRICT",
+
+            // cashback_user_balance
+            "ALTER TABLE `{$wpdb->prefix}cashback_user_balance`
+                ADD CONSTRAINT `fk_balance_user` FOREIGN KEY (`user_id`)
+                REFERENCES `{$wpdb->prefix}users` (`ID`) ON DELETE RESTRICT",
+
+            // cashback_user_profile
+            "ALTER TABLE `{$wpdb->prefix}cashback_user_profile`
+                ADD CONSTRAINT `fk_profile_wp_user` FOREIGN KEY (`user_id`)
+                REFERENCES `{$wpdb->prefix}users` (`ID`) ON DELETE CASCADE",
+            "ALTER TABLE `{$wpdb->prefix}cashback_user_profile`
+                ADD CONSTRAINT `fk_payout_method` FOREIGN KEY (`payout_method_id`)
+                REFERENCES `{$wpdb->prefix}cashback_payout_methods` (`id`) ON DELETE SET NULL",
+            "ALTER TABLE `{$wpdb->prefix}cashback_user_profile`
+                ADD CONSTRAINT `fk_bank_id` FOREIGN KEY (`bank_id`)
+                REFERENCES `{$wpdb->prefix}cashback_banks` (`id`) ON DELETE SET NULL",
+
+            // cashback_affiliate_network_params
+            "ALTER TABLE `{$wpdb->prefix}cashback_affiliate_network_params`
+                ADD CONSTRAINT `fk_network_params` FOREIGN KEY (`network_id`)
+                REFERENCES `{$wpdb->prefix}cashback_affiliate_networks` (`id`) ON DELETE CASCADE",
+
+            // CHECK constraints
+            "ALTER TABLE `{$wpdb->prefix}cashback_transactions`
+                ADD CONSTRAINT `chk_applied_cashback_rate_range`
+                CHECK (`applied_cashback_rate` BETWEEN 0.00 AND 100.00)",
+            "ALTER TABLE `{$wpdb->prefix}cashback_transactions`
+                ADD CONSTRAINT `chk_cashback_positive`
+                CHECK (`cashback` >= 0)",
+            "ALTER TABLE `{$wpdb->prefix}cashback_transactions`
+                ADD CONSTRAINT `chk_currency_format`
+                CHECK (`currency` REGEXP '^[A-Z]{3}$')",
+
+            "ALTER TABLE `{$wpdb->prefix}cashback_user_balance`
+                ADD CONSTRAINT `chk_available_balance` CHECK (`available_balance` >= 0)",
+            "ALTER TABLE `{$wpdb->prefix}cashback_user_balance`
+                ADD CONSTRAINT `chk_pending_balance` CHECK (`pending_balance` >= 0)",
+            "ALTER TABLE `{$wpdb->prefix}cashback_user_balance`
+                ADD CONSTRAINT `chk_paid_balance` CHECK (`paid_balance` >= 0)",
+            "ALTER TABLE `{$wpdb->prefix}cashback_user_balance`
+                ADD CONSTRAINT `chk_frozen_balance` CHECK (`frozen_balance` >= 0)",
+
+            "ALTER TABLE `{$wpdb->prefix}cashback_user_profile`
+                ADD CONSTRAINT `chk_cashback_rate_range`
+                CHECK (`cashback_rate` BETWEEN 0.00 AND 100.00)",
+        ];
+
+        $suppress = $wpdb->suppress_errors(true);
+
+        foreach ($constraints as $sql) {
+            $wpdb->query($sql);
+            // Ошибки типа "Duplicate key name" (constraint already exists) — ожидаемы
+            if ($wpdb->last_error && strpos($wpdb->last_error, 'Duplicate') === false) {
+                error_log('[Cashback] Constraint warning (non-fatal): ' . $wpdb->last_error);
+            }
+        }
+
+        $wpdb->suppress_errors($suppress);
     }
 
     /**
@@ -460,7 +555,7 @@ class Mariadb_Plugin
         global $wpdb;
         $charset_collate = "DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
 
-        $table_audit = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_audit_log` (
+        $sql = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_audit_log` (
             `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
             `action` varchar(100) NOT NULL COMMENT 'Тип действия',
             `actor_id` bigint(20) unsigned NOT NULL COMMENT 'ID пользователя-инициатора',
@@ -476,8 +571,10 @@ class Mariadb_Plugin
             KEY `idx_created` (`created_at`)
         ) ENGINE=InnoDB {$charset_collate} COMMENT='Аудит-лог действий с чувствительными данными';";
 
-        require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
-        dbDelta($table_audit);
+        $result = $wpdb->query($sql);
+        if ($result === false) {
+            error_log('[Cashback] Failed to create audit_log table: ' . $wpdb->last_error);
+        }
     }
 
     /**
