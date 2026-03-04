@@ -800,6 +800,54 @@ button#save_payout_details_btn:hover {
     border: 0;
 }
 
+/* ============================================================
+   Cashback Display — карточки товаров и страница товара
+   ============================================================ */
 
+.cashback-display {
+    display: block;
+    margin-top: 4px;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--wd-primary-color, #e44d26);
+    line-height: 1.4;
+}
 
+/* Каталог товаров */
+.cashback-display--loop {
+    font-size: 15px;
+}
+
+/* Отдельный блок кэшбэка (без цены) */
+.cashback-display--standalone {
+    margin-top: 0;
+}
+
+/* Страница товара и quick-view (p.price — только single/modal, не каталог) */
+p.price .cashback-display {
+    font-size: inherit;
+    margin-top: 8px;
+}
+
+/* Кэшбэк внутри стандартного WooCommerce .price контейнера:
+   наследует font-size и font-weight от темы, задаёт только цвет */
+.price > .cashback-display--standalone {
+    font-size: inherit;
+    font-weight: inherit;
+    display: inline;
+}
+
+@media (max-width: 768px) {
+    .cashback-display--loop {
+        font-size: 12px;
+    }
+
+    .price > .cashback-display--standalone {
+        font-size: inherit;
+    }
+
+    .cashback-display--single {
+        font-size: 14px;
+    }
+}
 

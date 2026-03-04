@@ -82,6 +82,11 @@ class WC_Affiliate_URL_Params
 
         // Server-side redirect endpoint для логирования кликов
         add_action('template_redirect', [$this, 'handle_click_redirect']);
+
+        // Отображение кэшбэка на карточках товаров и странице товара
+        add_filter('woocommerce_get_price_html', [$this, 'append_cashback_to_price'], 10, 2);
+        add_action('woocommerce_after_shop_loop_item_title', [$this, 'display_cashback_standalone_loop'], 15);
+        add_action('woocommerce_single_product_summary', [$this, 'display_cashback_single_product'], 11);
     }
 
     /**
@@ -241,6 +246,34 @@ class WC_Affiliate_URL_Params
         echo '</div>';
 
         echo '</div>';
+
+        // Отображение кэшбэка на карточке товара
+        echo '<div class="options_group show_if_external">';
+        echo '<h4 style="padding: 10px 12px; margin: 0; border-bottom: 1px solid #ddd;">'
+            . esc_html__('Отображение кэшбэка', 'wc-affiliate-url-params') . '</h4>';
+        echo '<p class="description" style="padding: 5px 12px; color: #666; margin: 0;">'
+            . esc_html__('Отображается на карточке товара под ценой или вместо цены, если цена не указана.', 'wc-affiliate-url-params')
+            . '</p>';
+
+        woocommerce_wp_text_input([
+            'id'          => '_cashback_display_label',
+            'label'       => __('Текст метки', 'wc-affiliate-url-params'),
+            'description' => __('По умолчанию: Кэшбэк', 'wc-affiliate-url-params'),
+            'desc_tip'    => true,
+            'placeholder' => 'Кэшбэк',
+            'type'        => 'text',
+        ]);
+
+        woocommerce_wp_text_input([
+            'id'          => '_cashback_display_value',
+            'label'       => __('Размер кэшбэка', 'wc-affiliate-url-params'),
+            'description' => __('Например: до 81%, 388р., до 800р.', 'wc-affiliate-url-params'),
+            'desc_tip'    => true,
+            'placeholder' => 'до 81%',
+            'type'        => 'text',
+        ]);
+
+        echo '</div>';
     }
 
     /**
@@ -372,6 +405,17 @@ class WC_Affiliate_URL_Params
         }
 
         update_post_meta($post_id, '_affiliate_product_params', $product_params);
+
+        // Кэшбэк для отображения на карточке товара
+        $cashback_label = isset($_POST['_cashback_display_label'])
+            ? sanitize_text_field(wp_unslash($_POST['_cashback_display_label']))
+            : '';
+        $cashback_value = isset($_POST['_cashback_display_value'])
+            ? sanitize_text_field(wp_unslash($_POST['_cashback_display_value']))
+            : '';
+
+        update_post_meta($post_id, '_cashback_display_label', $cashback_label);
+        update_post_meta($post_id, '_cashback_display_value', $cashback_value);
 
         // Проверяем активность выбранной сети
         global $wpdb;
@@ -1100,6 +1144,146 @@ class WC_Affiliate_URL_Params
         echo esc_html($button_text);
         echo '</a>';
         echo '</p>';
+    }
+
+    /**
+     * Генерация HTML для отображения кэшбэка.
+     *
+     * @since 3.0.0
+     *
+     * @param int    $product_id ID товара.
+     * @param string $context    Контекст отображения: 'loop' или 'single'.
+     * @param bool   $standalone Отображение вместо цены (без цены).
+     *
+     * @return string HTML-строка или пустая строка если кэшбэк не задан.
+     */
+    private function get_cashback_html(int $product_id, string $context = 'loop', bool $standalone = false): string
+    {
+        $value = get_post_meta($product_id, '_cashback_display_value', true);
+        if (empty($value)) {
+            return '';
+        }
+
+        $label = get_post_meta($product_id, '_cashback_display_label', true);
+        if (empty($label)) {
+            $label = 'Кэшбэк';
+        }
+
+        $classes = 'cashback-display cashback-display--' . esc_attr($context);
+        if ($standalone) {
+            $classes .= ' cashback-display--standalone';
+        }
+
+        return sprintf(
+            '<span class="%s"><span class="cashback-display__label">%s</span> <span class="cashback-display__value">%s</span></span>',
+            esc_attr($classes),
+            esc_html($label),
+            esc_html($value)
+        );
+    }
+
+    /**
+     * Добавляет кэшбэк к HTML цены товара.
+     *
+     * Для товаров с ценой — дописывает кэшбэк после цены.
+     * Для товаров без цены — не изменяет HTML (кэшбэк выводится отдельными хуками).
+     *
+     * @since 3.0.0
+     *
+     * @param string      $price_html HTML цены.
+     * @param \WC_Product $product    Объект товара.
+     *
+     * @return string Модифицированный HTML цены.
+     */
+    public function append_cashback_to_price(string $price_html, \WC_Product $product): string
+    {
+        if ($product->get_type() !== 'external') {
+            return $price_html;
+        }
+
+        if (is_admin() && !wp_doing_ajax()) {
+            return $price_html;
+        }
+
+        if (function_exists('is_cart') && is_cart()) {
+            return $price_html;
+        }
+
+        if (function_exists('is_checkout') && is_checkout()) {
+            return $price_html;
+        }
+
+        $product_id = $product->get_id();
+        $is_single = function_exists('is_product') && is_product();
+        $context = $is_single ? 'single' : 'loop';
+        $standalone = empty(trim($price_html));
+
+        $cashback_html = $this->get_cashback_html($product_id, $context, $standalone);
+        if (empty($cashback_html)) {
+            return $price_html;
+        }
+
+        if ($standalone) {
+            return $price_html;
+        }
+
+        return $price_html . $cashback_html;
+    }
+
+    /**
+     * Отображает кэшбэк в каталоге товаров когда цена не указана.
+     *
+     * Резервный вывод через хук woocommerce_after_shop_loop_item_title
+     * на случай если woocommerce_template_loop_price() не вызывается для товаров без цены.
+     *
+     * @since 3.0.0
+     *
+     * @return void
+     */
+    public function display_cashback_standalone_loop(): void
+    {
+        global $product;
+
+        if (!$product || $product->get_type() !== 'external') {
+            return;
+        }
+
+        if ($product->get_price() !== '' && $product->get_price() !== null) {
+            return;
+        }
+
+        $cashback_html = $this->get_cashback_html($product->get_id(), 'loop', true);
+        if (!empty($cashback_html)) {
+            echo '<span class="price">' . wp_kses_post($cashback_html) . '</span>';
+        }
+    }
+
+    /**
+     * Отображает кэшбэк на странице товара когда цена не указана.
+     *
+     * Хук woocommerce_single_product_summary с приоритетом 11
+     * (после woocommerce_template_single_price с приоритетом 10).
+     *
+     * @since 3.0.0
+     *
+     * @return void
+     */
+    public function display_cashback_single_product(): void
+    {
+        global $product;
+
+        if (!$product || $product->get_type() !== 'external') {
+            return;
+        }
+
+        if ($product->get_price() !== '' && $product->get_price() !== null) {
+            return;
+        }
+
+        $cashback_html = $this->get_cashback_html($product->get_id(), 'single', true);
+        if (!empty($cashback_html)) {
+            echo '<p class="price">' . wp_kses_post($cashback_html) . '</p>';
+        }
     }
 
     /**
