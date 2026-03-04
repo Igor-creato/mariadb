@@ -315,8 +315,14 @@ class WC_Affiliate_URL_Params
         }
 
         $product = wc_get_product($post_id);
+        $is_external = $product && $product->get_type() === 'external';
 
-        if (!$product || $product->get_type() !== 'external') {
+        // Fallback to POST data for new products where type may not be resolved yet
+        if (!$is_external && !empty($_POST['product-type'])) {
+            $is_external = sanitize_text_field(wp_unslash($_POST['product-type'])) === 'external';
+        }
+
+        if (!$is_external) {
             return;
         }
 
