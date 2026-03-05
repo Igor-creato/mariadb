@@ -316,6 +316,9 @@ class CashbackPlugin
         $this->require_file('includes/class-cashback-api-migration.php');
         $this->require_file('includes/class-cashback-api-cron.php');
         $this->require_file('admin/class-cashback-admin-api-validation.php');
+
+        // --- REST API для браузерного расширения ---
+        $this->require_file('includes/class-cashback-rest-api.php');
     }
 
     /**
@@ -385,6 +388,11 @@ class CashbackPlugin
         // --- API Валидация: cron фоновой синхронизации (фронт + админка) ---
         if (class_exists('Cashback_API_Cron')) {
             Cashback_API_Cron::init();
+        }
+
+        // --- REST API для браузерного расширения ---
+        if (class_exists('Cashback_REST_API')) {
+            Cashback_REST_API::get_instance();
         }
     }
 

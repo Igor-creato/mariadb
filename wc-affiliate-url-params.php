@@ -256,6 +256,15 @@ class WC_Affiliate_URL_Params
             . '</p>';
 
         woocommerce_wp_text_input([
+            'id'          => '_store_domain',
+            'label'       => __('Домен магазина', 'wc-affiliate-url-params'),
+            'description' => __('Домен для браузерного расширения (напр. aliexpress.com). Заполняется автоматически из URL товара.', 'wc-affiliate-url-params'),
+            'desc_tip'    => true,
+            'placeholder' => 'aliexpress.com',
+            'type'        => 'text',
+        ]);
+
+        woocommerce_wp_text_input([
             'id'          => '_cashback_display_label',
             'label'       => __('Текст метки', 'wc-affiliate-url-params'),
             'description' => __('По умолчанию: Кэшбэк', 'wc-affiliate-url-params'),
@@ -405,6 +414,27 @@ class WC_Affiliate_URL_Params
         }
 
         update_post_meta($post_id, '_affiliate_product_params', $product_params);
+
+        // Домен магазина для браузерного расширения
+        $store_domain = isset($_POST['_store_domain'])
+            ? sanitize_text_field(wp_unslash($_POST['_store_domain']))
+            : '';
+
+        // Автозаполнение из product URL если поле пустое
+        if (empty($store_domain) && $product) {
+            $product_url = $product->get_product_url();
+            if ($product_url) {
+                $parsed = wp_parse_url($product_url);
+                $store_domain = $parsed['host'] ?? '';
+            }
+        }
+
+        // Нормализация: удаляем www., приводим к нижнему регистру
+        $store_domain = strtolower(preg_replace('/^www\./i', '', $store_domain));
+        update_post_meta($post_id, '_store_domain', $store_domain);
+
+        // Сбрасываем кеш списка магазинов для браузерного расширения
+        delete_transient('cashback_ext_stores_cache');
 
         // Кэшбэк для отображения на карточке товара
         $cashback_label = isset($_POST['_cashback_display_label'])

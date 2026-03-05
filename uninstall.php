@@ -174,6 +174,7 @@ function cashback_plugin_uninstall(): void
 
     // Delete transients
     delete_transient('cashback_support_flush_rules');
+    delete_transient('cashback_ext_stores_cache');
 
     // Delete rate limiting transients (cb_pp_*, cb_gl_* patterns)
     $wpdb->query(
