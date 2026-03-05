@@ -21,6 +21,36 @@ const ICON_STATES = {
 
 const ALARM_REFRESH_STORES = 'refresh-stores';
 const ALARM_CLEANUP_ACTIVATIONS = 'cleanup-activations';
+const CURRENT_USER_KEY = 'current_user_id';
+
+// ─── Кеширование текущего пользователя ───
+
+async function getCachedUserId() {
+    const data = await chrome.storage.session.get(CURRENT_USER_KEY);
+    return data[CURRENT_USER_KEY] || null;
+}
+
+async function setCachedUserId(userId) {
+    if (!userId) return;
+    const prev = await getCachedUserId();
+    await chrome.storage.session.set({ [CURRENT_USER_KEY]: userId });
+    // При смене пользователя — очистить все активации предыдущего
+    if (prev && prev !== userId) {
+        await clearAllActivations();
+    }
+}
+
+async function clearCachedUserId() {
+    await chrome.storage.session.remove(CURRENT_USER_KEY);
+}
+
+async function clearAllActivations() {
+    const all = await chrome.storage.session.get(null);
+    const keys = Object.keys(all).filter(k => k.startsWith('activation_'));
+    if (keys.length > 0) {
+        await chrome.storage.session.remove(keys);
+    }
+}
 
 // ─── Инициализация ───
 
@@ -97,10 +127,11 @@ async function handleMessage(message, sender) {
 
         case 'ACTIVATE': {
             const result = await CashbackAPI.activateCashback(message.productId);
-            // Сохраняем активацию
+            // Сохраняем активацию с привязкой к текущему пользователю
             const domain = message.domain;
             if (domain) {
-                await saveActivation(domain, result);
+                const userId = await getCachedUserId();
+                await saveActivation(domain, result, userId);
             }
             // Обновляем иконку текущей вкладки
             if (sender.tab) {
@@ -110,7 +141,9 @@ async function handleMessage(message, sender) {
         }
 
         case 'GET_PROFILE': {
-            return CashbackAPI.fetchProfile();
+            const profile = await CashbackAPI.fetchProfile();
+            await setCachedUserId(profile.user_id);
+            return profile;
         }
 
         case 'GET_TRANSACTIONS': {
@@ -120,8 +153,11 @@ async function handleMessage(message, sender) {
         case 'CHECK_AUTH': {
             try {
                 const profile = await CashbackAPI.fetchProfile();
+                await setCachedUserId(profile.user_id);
                 return { authenticated: true, profile };
             } catch (e) {
+                await clearCachedUserId();
+                await clearAllActivations();
                 return { authenticated: false, profile: null };
             }
         }
@@ -164,7 +200,23 @@ async function updateIconForTab(tabId, url) {
         }
 
         // Проверяем активацию
-        const activation = await getActivationStatus(domain);
+        let activation = await getActivationStatus(domain);
+
+        // Если есть активация, но не удалось проверить пользователя — разрешаем через API
+        if (activation.needs_auth_check) {
+            try {
+                const profile = await CashbackAPI.fetchProfile();
+                await setCachedUserId(profile.user_id);
+                // Повторная проверка с кешированным user_id
+                activation = await getActivationStatus(domain);
+            } catch {
+                // Не авторизован — очищаем всё
+                await clearCachedUserId();
+                await clearAllActivations();
+                activation = { activated: false };
+            }
+        }
+
         if (activation.activated) {
             await setIcon(tabId, ICON_STATES.GREEN, '');
         } else {
@@ -177,6 +229,9 @@ async function updateIconForTab(tabId, url) {
             try {
                 const profile = await CashbackAPI.fetchProfile();
                 isAuthenticated = !!profile;
+                if (profile) {
+                    await setCachedUserId(profile.user_id);
+                }
             } catch {
                 // Не авторизован — покажем кнопку входа
             }
@@ -289,6 +344,33 @@ async function getActivationStatus(domain) {
         return { activated: false };
     }
 
+    // Проверяем принадлежность пользователю
+    if (!activation.user_id) {
+        // Legacy-запись без user_id — удаляем
+        await chrome.storage.session.remove(key);
+        return { activated: false };
+    }
+
+    const currentUserId = await getCachedUserId();
+
+    if (currentUserId && activation.user_id !== currentUserId) {
+        // Активация принадлежит другому пользователю
+        return { activated: false };
+    }
+
+    if (!currentUserId) {
+        // Не знаем текущего пользователя — нужна проверка через API
+        const remainingMs = CASHBACK_CONFIG.ACTIVATION_TTL - elapsed;
+        return {
+            activated: true,
+            needs_auth_check: true,
+            activated_at: activation.activated_at,
+            expires_at: activation.expires_at,
+            click_id: activation.click_id,
+            remaining_minutes: Math.ceil(remainingMs / 60000),
+        };
+    }
+
     const remainingMs = CASHBACK_CONFIG.ACTIVATION_TTL - elapsed;
     return {
         activated: true,
@@ -299,7 +381,7 @@ async function getActivationStatus(domain) {
     };
 }
 
-async function saveActivation(domain, result) {
+async function saveActivation(domain, result, userId) {
     const cleanDomain = domain.replace(/^www\./i, '');
     const key = `activation_${cleanDomain}`;
 
@@ -312,6 +394,7 @@ async function saveActivation(domain, result) {
             expires_at: result.expires_at,
             click_id: result.click_id,
             redirect_url: result.redirect_url,
+            user_id: userId || null,
         },
     });
 }
