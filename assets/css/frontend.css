@@ -503,6 +503,8 @@ button#save_payout_details_btn:hover {
 /* Полная ширина для формы */
 .payout-settings-form .form-row-wide {
     width: 100%;
+    clear: both;
+    margin-bottom: 1em;
 }
 .payout-settings-form .clear {
     clear: both;

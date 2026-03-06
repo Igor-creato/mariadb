@@ -172,13 +172,27 @@ class CashbackWithdrawal
         global $wpdb;
 
         $table_name = $wpdb->prefix . 'cashback_payout_methods';
+
+        // Пробуем с bank_required, если колонка ещё не создана — fallback без неё
+        $wpdb->suppress_errors(true);
         $methods = $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT id, name, slug FROM {$table_name} WHERE is_active = %d ORDER BY sort_order ASC, name ASC",
+                "SELECT id, name, slug, bank_required FROM {$table_name} WHERE is_active = %d ORDER BY sort_order ASC, name ASC",
                 1
             ),
             ARRAY_A
         );
+        $wpdb->suppress_errors(false);
+
+        if ($methods === null) {
+            $methods = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT id, name, slug FROM {$table_name} WHERE is_active = %d ORDER BY sort_order ASC, name ASC",
+                    1
+                ),
+                ARRAY_A
+            );
+        }
 
         return $methods ?: array();
     }
@@ -227,9 +241,12 @@ class CashbackWithdrawal
         // Реквизиты считаются заполненными если есть зашифрованные данные или plaintext
         $has_account = !empty($result['encrypted_details']) || !empty($result['payout_account']);
 
+        $method_id = (int) $result['payout_method_id'];
+        $bank_needed = $method_id > 0 ? $this->is_bank_required_for_method($method_id) : true;
+
         return !empty($result['payout_method_id']) &&
             $has_account &&
-            !empty($result['bank_id']);
+            (!$bank_needed || !empty($result['bank_id']));
     }
 
     /**
@@ -561,7 +578,8 @@ class CashbackWithdrawal
 
         if ($has_settings) {
             $payout_method_is_active = $this->is_payout_method_active($payout_method_id);
-            $bank_is_active = $this->is_bank_active($bank_id);
+            $bank_required_flag = $this->is_bank_required_for_method($payout_method_id);
+            $bank_is_active = ($bank_required_flag && $bank_id > 0) ? $this->is_bank_active($bank_id) : true;
 
             if (!$payout_method_is_active || !$bank_is_active) {
                 $settings_inactive = true;
@@ -643,6 +661,7 @@ class CashbackWithdrawal
         if ($has_settings && !$settings_inactive) {
             // Если настройки есть и активны - показываем их в виде текста
             $method_name = $this->get_payout_method_name($payout_method_id);
+            $bank_required_for_display = $this->is_bank_required_for_method($payout_method_id);
 
             echo '<div id="payout_settings_display" class="payout-settings-display">';
             echo '<p class="woocommerce-form-row">';
@@ -653,10 +672,12 @@ class CashbackWithdrawal
             echo '<strong>' . __('Номер счета/телефона:', 'cashback-plugin') . '</strong> ';
             echo esc_html($masked_account);
             echo '</p>';
-            echo '<p class="woocommerce-form-row">';
-            echo '<strong>' . __('Банк:', 'cashback-plugin') . '</strong> ';
-            echo esc_html($bank_name);
-            echo '</p>';
+            if ($bank_required_for_display && !empty($bank_name)) {
+                echo '<p class="woocommerce-form-row">';
+                echo '<strong>' . __('Банк:', 'cashback-plugin') . '</strong> ';
+                echo esc_html($bank_name);
+                echo '</p>';
+            }
             echo '<p class="woocommerce-form-row">';
             echo '<button type="button" class="woocommerce-Button button" id="edit_payout_settings_btn">' . __('Изменить данные', 'cashback-plugin') . '</button>';
             echo '</p>';
@@ -674,7 +695,8 @@ class CashbackWithdrawal
         echo '<option value="">' . __('Выберите платежную систему', 'cashback-plugin') . '</option>';
         foreach ($payout_methods as $method) {
             $selected = ($payout_method_id === intval($method['id'])) ? 'selected' : '';
-            echo '<option value="' . esc_attr($method['id']) . '" data-slug="' . esc_attr($method['slug']) . '" ' . $selected . '>' . esc_html($method['name']) . '</option>';
+            $bank_req_attr = isset($method['bank_required']) ? intval($method['bank_required']) : 1;
+            echo '<option value="' . esc_attr($method['id']) . '" data-slug="' . esc_attr($method['slug']) . '" data-bank-required="' . esc_attr($bank_req_attr) . '" ' . $selected . '>' . esc_html($method['name']) . '</option>';
         }
         echo '</select>';
         echo '</p>';
@@ -685,7 +707,9 @@ class CashbackWithdrawal
         echo '</p>';
 
         // Кастомный компонент поиска банков с autocomplete
-        echo '<p class="woocommerce-form-row woocommerce-form-row--wide form-row form-row-wide">';
+        $bank_required_for_current = $this->is_bank_required_for_method($payout_method_id);
+        $bank_row_style = $bank_required_for_current ? '' : ' style="display:none"';
+        echo '<div class="woocommerce-form-row woocommerce-form-row--wide form-row form-row-wide"' . $bank_row_style . '>';
         echo '<label for="bank_search_input" id="bank_search_label">' . __('Банк', 'cashback-plugin') . ' <span class="required">*</span></label>';
         echo '<input type="hidden" name="bank_id" id="bank_id" value="' . esc_attr($bank_id) . '" />';
         echo '<div class="bank-search-wrapper" role="combobox" aria-expanded="false" aria-owns="bank_search_results" aria-haspopup="listbox">';
@@ -700,7 +724,7 @@ class CashbackWithdrawal
         echo '</ul>';
         echo '</div>';
         echo '<div id="bank_search_error" class="bank-search-error" role="alert" aria-live="polite"></div>';
-        echo '</p>';
+        echo '</div>';
 
         echo '<div class="clear"></div>';
 
@@ -1216,11 +1240,6 @@ class CashbackWithdrawal
             return;
         }
 
-        if (!$bank_id || $bank_id <= 0) {
-            wp_send_json_error(array('message' => __('Пожалуйста, выберите банк.', 'cashback-plugin')));
-            return;
-        }
-
         // Проверяем, что способ вывода существует и активен
         $valid_method = $this->validate_payout_method($payout_method_id);
         if (!$valid_method) {
@@ -1228,11 +1247,23 @@ class CashbackWithdrawal
             return;
         }
 
-        // Проверяем, что банк существует и активен
-        $valid_bank = $this->validate_bank($bank_id);
-        if (!$valid_bank) {
-            wp_send_json_error(array('message' => __('Недопустимый банк.', 'cashback-plugin')));
-            return;
+        // Проверяем обязательность банка для выбранного способа
+        $bank_required = $this->is_bank_required_for_method($payout_method_id);
+
+        if ($bank_required) {
+            if (!$bank_id || $bank_id <= 0) {
+                wp_send_json_error(array('message' => __('Пожалуйста, выберите банк.', 'cashback-plugin')));
+                return;
+            }
+
+            // Проверяем, что банк существует и активен
+            $valid_bank = $this->validate_bank($bank_id);
+            if (!$valid_bank) {
+                wp_send_json_error(array('message' => __('Недопустимый банк.', 'cashback-plugin')));
+                return;
+            }
+        } else {
+            $bank_id = 0;
         }
 
         // Валидация формата номера счёта в зависимости от типа способа выплаты
@@ -1252,7 +1283,7 @@ class CashbackWithdrawal
 
         if (class_exists('Cashback_Encryption') && Cashback_Encryption::is_configured()) {
             try {
-                $bank_name = $this->get_bank_name($bank_id);
+                $bank_name = $bank_required ? $this->get_bank_name($bank_id) : '';
                 $enc_result = Cashback_Encryption::encrypt_details([
                     'account' => $payout_account,
                     'full_name' => '',
@@ -1511,6 +1542,32 @@ class CashbackWithdrawal
     }
 
     /**
+     * Check if a payout method requires bank selection.
+     *
+     * @param int $method_id
+     * @return bool True if bank is required (default), false if not
+     */
+    private function is_bank_required_for_method(int $method_id): bool
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'cashback_payout_methods';
+
+        // Подавляем ошибку если колонка bank_required ещё не создана (до миграции)
+        $wpdb->suppress_errors(true);
+        $bank_required = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT bank_required FROM {$table_name} WHERE id = %d",
+                $method_id
+            )
+        );
+        $wpdb->suppress_errors(false);
+
+        // null = колонка не существует или метод не найден → по умолчанию банк обязателен
+        return $bank_required === null ? true : (int) $bank_required === 1;
+    }
+
+    /**
      * Update user payout details
      *
      * @param int $user_id
@@ -1548,10 +1605,14 @@ class CashbackWithdrawal
 
             $data = array(
                 'payout_method_id' => $payout_method_id,
-                'bank_id' => $bank_id,
                 'payout_details_updated_at' => current_time('mysql'),
             );
-            $formats = array('%d', '%d', '%s');
+            $formats = array('%d', '%s');
+
+            if ($bank_id > 0) {
+                $data['bank_id'] = $bank_id;
+                $formats[] = '%d';
+            }
 
             // Если шифрование настроено — сохраняем только зашифрованные данные, plaintext очищаем
             if ($encrypted_details !== null) {
@@ -1590,6 +1651,15 @@ class CashbackWithdrawal
             if ($result === false) {
                 $wpdb->query('ROLLBACK');
                 return false;
+            }
+
+            // Если банк не обязателен (bank_id = 0), устанавливаем NULL
+            // wpdb не поддерживает NULL через format-массив, поэтому используем отдельный запрос
+            if ($bank_id <= 0) {
+                $wpdb->query($wpdb->prepare(
+                    "UPDATE {$table_name} SET bank_id = NULL WHERE user_id = %d",
+                    $user_id
+                ));
             }
 
             $wpdb->query('COMMIT');

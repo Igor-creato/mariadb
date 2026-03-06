@@ -70,6 +70,7 @@ class Mariadb_Plugin
         try {
             $instance->create_tables();
             $instance->migrate_add_reference_id();
+            $instance->migrate_add_bank_required();
             $instance->create_triggers();
             $instance->create_events();
             $instance->initialize_existing_users();
@@ -108,6 +109,7 @@ class Mariadb_Plugin
             `name` varchar(100) NOT NULL COMMENT 'Отображаемое название (например: СБП, МИР, ЮMoney)',
             `is_active` tinyint(1) NOT NULL DEFAULT 1 COMMENT '1 = способ доступен для выбора',
             `sort_order` int(11) NOT NULL DEFAULT 0 COMMENT 'Порядок сортировки в интерфейсе',
+            `bank_required` tinyint(1) NOT NULL DEFAULT 1 COMMENT '1 = для этого способа нужно выбрать банк',
             `created_at` datetime DEFAULT current_timestamp(),
             `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp(),
             PRIMARY KEY (`id`),
@@ -1290,6 +1292,36 @@ END;",
 
             if ($wpdb->last_error) {
                 error_log('[Cashback] Failed to add uk_reference_id index: ' . $wpdb->last_error);
+            }
+        }
+    }
+
+    /**
+     * Миграция: добавление колонки bank_required в cashback_payout_methods
+     * DEFAULT 1 — все существующие способы продолжат требовать банк
+     *
+     * @return void
+     */
+    private function migrate_add_bank_required(): void
+    {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'cashback_payout_methods';
+
+        $column_exists = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM information_schema.COLUMNS
+             WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s AND COLUMN_NAME = 'bank_required'",
+            DB_NAME,
+            $table
+        ));
+
+        if (!$column_exists) {
+            $wpdb->query(
+                "ALTER TABLE `{$table}` ADD COLUMN `bank_required` tinyint(1) NOT NULL DEFAULT 1 COMMENT '1 = для этого способа нужно выбрать банк' AFTER `sort_order`"
+            );
+
+            if ($wpdb->last_error) {
+                error_log('[Cashback] Failed to add bank_required column: ' . $wpdb->last_error);
             }
         }
     }

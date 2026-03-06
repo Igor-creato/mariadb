@@ -222,6 +222,12 @@ class CashbackPlugin
             Cashback_API_Cron::init();
         }
 
+        // Регистрируем endpoints перед flush, т.к. init хук ещё не сработал
+        add_rewrite_endpoint('cashback-withdrawal', EP_ROOT | EP_PAGES);
+        add_rewrite_endpoint('cashback-history', EP_ROOT | EP_PAGES);
+        add_rewrite_endpoint('history-payout', EP_ROOT | EP_PAGES);
+        add_rewrite_endpoint('cashback-support', EP_ROOT | EP_PAGES);
+
         // Сбрасываем переписывание URL
         flush_rewrite_rules();
     }
@@ -255,7 +261,16 @@ class CashbackPlugin
         // Проверяем, что WooCommerce активирован
         if (class_exists('WooCommerce')) {
             $this->load_dependencies();
+            $this->maybe_run_migrations();
             $this->initialize_components();
+
+            // Одноразовый сброс rewrite rules после обновления кода
+            add_action('init', function () {
+                if (get_transient('cashback_flush_rewrite_rules')) {
+                    delete_transient('cashback_flush_rewrite_rules');
+                    flush_rewrite_rules();
+                }
+            }, 999);
 
             // Предупреждение если ключ шифрования не настроен
             if (class_exists('Cashback_Encryption') && !Cashback_Encryption::is_configured()) {
@@ -333,6 +348,41 @@ class CashbackPlugin
             require_once $filepath;
         } else {
             error_log(sprintf('[Cashback Plugin] Required file not found: %s', $filepath));
+        }
+    }
+
+    /**
+     * Автоматический запуск миграций при обновлении кода плагина (без ре-активации)
+     * Использует версию в wp_options для отслеживания выполненных миграций
+     */
+    private function maybe_run_migrations(): void
+    {
+        $db_version = get_option('cashback_plugin_db_version', '0');
+
+        // Миграция 1: bank_required колонка в cashback_payout_methods
+        if (version_compare($db_version, '1.1.0', '<')) {
+            if (class_exists('Mariadb_Plugin')) {
+                global $wpdb;
+                $table = $wpdb->prefix . 'cashback_payout_methods';
+
+                $column_exists = $wpdb->get_var($wpdb->prepare(
+                    "SELECT COUNT(*) FROM information_schema.COLUMNS
+                     WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s AND COLUMN_NAME = 'bank_required'",
+                    DB_NAME,
+                    $table
+                ));
+
+                if (!$column_exists) {
+                    $wpdb->query(
+                        "ALTER TABLE `{$table}` ADD COLUMN `bank_required` tinyint(1) NOT NULL DEFAULT 1 COMMENT '1 = для этого способа нужно выбрать банк' AFTER `sort_order`"
+                    );
+                }
+            }
+
+            // Сбросить rewrite rules при следующей загрузке (после регистрации endpoints)
+            set_transient('cashback_flush_rewrite_rules', 1, 300);
+
+            update_option('cashback_plugin_db_version', '1.1.0');
         }
     }
 

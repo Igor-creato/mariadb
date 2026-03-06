@@ -189,6 +189,16 @@ class Cashback_Payout_Methods_Admin
                                 <th scope="row"><label for="sort_order">Порядок сортировки:</label></th>
                                 <td><input type="number" id="sort_order" name="sort_order" value="0" min="0" /></td>
                             </tr>
+                            <tr>
+                                <th scope="row"><label for="bank_required">Банк обязателен:</label></th>
+                                <td>
+                                    <select id="bank_required" name="bank_required">
+                                        <option value="1">Да</option>
+                                        <option value="0">Нет</option>
+                                    </select>
+                                    <p class="description">Если «Нет», пользователю не нужно выбирать банк при выводе через этот способ.</p>
+                                </td>
+                            </tr>
                         </table>
                         <p class="submit">
                             <input type="submit" name="add_payout_method" id="add-payout-method-submit" class="button button-primary" value="Добавить способ выплаты" />
@@ -224,6 +234,7 @@ class Cashback_Payout_Methods_Admin
                                 <th scope="col">Название</th>
                                 <th scope="col">Активен</th>
                                 <th scope="col">Порядок сортировки</th>
+                                <th scope="col">Банк обязателен</th>
                                 <th scope="col">Действия</th>
                             </tr>
                         </thead>
@@ -237,6 +248,9 @@ class Cashback_Payout_Methods_Admin
                                             <?php echo $method['is_active'] ? 'Да' : 'Нет'; ?>
                                         </td>
                                         <td class="edit-field" data-field="sort_order"><?php echo esc_html($method['sort_order']); ?></td>
+                                        <td class="edit-field" data-field="bank_required">
+                                            <?php echo isset($method['bank_required']) && $method['bank_required'] ? 'Да' : 'Нет'; ?>
+                                        </td>
                                         <td>
                                             <button class="button button-secondary edit-btn">Редактировать</button>
                                             <button class="button button-primary save-btn" style="display:none;">Сохранить</button>
@@ -246,7 +260,7 @@ class Cashback_Payout_Methods_Admin
                                 <?php endforeach; ?>
                             <?php else: ?>
                                 <tr>
-                                    <td colspan="5">Нет доступных способов выплаты.</td>
+                                    <td colspan="6">Нет доступных способов выплаты.</td>
                                 </tr>
                             <?php endif; ?>
                         </tbody>
@@ -281,6 +295,7 @@ class Cashback_Payout_Methods_Admin
         $name = sanitize_text_field(wp_unslash($_POST['name'] ?? ''));
         $is_active = intval(wp_unslash($_POST['is_active'] ?? 0));
         $sort_order = intval(wp_unslash($_POST['sort_order'] ?? 0));
+        $bank_required = intval(wp_unslash($_POST['bank_required'] ?? 1));
 
         // Валидация данных
         if (empty($slug) || empty($name)) {
@@ -295,10 +310,11 @@ class Cashback_Payout_Methods_Admin
                 'slug' => $slug,
                 'name' => $name,
                 'is_active' => $is_active,
-                'sort_order' => $sort_order
+                'sort_order' => $sort_order,
+                'bank_required' => $bank_required,
             ],
             ['id' => $id],
-            ['%s', '%s', '%d', '%d'],
+            ['%s', '%s', '%d', '%d', '%d'],
             ['%d']
         );
 
@@ -313,7 +329,8 @@ class Cashback_Payout_Methods_Admin
             'slug' => $slug,
             'name' => $name,
             'is_active' => $is_active,
-            'sort_order' => $sort_order
+            'sort_order' => $sort_order,
+            'bank_required' => $bank_required,
         ]);
     }
 
@@ -340,6 +357,7 @@ class Cashback_Payout_Methods_Admin
         $name = sanitize_text_field(wp_unslash($_POST['name'] ?? ''));
         $is_active = intval(wp_unslash($_POST['is_active'] ?? 0));
         $sort_order = intval(wp_unslash($_POST['sort_order'] ?? 0));
+        $bank_required = intval(wp_unslash($_POST['bank_required'] ?? 1));
 
         // Валидация данных
         if (empty($slug) || empty($name)) {
@@ -364,9 +382,10 @@ class Cashback_Payout_Methods_Admin
                 'slug' => $slug,
                 'name' => $name,
                 'is_active' => $is_active,
-                'sort_order' => $sort_order
+                'sort_order' => $sort_order,
+                'bank_required' => $bank_required,
             ],
-            ['%s', '%s', '%d', '%d']
+            ['%s', '%s', '%d', '%d', '%d']
         );
 
         if ($result === false) {

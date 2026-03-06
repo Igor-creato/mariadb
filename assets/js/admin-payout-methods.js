@@ -14,11 +14,11 @@ jQuery(document).ready(function($) {
             var field = cell.data('field');
             var currentValue = cell.text();
 
-            if (field === 'is_active') {
-                // Для поля is_active создаем select
+            if (field === 'is_active' || field === 'bank_required') {
+                // Для полей is_active и bank_required создаем select
                 var selectHtml = '<select class="edit-input" data-field="' + escapeHtml(field) + '">';
-                selectHtml += '<option value="1"' + (currentValue === 'Да' ? ' selected' : '') + '>Да</option>';
-                selectHtml += '<option value="0"' + (currentValue === 'Нет' ? ' selected' : '') + '>Нет</option>';
+                selectHtml += '<option value="1"' + (currentValue.trim() === 'Да' ? ' selected' : '') + '>Да</option>';
+                selectHtml += '<option value="0"' + (currentValue.trim() === 'Нет' ? ' selected' : '') + '>Нет</option>';
                 selectHtml += '</select>';
                 cell.html(selectHtml);
             } else {
@@ -64,6 +64,9 @@ jQuery(document).ready(function($) {
 
                 row.find('.edit-field[data-field="sort_order"]').text(response.data.sort_order);
 
+                var bankRequiredText = response.data.bank_required == 1 ? 'Да' : 'Нет';
+                row.find('.edit-field[data-field="bank_required"]').text(bankRequiredText);
+
                 // Переключаем строку в режим просмотра
                 row.find('.save-btn, .cancel-btn').hide();
                 row.find('.edit-btn').show();
@@ -86,7 +89,7 @@ jQuery(document).ready(function($) {
             var field = cell.data('field');
             var currentValue = cell.find('.edit-input').val();
 
-            if (field === 'is_active') {
+            if (field === 'is_active' || field === 'bank_required') {
                 var displayValue = currentValue == '1' ? 'Да' : 'Нет';
                 cell.text(displayValue);
             } else {
@@ -108,7 +111,8 @@ jQuery(document).ready(function($) {
             'slug': $('#slug').val(),
             'name': $('#name').val(),
             'is_active': $('#is_active').val(),
-            'sort_order': $('#sort_order').val()
+            'sort_order': $('#sort_order').val(),
+            'bank_required': $('#bank_required').val()
         };
 
         $.post(ajaxurl, formData, function(response) {

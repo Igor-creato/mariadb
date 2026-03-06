@@ -308,6 +308,20 @@ jQuery(document).ready(function ($) {
 
     $input.removeClass('input--error');
     $('#payout_settings_message').text('').removeClass('success error');
+
+    // Показываем/скрываем блок банка в зависимости от bank_required
+    var bankRequired = parseInt(selectedOption.data('bank-required'), 10);
+    var $bankRow = $('#bank_search_input').closest('.woocommerce-form-row');
+
+    if (bankRequired === 0) {
+      $bankRow.hide();
+      $('#bank_id').val('');
+      $('#bank_search_input').val('');
+      $('#bank_search_error').text('').hide();
+      $('#bank_search_input').removeClass('bank-search-input--error');
+    } else {
+      $bankRow.show();
+    }
   });
 
   // Сброс ошибки и авто-форматирование при вводе номера счёта/карты
@@ -594,6 +608,11 @@ jQuery(document).ready(function ($) {
     $('#payout_settings_display').hide();
     // Показываем форму редактирования
     $('#payout_settings_form').removeClass('payout-settings-form-hidden').show();
+    // Очищаем поля формы
+    $('#payout_method_id').val('').trigger('change');
+    $('#payout_account').val('');
+    $('#bank_id').val('');
+    $('#bank_search_input').val('');
     // Очищаем сообщения
     $('#payout_settings_message').text('').removeClass('success error');
   });
@@ -657,39 +676,43 @@ jQuery(document).ready(function ($) {
       hasErrors = true;
     }
 
-    // Валидация банка: проверяем что пользователь выбрал из списка
-    if (!bankId || bankId === '' || bankId === '0' || parseInt(bankId, 10) <= 0) {
-      $('#bank_search_input').addClass('bank-search-input--error');
-      // Если введено название но не выбрано из списка
-      if (bankInputVal.length > 0 && !bankSelectedFromList) {
+    // Валидация банка: проверяем только если банк обязателен для выбранного способа
+    var bankRequired = parseInt($('#payout_method_id option:selected').data('bank-required'), 10);
+
+    if (bankRequired !== 0) {
+      if (!bankId || bankId === '' || bankId === '0' || parseInt(bankId, 10) <= 0) {
+        $('#bank_search_input').addClass('bank-search-input--error');
+        // Если введено название но не выбрано из списка
+        if (bankInputVal.length > 0 && !bankSelectedFromList) {
+          $('#bank_search_error').text('Вы не выбрали банк из списка').show();
+          if (!hasErrors) {
+            $('#payout_settings_message')
+              .removeClass('success')
+              .addClass('error')
+              .text('Вы не выбрали банк из списка');
+          }
+        } else {
+          if (!hasErrors) {
+            $('#payout_settings_message')
+              .removeClass('success')
+              .addClass('error')
+              .text('Пожалуйста, выберите банк');
+          }
+        }
+        hasErrors = true;
+      } else if (bankInputVal.length > 0 && !bankSelectedFromList) {
+        // Дополнительная проверка: если bank_id есть, но bankSelectedFromList = false
+        // и текст в поле отличается от выбранного — значит пользователь изменил текст после выбора
         $('#bank_search_error').text('Вы не выбрали банк из списка').show();
+        $('#bank_search_input').addClass('bank-search-input--error');
         if (!hasErrors) {
           $('#payout_settings_message')
             .removeClass('success')
             .addClass('error')
             .text('Вы не выбрали банк из списка');
         }
-      } else {
-        if (!hasErrors) {
-          $('#payout_settings_message')
-            .removeClass('success')
-            .addClass('error')
-            .text('Пожалуйста, выберите банк');
-        }
+        hasErrors = true;
       }
-      hasErrors = true;
-    } else if (bankInputVal.length > 0 && !bankSelectedFromList) {
-      // Дополнительная проверка: если bank_id есть, но bankSelectedFromList = false
-      // и текст в поле отличается от выбранного — значит пользователь изменил текст после выбора
-      $('#bank_search_error').text('Вы не выбрали банк из списка').show();
-      $('#bank_search_input').addClass('bank-search-input--error');
-      if (!hasErrors) {
-        $('#payout_settings_message')
-          .removeClass('success')
-          .addClass('error')
-          .text('Вы не выбрали банк из списка');
-      }
-      hasErrors = true;
     }
 
     if (hasErrors) {
@@ -735,7 +758,7 @@ jQuery(document).ready(function ($) {
         action: 'save_payout_settings',
         payout_method_id: payoutMethodId,
         payout_account: payoutAccount,
-        bank_id: bankId,
+        bank_id: bankRequired === 0 ? 0 : bankId,
         security: nonce,
       },
       beforeSend: function () {
