@@ -629,7 +629,7 @@ class CashbackWithdrawal
         echo '<form id="withdrawal-form">';
         echo '<p class="form-row">';
         echo '<label for="withdrawal-amount">' . __('Сумма вывода', 'cashback-plugin') . ' <span class="required">*</span></label>';
-        echo '<input type="number" class="input-text" name="withdrawal_amount" id="withdrawal-amount" placeholder="' . esc_attr__('Введите сумму', 'cashback-plugin') . '" value="" step="0.01" />';
+        echo '<input type="number" class="input-text" name="withdrawal_amount" id="withdrawal-amount" placeholder="' . esc_attr__('Введите сумму', 'cashback-plugin') . '" value="" step="0.01" min="' . esc_attr($min_payout_amount) . '" />';
         echo '</p>';
         echo '<p class="form-row">';
         echo '<button type="submit" class="woocommerce-Button button" id="withdrawal-submit" name="withdrawal_submit" value="' . esc_attr__('Вывести', 'cashback-plugin') . '">' . __('Вывести', 'cashback-plugin') . '</button>';
@@ -887,7 +887,7 @@ class CashbackWithdrawal
         }
 
         // === 4. Input validation (non-DB checks before transaction) ===
-        $max_withdrawal_str = '50000.00'; // Максимальная сумма вывода (строка для bcmath)
+        $max_withdrawal_str = number_format((float) get_option('cashback_max_withdrawal_amount', 50000.00), 2, '.', ''); // Максимальная сумма вывода (строка для bcmath)
         $withdrawal_str = $withdrawal_amount; // Уже строка после sanitize_text_field
 
         if (bccomp($withdrawal_str, '0', 2) <= 0) {

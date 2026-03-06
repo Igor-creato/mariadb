@@ -134,6 +134,7 @@ function cashback_plugin_uninstall(): void
 
     // Delete plugin options
     $options = [
+        'cashback_max_withdrawal_amount',
         'cashback_support_module_enabled',
         'cashback_support_attachments_enabled',
         'cashback_support_max_file_size',

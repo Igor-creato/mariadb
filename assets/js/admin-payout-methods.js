@@ -125,4 +125,31 @@ jQuery(document).ready(function($) {
             }
         });
     });
+
+    // Обработка формы настроек выплат
+    $('#withdrawal-settings-form').on('submit', function(e) {
+        e.preventDefault();
+
+        var $msg = $('#withdrawal-settings-message');
+        var $btn = $(this).find('input[type="submit"]');
+
+        $btn.prop('disabled', true);
+
+        $.post(ajaxurl, {
+            'action': 'save_withdrawal_settings',
+            'nonce': cashbackPayoutMethodsData.saveSettingsNonce,
+            'max_withdrawal_amount': $('#max_withdrawal_amount').val()
+        }, function(response) {
+            if (response.success) {
+                $msg.html('<div class="notice notice-success is-dismissible"><p>' + response.data.message + '</p></div>');
+            } else {
+                $msg.html('<div class="notice notice-error is-dismissible"><p>' + response.data.message + '</p></div>');
+            }
+            $btn.prop('disabled', false);
+            setTimeout(function() { $msg.find('.notice').fadeOut().remove(); }, 3000);
+        }).fail(function() {
+            $msg.html('<div class="notice notice-error is-dismissible"><p>Ошибка сети.</p></div>');
+            $btn.prop('disabled', false);
+        });
+    });
 });

@@ -27,6 +27,7 @@ class Cashback_Payout_Methods_Admin
         // Обработка AJAX запросов
         add_action('wp_ajax_update_payout_method', [$this, 'handle_update_payout_method']);
         add_action('wp_ajax_add_payout_method', [$this, 'handle_add_payout_method']);
+        add_action('wp_ajax_save_withdrawal_settings', [$this, 'handle_save_withdrawal_settings']);
 
         // Подключение скриптов
         add_action('admin_enqueue_scripts', [$this, 'enqueue_admin_scripts']);
@@ -61,6 +62,7 @@ class Cashback_Payout_Methods_Admin
         wp_localize_script('cashback-admin-payout-methods', 'cashbackPayoutMethodsData', [
             'updateNonce' => wp_create_nonce('update_payout_method_nonce'),
             'addNonce' => wp_create_nonce('add_payout_method_nonce'),
+            'saveSettingsNonce' => wp_create_nonce('save_withdrawal_settings_nonce'),
         ]);
     }
 
@@ -267,6 +269,26 @@ class Cashback_Payout_Methods_Admin
                     </table>
                 </div>
 
+                <!-- Настройки выплат -->
+                <div class="card" style="margin-top: 20px;">
+                    <h2 class="title">Настройки выплат</h2>
+                    <form id="withdrawal-settings-form">
+                        <table class="form-table">
+                            <tr>
+                                <th scope="row"><label for="max_withdrawal_amount">Максимальная сумма выплаты:</label></th>
+                                <td>
+                                    <input type="number" id="max_withdrawal_amount" name="max_withdrawal_amount" class="regular-text" value="<?php echo esc_attr(get_option('cashback_max_withdrawal_amount', 50000.00)); ?>" min="1" step="0.01" />
+                                    <p class="description">Максимальная сумма, которую пользователь может вывести за одну заявку. По умолчанию: 50 000.</p>
+                                </td>
+                            </tr>
+                        </table>
+                        <p class="submit">
+                            <input type="submit" class="button button-primary" value="Сохранить настройки" />
+                        </p>
+                    </form>
+                    <div id="withdrawal-settings-message"></div>
+                </div>
+
             </div>
     <?php
     }
@@ -394,6 +416,33 @@ class Cashback_Payout_Methods_Admin
         }
 
         wp_send_json_success();
+    }
+
+    /**
+     * Обработка AJAX запроса на сохранение настроек выплат
+     */
+    public function handle_save_withdrawal_settings(): void
+    {
+        if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'save_withdrawal_settings_nonce')) {
+            wp_send_json_error(['message' => 'Неверный токен безопасности.']);
+            return;
+        }
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Недостаточно прав для выполнения этого действия.']);
+            return;
+        }
+
+        $max_amount = isset($_POST['max_withdrawal_amount']) ? (float) $_POST['max_withdrawal_amount'] : 0;
+
+        if ($max_amount <= 0) {
+            wp_send_json_error(['message' => 'Максимальная сумма должна быть больше нуля.']);
+            return;
+        }
+
+        update_option('cashback_max_withdrawal_amount', $max_amount);
+
+        wp_send_json_success(['message' => 'Настройки сохранены.']);
     }
 }
 
