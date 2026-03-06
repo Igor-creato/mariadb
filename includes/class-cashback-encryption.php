@@ -33,7 +33,9 @@ class Cashback_Encryption
      */
     public static function is_configured(): bool
     {
-        return defined('CB_ENCRYPTION_KEY') && strlen(CB_ENCRYPTION_KEY) === 64;
+        return defined('CB_ENCRYPTION_KEY')
+            && strlen(CB_ENCRYPTION_KEY) === 64
+            && ctype_xdigit(CB_ENCRYPTION_KEY);
     }
 
     /**
@@ -44,7 +46,11 @@ class Cashback_Encryption
         if (!self::is_configured()) {
             throw new \RuntimeException('CB_ENCRYPTION_KEY is not configured or invalid (expected 64 hex characters).');
         }
-        return hex2bin(CB_ENCRYPTION_KEY);
+        $key = hex2bin(CB_ENCRYPTION_KEY);
+        if ($key === false || strlen($key) !== 32) {
+            throw new \RuntimeException('CB_ENCRYPTION_KEY contains invalid hex characters.');
+        }
+        return $key;
     }
 
     /**

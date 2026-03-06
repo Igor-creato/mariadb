@@ -81,8 +81,20 @@ class Cashback_Statistics_Admin
         if (!empty($filter_date_from) && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $filter_date_from)) {
             $filter_date_from = '';
         }
+        if (!empty($filter_date_from)) {
+            [$y, $m, $d] = array_map('intval', explode('-', $filter_date_from));
+            if (!checkdate($m, $d, $y)) {
+                $filter_date_from = '';
+            }
+        }
         if (!empty($filter_date_to) && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $filter_date_to)) {
             $filter_date_to = '';
+        }
+        if (!empty($filter_date_to)) {
+            [$y, $m, $d] = array_map('intval', explode('-', $filter_date_to));
+            if (!checkdate($m, $d, $y)) {
+                $filter_date_to = '';
+            }
         }
 
         $has_date_filter = !empty($filter_date_from) || !empty($filter_date_to);

@@ -191,6 +191,9 @@ class Cashback_Partner_Management_Admin
 
         // Определяем активную вкладку
         $active_tab = isset($_GET['tab']) ? sanitize_text_field(wp_unslash($_GET['tab'])) : 'partners';
+        if (!in_array($active_tab, ['partners', 'params'], true)) {
+            $active_tab = 'partners';
+        }
 ?>
         <div class="wrap">
             <h1 class="wp-heading-inline">Партнеры</h1>

@@ -175,12 +175,24 @@ class Cashback_Payouts_Admin
         $filter_date_from = sanitize_text_field(wp_unslash($_GET['date_from'] ?? ''));
         $filter_date_to = sanitize_text_field(wp_unslash($_GET['date_to'] ?? ''));
 
-        // Валидация дат
+        // Валидация дат (формат + реальная дата)
         if (!empty($filter_date_from) && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $filter_date_from)) {
             $filter_date_from = '';
         }
+        if (!empty($filter_date_from)) {
+            [$y, $m, $d] = array_map('intval', explode('-', $filter_date_from));
+            if (!checkdate($m, $d, $y)) {
+                $filter_date_from = '';
+            }
+        }
         if (!empty($filter_date_to) && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $filter_date_to)) {
             $filter_date_to = '';
+        }
+        if (!empty($filter_date_to)) {
+            [$y, $m, $d] = array_map('intval', explode('-', $filter_date_to));
+            if (!checkdate($m, $d, $y)) {
+                $filter_date_to = '';
+            }
         }
 
         // Фильтр по номеру заявки
@@ -841,6 +853,21 @@ class Cashback_Payouts_Admin
                     ));
                 }
 
+                // Блокируем обработку/выплату через деактивированный способ оплаты
+                if ($old_status !== $status && in_array($status, ['processing', 'paid'], true)) {
+                    $payout_full = $wpdb->get_row($wpdb->prepare(
+                        "SELECT payout_method FROM {$this->table_name} WHERE id = %d",
+                        $payout_id
+                    ), ARRAY_A);
+
+                    if ($payout_full) {
+                        $method_info = $this->get_payout_method_info_by_slug($payout_full['payout_method'] ?? '');
+                        if (!$method_info['is_active']) {
+                            throw new Exception(__('Невозможно обработать заявку: способ выплаты деактивирован.', 'cashback-plugin'));
+                        }
+                    }
+                }
+
                 $update_data['status'] = $status;
                 $update_formats[] = '%s';
 
@@ -1408,6 +1435,16 @@ class Cashback_Payouts_Admin
         $rate_key = 'cb_decrypt_rate_' . get_current_user_id();
         $rate_count = (int) get_transient($rate_key);
         if ($rate_count >= 20) {
+            // Аудит-лог: возможная попытка массового экспорта данных
+            if (class_exists('Cashback_Encryption')) {
+                Cashback_Encryption::write_audit_log(
+                    'decrypt_rate_limit_exceeded',
+                    get_current_user_id(),
+                    null,
+                    null,
+                    ['rate_count' => $rate_count, 'limit' => 20]
+                );
+            }
             wp_send_json_error(['message' => __('Слишком много запросов на расшифровку. Подождите минуту.', 'cashback-plugin')]);
             return;
         }

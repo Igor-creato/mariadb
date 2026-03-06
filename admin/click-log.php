@@ -132,12 +132,24 @@ class Cashback_Click_Log_Admin
         $filter_date_to = isset($_GET['date_to']) ? sanitize_text_field(wp_unslash($_GET['date_to'])) : '';
         $filter_spam_only = isset($_GET['spam_only']) && sanitize_text_field(wp_unslash($_GET['spam_only'])) === '1';
 
-        // Валидация дат
+        // Валидация дат (формат + реальная дата)
         if (!empty($filter_date_from) && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $filter_date_from)) {
             $filter_date_from = '';
         }
+        if (!empty($filter_date_from)) {
+            [$y, $m, $d] = array_map('intval', explode('-', $filter_date_from));
+            if (!checkdate($m, $d, $y)) {
+                $filter_date_from = '';
+            }
+        }
         if (!empty($filter_date_to) && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $filter_date_to)) {
             $filter_date_to = '';
+        }
+        if (!empty($filter_date_to)) {
+            [$y, $m, $d] = array_map('intval', explode('-', $filter_date_to));
+            if (!checkdate($m, $d, $y)) {
+                $filter_date_to = '';
+            }
         }
 
         // Построение WHERE

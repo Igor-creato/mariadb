@@ -655,6 +655,27 @@ class Cashback_Fraud_Detector
         $alerts_table = $wpdb->prefix . 'cashback_fraud_alerts';
         $signals_table = $wpdb->prefix . 'cashback_fraud_signals';
 
+        // Атомарная проверка дубликатов: транзакция + FOR UPDATE предотвращает
+        // race condition между параллельными cron-запусками
+        $wpdb->query('START TRANSACTION');
+
+        $exists = (bool) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM `{$alerts_table}`
+             WHERE user_id = %d AND alert_type = %s
+             AND (
+                 status IN ('open', 'reviewing')
+                 OR (status IN ('confirmed', 'dismissed') AND updated_at > DATE_SUB(NOW(), INTERVAL 30 DAY))
+             )
+             FOR UPDATE",
+            $user_id,
+            $alert_type
+        ));
+
+        if ($exists) {
+            $wpdb->query('COMMIT');
+            return null;
+        }
+
         $wpdb->insert(
             $alerts_table,
             [
@@ -672,6 +693,7 @@ class Cashback_Fraud_Detector
         );
 
         if ($wpdb->last_error) {
+            $wpdb->query('ROLLBACK');
             error_log('Cashback Fraud Detector: Failed to create alert — ' . $wpdb->last_error);
             return null;
         }
@@ -693,7 +715,9 @@ class Cashback_Fraud_Detector
             );
         }
 
-        // Аудит-лог
+        $wpdb->query('COMMIT');
+
+        // Аудит-лог (после коммита, чтобы не блокировать транзакцию)
         if (class_exists('Cashback_Encryption')) {
             Cashback_Encryption::write_audit_log(
                 'fraud_alert_created',

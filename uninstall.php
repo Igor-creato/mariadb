@@ -165,27 +165,35 @@ function cashback_plugin_uninstall(): void
     }
 
     // Delete affiliate network and product params post_meta from all products
-    $wpdb->query("DELETE FROM {$wpdb->postmeta} WHERE meta_key = '_affiliate_network_id'");
-    $wpdb->query("DELETE FROM {$wpdb->postmeta} WHERE meta_key = '_affiliate_product_params'");
+    $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->postmeta} WHERE meta_key = %s", '_affiliate_network_id'));
+    $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->postmeta} WHERE meta_key = %s", '_affiliate_product_params'));
     // Clean up old affiliate param meta (if any remain from pre-2.0)
-    $wpdb->query(
-        "DELETE FROM {$wpdb->postmeta} WHERE meta_key LIKE '_affiliate_param_%_key' OR meta_key LIKE '_affiliate_param_%_value'"
-    );
+    $like_key = $wpdb->esc_like('_affiliate_param_') . '%' . $wpdb->esc_like('_key');
+    $like_val = $wpdb->esc_like('_affiliate_param_') . '%' . $wpdb->esc_like('_value');
+    $wpdb->query($wpdb->prepare(
+        "DELETE FROM {$wpdb->postmeta} WHERE meta_key LIKE %s OR meta_key LIKE %s",
+        $like_key,
+        $like_val
+    ));
 
     // Delete transients
     delete_transient('cashback_support_flush_rules');
     delete_transient('cashback_ext_stores_cache');
 
-    // Delete rate limiting transients (cb_pp_*, cb_gl_* patterns)
-    $wpdb->query(
-        "DELETE FROM {$wpdb->options}
-         WHERE option_name LIKE '_transient_cb_pp_%'
-            OR option_name LIKE '_transient_timeout_cb_pp_%'
-            OR option_name LIKE '_transient_cb_gl_%'
-            OR option_name LIKE '_transient_timeout_cb_gl_%'
-            OR option_name LIKE '_transient_cb_ip_%'
-            OR option_name LIKE '_transient_timeout_cb_ip_%'"
-    );
+    // Delete rate limiting and plugin transients
+    $transient_prefixes = ['cb_pp_', 'cb_gl_', 'cb_ip_', 'cb_decrypt_rate_', 'cb_support_rate_', 'cb_fp_rate_'];
+    $where_parts = [];
+    $values = [];
+    foreach ($transient_prefixes as $p) {
+        $where_parts[] = 'option_name LIKE %s';
+        $where_parts[] = 'option_name LIKE %s';
+        $values[] = $wpdb->esc_like('_transient_' . $p) . '%';
+        $values[] = $wpdb->esc_like('_transient_timeout_' . $p) . '%';
+    }
+    $wpdb->query($wpdb->prepare(
+        "DELETE FROM {$wpdb->options} WHERE " . implode(' OR ', $where_parts),
+        ...$values
+    ));
 
     // Delete encryption key file
     $key_file = WP_CONTENT_DIR . '/.cashback-encryption-key.php';

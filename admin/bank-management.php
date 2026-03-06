@@ -93,6 +93,7 @@ class Cashback_Bank_Management_Admin
 
         // Поисковый запрос
         $search_query = isset($_GET['bank_search']) ? sanitize_text_field(wp_unslash($_GET['bank_search'])) : '';
+        $search_query = mb_substr($search_query, 0, 100);
         $is_search = !empty($search_query);
 
         // Фильтр по статусу is_active

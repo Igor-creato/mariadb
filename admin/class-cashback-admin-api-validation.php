@@ -155,7 +155,10 @@ class Cashback_Admin_API_Validation
             wp_die('Доступ запрещён');
         }
 
-        $active_tab = sanitize_text_field($_GET['tab'] ?? 'settings');
+        $active_tab = sanitize_text_field(wp_unslash($_GET['tab'] ?? 'settings'));
+        if (!in_array($active_tab, ['settings', 'validation', 'sync'], true)) {
+            $active_tab = 'settings';
+        }
 ?>
         <div class="wrap">
             <h1>API Валидация кэшбэка</h1>

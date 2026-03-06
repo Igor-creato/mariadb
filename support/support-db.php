@@ -494,7 +494,8 @@ class Cashback_Support_DB
             finfo_close($finfo);
         }
         if (!$detected_mime) {
-            $detected_mime = sanitize_text_field($file['type']);
+            @unlink($dest_path);
+            return 'Не удалось определить тип файла. Убедитесь, что расширение fileinfo включено.';
         }
 
         $attachment_id = self::record_attachment([

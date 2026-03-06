@@ -1067,7 +1067,8 @@ END;",
         foreach ($users as $user_id) {
             $result = $this->add_user_to_cashback_tables((int) $user_id);
             if (!$result) {
-                throw new Exception("Failed to initialize user {$user_id}. Error: " . $wpdb->last_error);
+                error_log("[Cashback] Failed to initialize user {$user_id}: " . $wpdb->last_error);
+                throw new Exception("Failed to initialize user {$user_id}.");
             }
         }
 
