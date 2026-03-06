@@ -68,6 +68,7 @@ class Mariadb_Plugin
         ob_start();
 
         try {
+            $instance->ensure_users_table_innodb();
             $instance->create_tables();
             $instance->migrate_add_reference_id();
             $instance->migrate_add_bank_required();
@@ -87,13 +88,32 @@ class Mariadb_Plugin
     }
 
     /**
+     * Конвертация wp_users в InnoDB если используется MyISAM.
+     * Необходимо для создания FK constraints к wp_users.
+     */
+    private function ensure_users_table_innodb(): void
+    {
+        global $wpdb;
+
+        $engine = $wpdb->get_var($wpdb->prepare(
+            "SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s",
+            $wpdb->users
+        ));
+
+        if ($engine && strtolower($engine) !== 'innodb') {
+            $wpdb->query("ALTER TABLE `{$wpdb->users}` ENGINE=InnoDB");
+            error_log("Mariadb Plugin: Converted {$wpdb->users} from {$engine} to InnoDB");
+        }
+    }
+
+    /**
      * Создание таблиц
      */
     private function create_tables()
     {
         global $wpdb;
 
-        $charset_collate = "DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
+        $charset_collate = $wpdb->get_charset_collate();
 
         // ---------------------------------------------------------------
         // Фаза 1: Создание таблиц без FOREIGN KEY / CHECK / GENERATED
@@ -555,7 +575,7 @@ class Mariadb_Plugin
     private function create_audit_log_table(): void
     {
         global $wpdb;
-        $charset_collate = "DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
+        $charset_collate = $wpdb->get_charset_collate();
 
         $sql = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_audit_log` (
             `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,

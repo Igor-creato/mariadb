@@ -22,7 +22,7 @@ class Cashback_Fraud_DB
     {
         global $wpdb;
 
-        $charset_collate = 'DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci';
+        $charset_collate = $wpdb->get_charset_collate();
 
         // Таблица алертов (создаём первой, т.к. signals ссылается на неё)
         $table_alerts = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_fraud_alerts` (
@@ -43,8 +43,7 @@ class Cashback_Fraud_DB
             KEY `idx_user_status` (`user_id`, `status`),
             KEY `idx_status_created` (`status`, `created_at` DESC),
             KEY `idx_alert_type` (`alert_type`),
-            KEY `idx_severity` (`severity`),
-            CONSTRAINT `fk_fraud_alert_user` FOREIGN KEY (`user_id`) REFERENCES `{$wpdb->prefix}users` (`ID`) ON DELETE CASCADE
+            KEY `idx_severity` (`severity`)
         ) ENGINE=InnoDB {$charset_collate} COMMENT='Fraud detection alerts';";
 
         // Таблица сигналов (составные части алертов)
@@ -56,8 +55,7 @@ class Cashback_Fraud_DB
             `evidence` longtext NOT NULL COMMENT 'JSON',
             `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (`id`),
-            KEY `idx_alert_id` (`alert_id`),
-            CONSTRAINT `fk_signal_alert` FOREIGN KEY (`alert_id`) REFERENCES `{$wpdb->prefix}cashback_fraud_alerts` (`id`) ON DELETE CASCADE
+            KEY `idx_alert_id` (`alert_id`)
         ) ENGINE=InnoDB {$charset_collate} COMMENT='Individual fraud signals composing alerts';";
 
         // Таблица fingerprints и IP
@@ -75,8 +73,7 @@ class Cashback_Fraud_DB
             KEY `idx_fingerprint` (`fingerprint_hash`),
             KEY `idx_ip_user` (`ip_address`, `user_id`),
             KEY `idx_fingerprint_user` (`fingerprint_hash`, `user_id`),
-            KEY `idx_created` (`created_at`),
-            CONSTRAINT `fk_fingerprint_user` FOREIGN KEY (`user_id`) REFERENCES `{$wpdb->prefix}users` (`ID`) ON DELETE CASCADE
+            KEY `idx_created` (`created_at`)
         ) ENGINE=InnoDB {$charset_collate} COMMENT='User session fingerprints for multi-account detection';";
 
         require_once ABSPATH . 'wp-admin/includes/upgrade.php';

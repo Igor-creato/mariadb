@@ -18,7 +18,7 @@ class Cashback_Support_DB
     {
         global $wpdb;
 
-        $charset_collate = 'ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci';
+        $charset_collate = 'ENGINE=InnoDB ' . $wpdb->get_charset_collate();
         $tickets_table = $wpdb->prefix . 'cashback_support_tickets';
         $messages_table = $wpdb->prefix . 'cashback_support_messages';
 
