@@ -159,6 +159,9 @@ function cashback_plugin_uninstall(): void
         'cashback_fraud_auto_flag_threshold',
         'cashback_fraud_email_notification_enabled',
         'cashback_fraud_last_run',
+        // Trigger/event status flags
+        'cashback_triggers_active',
+        'cashback_events_active',
     ];
 
     foreach ($options as $option) {

@@ -1631,6 +1631,25 @@ class Cashback_API_Client
             $update_formats[]            = '%d';
         }
 
+        // PHP-фолбэк: валидация перехода статуса
+        if ($status_changed) {
+            $validation = Cashback_Trigger_Fallbacks::validate_status_transition($local_status, $mapped_status);
+            if ($validation !== true) {
+                $skipped++;
+                return;
+            }
+        }
+
+        // PHP-фолбэк: пересчёт кешбэка при изменении комиссии
+        if ($commission_changed) {
+            $is_registered = ($table === $this->transactions_table);
+            $old_row = (object) $local;
+            Cashback_Trigger_Fallbacks::recalculate_cashback_on_update($update_data, $old_row, $is_registered);
+            if (isset($update_data['cashback'])) {
+                $update_formats[] = '%f'; // cashback
+            }
+        }
+
         $wpdb->update(
             $table,
             $update_data,
@@ -1772,7 +1791,12 @@ class Cashback_API_Client
             '%s',  // idempotency_key
         ];
 
-        // 11. Убираем NULL-значения (аналогично ajax_add_transaction)
+        // 11. PHP-фолбэк расчёта кешбэка (идемпотентен при наличии триггеров)
+        Cashback_Trigger_Fallbacks::calculate_cashback($data, !$is_unregistered);
+        $formats[] = '%f'; // applied_cashback_rate
+        $formats[] = '%f'; // cashback
+
+        // 12. Убираем NULL-значения (аналогично ajax_add_transaction)
         $clean_data    = [];
         $clean_formats = [];
         $i = 0;
@@ -1784,7 +1808,7 @@ class Cashback_API_Client
             $i++;
         }
 
-        // 12. INSERT (UNIQUE KEY на uniq_id+partner защищает от дубликатов)
+        // 13. INSERT (UNIQUE KEY на uniq_id+partner защищает от дубликатов)
         $result = $wpdb->insert($table, $clean_data, $clean_formats);
 
         if ($result === false || $wpdb->last_error) {

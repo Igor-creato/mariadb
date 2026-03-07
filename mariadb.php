@@ -870,10 +870,12 @@ class Mariadb_Plugin
         }
 
         if (!empty($failed_triggers)) {
-            throw new Exception('Failed to create one or more triggers: ' . implode('; ', $failed_triggers));
+            update_option('cashback_triggers_active', false);
+            error_log('Mariadb Plugin Warning: Failed to create triggers (PHP fallbacks will be used): ' . implode('; ', $failed_triggers));
+        } else {
+            update_option('cashback_triggers_active', true);
+            error_log('Mariadb Plugin: All triggers created successfully');
         }
-
-        error_log('Mariadb Plugin: All triggers created successfully');
     }
 
     /**
@@ -1044,8 +1046,10 @@ END;",
 
         // События опциональны, не прерываем активацию
         if (!empty($failed_events)) {
+            update_option('cashback_events_active', false);
             error_log('Mariadb Plugin: Some events failed to create (non-critical): ' . implode('; ', $failed_events));
         } else {
+            update_option('cashback_events_active', true);
             error_log('Mariadb Plugin: All events created successfully');
         }
     }

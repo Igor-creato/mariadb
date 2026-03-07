@@ -1048,13 +1048,16 @@ class Cashback_Fraud_Admin
                 [
                     'status'     => 'banned',
                     'ban_reason' => $ban_reason,
+                    'banned_at'  => current_time('mysql'),
                     'updated_at' => current_time('mysql'),
                 ],
                 ['user_id' => $user_id],
-                ['%s', '%s', '%s'],
+                ['%s', '%s', '%s', '%s'],
                 ['%d']
             );
-            // Triggers tr_banned_user_update_banned_at and tr_freeze_balance_on_ban fire automatically
+
+            // PHP-фолбэк: заморозка баланса (идемпотентно при наличии триггера)
+            Cashback_Trigger_Fallbacks::freeze_balance_on_ban($user_id);
 
             // Decline active payout requests
             $active_requests = $wpdb->get_results($wpdb->prepare(

@@ -444,6 +444,18 @@ class Cashback_Users_Management_Admin
 
             $old_status = $profile->status;
 
+            // PHP-фолбэк: установка banned_at при бане / очистка при разбане
+            if (isset($status)) {
+                if ($old_status !== 'banned' && $status === 'banned') {
+                    Cashback_Trigger_Fallbacks::set_banned_at($update_data);
+                    $update_formats[] = '%s'; // banned_at
+                } elseif ($old_status === 'banned' && $status !== 'banned') {
+                    Cashback_Trigger_Fallbacks::clear_ban_fields($update_data);
+                    $update_formats[] = '%s'; // banned_at (null)
+                    $update_formats[] = '%s'; // ban_reason (null)
+                }
+            }
+
             // Добавляем дату обновления
             $update_data['updated_at'] = current_time('mysql');
             $update_formats[] = '%s';
@@ -649,6 +661,9 @@ class Cashback_Users_Management_Admin
                 }
             }
 
+            // PHP-фолбэк: заморозка баланса (идемпотентно при наличии триггера)
+            Cashback_Trigger_Fallbacks::freeze_balance_on_ban($user_id);
+
             // Логируем бан пользователя
             if (class_exists('Cashback_Encryption')) {
                 Cashback_Encryption::write_audit_log(
@@ -733,6 +748,9 @@ class Cashback_Users_Management_Admin
                     throw new Exception("Failed to update payout request {$request->id}");
                 }
             }
+
+            // PHP-фолбэк: разморозка баланса (идемпотентно при наличии триггера)
+            Cashback_Trigger_Fallbacks::unfreeze_balance_on_unban($user_id);
 
             // Логируем разбан
             if (class_exists('Cashback_Encryption')) {

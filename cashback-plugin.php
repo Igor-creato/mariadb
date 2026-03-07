@@ -276,6 +276,11 @@ class CashbackPlugin
             if (class_exists('Cashback_Encryption') && !Cashback_Encryption::is_configured()) {
                 add_action('admin_notices', array($this, 'encryption_key_missing_notice'));
             }
+
+            // Предупреждение если триггеры не созданы
+            if (get_option('cashback_triggers_active') === false) {
+                add_action('admin_notices', array($this, 'triggers_unavailable_notice'));
+            }
         } else {
             add_action('admin_notices', array($this, 'woocommerce_required_notice'));
         }
@@ -294,6 +299,9 @@ class CashbackPlugin
 
         // Утилита проверки статуса пользователя (для блокировки забаненных)
         $this->require_file('includes/class-cashback-user-status.php');
+
+        // PHP-фолбэки для логики MySQL-триггеров
+        $this->require_file('includes/class-cashback-trigger-fallbacks.php');
 
         // Подключение зависимых файлов (общие — нужны на фронтенде и в админке)
         $this->require_file('mariadb.php');
@@ -537,6 +545,15 @@ class CashbackPlugin
             esc_html__('Cashback Plugin', 'cashback-plugin'),
             esc_html__('Не удалось создать файл с ключом шифрования. Проверьте права на запись в директорию wp-content. Ожидаемый путь:', 'cashback-plugin'),
             esc_html($key_file)
+        );
+    }
+
+    public function triggers_unavailable_notice()
+    {
+        printf(
+            '<div class="notice notice-warning"><p><strong>%s:</strong> %s</p></div>',
+            esc_html__('Cashback Plugin', 'cashback-plugin'),
+            esc_html__('MySQL-триггеры не были созданы (binary logging без SUPER привилегии). Плагин работает в режиме PHP-фолбэков. Для полной защиты данных на уровне БД обратитесь к хостинг-провайдеру.', 'cashback-plugin')
         );
     }
 

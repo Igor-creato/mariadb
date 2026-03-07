@@ -853,7 +853,7 @@ class Cashback_Admin_API_Validation
 
         // Проверяем существование и текущий статус
         $current = $wpdb->get_row($wpdb->prepare(
-            "SELECT id, order_status FROM {$table} WHERE id = %d",
+            "SELECT id, order_status, comission, applied_cashback_rate FROM {$table} WHERE id = %d",
             $transaction_id
         ));
 
@@ -861,19 +861,30 @@ class Cashback_Admin_API_Validation
             wp_send_json_error(['message' => 'Транзакция не найдена']);
         }
 
-        if ($current->order_status === 'balance') {
-            wp_send_json_error(['message' => 'Нельзя редактировать транзакцию со статусом «balance»']);
+        // PHP-фолбэк: валидация перехода статуса
+        $validation = Cashback_Trigger_Fallbacks::validate_status_transition($current->order_status, $order_status);
+        if ($validation !== true) {
+            wp_send_json_error(['message' => $validation]);
+        }
+
+        $update_data = [
+            'order_status' => $order_status,
+            'comission'    => $comission,
+            'sum_order'    => $sum_order,
+        ];
+        $update_formats = ['%s', '%f', '%f'];
+
+        // PHP-фолбэк: пересчёт кешбэка при изменении комиссии
+        Cashback_Trigger_Fallbacks::recalculate_cashback_on_update($update_data, $current, !$is_unregistered);
+        if (isset($update_data['cashback'])) {
+            $update_formats[] = '%f';
         }
 
         $updated = $wpdb->update(
             $table,
-            [
-                'order_status' => $order_status,
-                'comission'    => $comission,
-                'sum_order'    => $sum_order,
-            ],
+            $update_data,
             ['id' => $transaction_id],
-            ['%s', '%f', '%f'],
+            $update_formats,
             ['%d']
         );
 
@@ -996,6 +1007,11 @@ class Cashback_Admin_API_Validation
             '%s',  // idempotency_key
         ];
 
+        // PHP-фолбэк расчёта кешбэка
+        Cashback_Trigger_Fallbacks::calculate_cashback($data, !$is_unregistered);
+        $formats[] = '%f'; // applied_cashback_rate
+        $formats[] = '%f'; // cashback
+
         // Удаляем NULL-значения и их форматы, чтобы $wpdb->insert корректно работал
         $clean_data = [];
         $clean_formats = [];
@@ -1061,16 +1077,12 @@ class Cashback_Admin_API_Validation
 
         // Проверяем существование и текущий статус
         $current = $wpdb->get_row($wpdb->prepare(
-            "SELECT id, order_status, comission, sum_order FROM {$table} WHERE id = %d",
+            "SELECT id, order_status, comission, sum_order, applied_cashback_rate FROM {$table} WHERE id = %d",
             $local_id
         ));
 
         if (!$current) {
             wp_send_json_error(['message' => 'Транзакция не найдена']);
-        }
-
-        if ($current->order_status === 'balance') {
-            wp_send_json_error(['message' => 'Нельзя перезаписать транзакцию со статусом «balance»']);
         }
 
         // Маппинг статуса API → локальный
@@ -1079,16 +1091,31 @@ class Cashback_Admin_API_Validation
         $status_map = $network_config['status_map'] ?? [];
         $mapped_status = $status_map[strtolower($api_status)] ?? 'waiting';
 
+        // PHP-фолбэк: валидация перехода статуса
+        $validation = Cashback_Trigger_Fallbacks::validate_status_transition($current->order_status, $mapped_status);
+        if ($validation !== true) {
+            wp_send_json_error(['message' => $validation]);
+        }
+
+        $update_data = [
+            'order_status' => $mapped_status,
+            'comission'    => $api_payment,
+            'sum_order'    => $api_cart,
+            'api_verified' => 1,
+        ];
+        $update_formats = ['%s', '%f', '%f', '%d'];
+
+        // PHP-фолбэк: пересчёт кешбэка при изменении комиссии
+        Cashback_Trigger_Fallbacks::recalculate_cashback_on_update($update_data, $current, !$is_unregistered);
+        if (isset($update_data['cashback'])) {
+            $update_formats[] = '%f';
+        }
+
         $updated = $wpdb->update(
             $table,
-            [
-                'order_status' => $mapped_status,
-                'comission'    => $api_payment,
-                'sum_order'    => $api_cart,
-                'api_verified' => 1,
-            ],
+            $update_data,
             ['id' => $local_id],
-            ['%s', '%f', '%f', '%d'],
+            $update_formats,
             ['%d']
         );
 
