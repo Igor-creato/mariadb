@@ -211,6 +211,9 @@ class Cashback_Users_Management_Admin
                     <label for="search-input" class="screen-reader-text">Поиск по email или имени</label>
                     <input type="search" id="search-input" name="search" value="<?php echo esc_attr($search); ?>" placeholder="Email или имя пользователя" />
                     <button type="button" id="search-submit" class="button action">Найти</button>
+                    <?php if (!empty($filter_status) || !empty($search)): ?>
+                        <a href="<?php echo esc_url(admin_url('admin.php?page=cashback-users')); ?>" class="button action">Сбросить</a>
+                    <?php endif; ?>
                 </div>
                 <br class="clear">
             </div>

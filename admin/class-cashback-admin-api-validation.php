@@ -367,6 +367,7 @@ class Cashback_Admin_API_Validation
                     <th>CPA-сеть</th>
                     <td>
                         <select id="cashback-validate-network">
+                            <option value="__all__">— Все сети —</option>
                             <?php
                             $client = Cashback_API_Client::get_instance();
                             $networks = $client->get_all_active_networks();
@@ -515,6 +516,26 @@ class Cashback_Admin_API_Validation
 
         $client = Cashback_API_Client::get_instance();
 
+        // Проверка по всем сетям
+        if ($network === '__all__') {
+            if ($user_id > 0) {
+                $user = get_user_by('id', $user_id);
+                if (!$user) {
+                    wp_send_json_error(['message' => "Пользователь #{$user_id} не найден"]);
+                }
+            }
+
+            $all_networks = $client->get_all_active_networks();
+            if (empty($all_networks)) {
+                wp_send_json_error(['message' => 'Нет активных сетей с настроенным API']);
+            }
+
+            $result = $this->validate_all_networks($client, $user_id, $all_networks, !$full);
+
+            $this->log_audit('api_validation', $user_id, $result);
+            wp_send_json_success($result);
+        }
+
         if ($user_id === 0) {
             // Проверка незарегистрированных транзакций
             $result = $client->validate_unregistered($network, !$full);
@@ -531,6 +552,109 @@ class Cashback_Admin_API_Validation
         $this->log_audit('api_validation', $user_id, $result);
 
         wp_send_json_success($result);
+    }
+
+    /**
+     * Валидация пользователя по всем активным сетям с агрегацией результатов.
+     *
+     * @param Cashback_API_Client $client         API-клиент.
+     * @param int                 $user_id        ID пользователя (0 = незарегистрированные).
+     * @param array               $networks       Массив активных сетей.
+     * @param bool                $use_checkpoint  Использовать чекпоинт.
+     * @return array Агрегированный результат.
+     */
+    private function validate_all_networks(Cashback_API_Client $client, int $user_id, array $networks, bool $use_checkpoint): array
+    {
+        $per_network   = [];
+        $network_names = [];
+        $errors        = [];
+
+        $totals = [
+            'api_total'      => 0,
+            'local_total'    => 0,
+            'matched_count'  => 0,
+            'mismatch_count' => 0,
+            'missing_local'  => [],
+            'missing_api'    => [],
+            'mismatched'     => [],
+            'sums'           => [
+                'api_approved'   => 0,
+                'api_pending'    => 0,
+                'api_declined'   => 0,
+                'local_approved' => 0,
+                'local_pending'  => 0,
+                'local_declined' => 0,
+                'discrepancy'    => 0,
+            ],
+        ];
+
+        foreach ($networks as $net) {
+            $slug = $net['slug'];
+            $network_names[] = $net['name'];
+
+            if ($user_id === 0) {
+                $result = $client->validate_unregistered($slug, $use_checkpoint);
+            } else {
+                $result = $client->validate_user($user_id, $slug, $use_checkpoint);
+            }
+
+            // Пропускаем сети с ошибками (нет credentials и т.д.)
+            if (!empty($result['error'])) {
+                $errors[$slug] = $result['error'];
+                continue;
+            }
+
+            $per_network[$slug] = $result;
+
+            // Агрегация счётчиков
+            $totals['api_total']      += $result['api_total'] ?? 0;
+            $totals['local_total']    += $result['local_total'] ?? 0;
+            $totals['matched_count']  += $result['matched_count'] ?? 0;
+            $totals['mismatch_count'] += $result['mismatch_count'] ?? 0;
+
+            // Агрегация сумм
+            if (!empty($result['sums'])) {
+                $totals['sums']['api_approved']   += $result['sums']['api_approved'] ?? 0;
+                $totals['sums']['api_pending']    += $result['sums']['api_pending'] ?? 0;
+                $totals['sums']['api_declined']   += $result['sums']['api_declined'] ?? 0;
+                $totals['sums']['local_approved'] += $result['sums']['local_approved'] ?? 0;
+                $totals['sums']['local_pending']  += $result['sums']['local_pending'] ?? 0;
+                $totals['sums']['local_declined'] += $result['sums']['local_declined'] ?? 0;
+            }
+
+            // Объединение массивов расхождений с добавлением поля network
+            foreach ($result['mismatched'] ?? [] as $item) {
+                $item['network'] = $slug;
+                $totals['mismatched'][] = $item;
+            }
+            foreach ($result['missing_local'] ?? [] as $item) {
+                $item['network'] = $slug;
+                $totals['missing_local'][] = $item;
+            }
+            foreach ($result['missing_api'] ?? [] as $item) {
+                $item['network'] = $slug;
+                $totals['missing_api'][] = $item;
+            }
+        }
+
+        // Итоговое расхождение
+        $totals['sums']['discrepancy'] = abs($totals['sums']['api_approved'] - $totals['sums']['local_approved']);
+
+        // Общий статус
+        $has_issues = $totals['mismatch_count'] > 0
+            || !empty($totals['missing_local'])
+            || !empty($totals['missing_api']);
+
+        return [
+            'user_id'       => $user_id,
+            'network'       => '__all__',
+            'multi_network' => true,
+            'network_names' => $network_names,
+            'status'        => $has_issues ? 'mismatch' : 'match',
+            'networks'      => $per_network,
+            'errors'        => $errors,
+            'totals'        => $totals,
+        ];
     }
 
     /**

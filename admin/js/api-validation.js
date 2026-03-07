@@ -65,6 +65,11 @@
      * Рендер результата валидации
      */
     function renderValidationResult(data) {
+        // Мульти-сетевой результат — нормализуем в единую структуру
+        if (data.multi_network) {
+            data = normalizeMultiNetworkData(data);
+        }
+
         const $result = $('#cashback-validation-result');
         let html = '';
 
@@ -76,13 +81,22 @@
 
         html += `<div class="notice ${statusClass}"><p><strong>${statusText}</strong></p></div>`;
 
+        // Ошибки по сетям (если есть)
+        if (data._errors && Object.keys(data._errors).length > 0) {
+            html += '<div class="notice notice-error"><p>';
+            for (const [slug, msg] of Object.entries(data._errors)) {
+                html += `<strong>${escHtml(slug)}:</strong> ${escHtml(msg)}<br>`;
+            }
+            html += '</p></div>';
+        }
+
         // Сводка
         html += '<table class="widefat fixed" style="max-width:700px;">';
         html += '<thead><tr><th colspan="2">Сводка проверки</th></tr></thead>';
         html += '<tbody>';
         const userLabel = data.user_id === 0 ? 'Незарегистрированные' : `#${data.user_id}`;
         html += `<tr><td>Пользователь</td><td><strong>${userLabel}</strong></td></tr>`;
-        html += `<tr><td>Сеть</td><td>${escHtml(data.network)}</td></tr>`;
+        html += `<tr><td>Сеть</td><td>${escHtml(data._networkLabel || data.network)}</td></tr>`;
         html += `<tr><td>Период</td><td>${escHtml(data.date_range?.start || '')} — ${escHtml(data.date_range?.end || '')}</td></tr>`;
         html += `<tr><td>Действий в API</td><td>${data.api_total || 0}</td></tr>`;
         html += `<tr><td>Транзакций локально</td><td>${data.local_total || 0}</td></tr>`;
@@ -112,6 +126,7 @@
         const missingLocalCount = (data.missing_local || []).length;
         const missingApiCount = (data.missing_api || []).length;
         const totalIssues = mismatchedCount + missingLocalCount + missingApiCount;
+        const showNetCol = data._isMultiNetwork;
 
         if (totalIssues > 0) {
             // Навигация вкладок
@@ -125,7 +140,9 @@
             html += '<div class="validation-tab-content" id="tab-mismatched">';
             if (mismatchedCount > 0) {
                 html += '<table class="widefat striped">';
-                html += '<thead><tr><th>Action ID</th><th>Uniq ID</th><th>API статус</th><th>Локальный статус</th><th>API сумма</th><th>Локальная сумма</th><th>Проблема</th><th>Действия</th></tr></thead>';
+                html += '<thead><tr>';
+                if (showNetCol) html += '<th>Сеть</th>';
+                html += '<th>Action ID</th><th>Uniq ID</th><th>API статус</th><th>Локальный статус</th><th>API сумма</th><th>Локальная сумма</th><th>Проблема</th><th>Действия</th></tr></thead>';
                 html += '<tbody>';
                 data.mismatched.forEach(function (m) {
                     const problems = [];
@@ -137,8 +154,9 @@
                     const sumCls = m.commission_mismatch ? ' class="cell-mismatch"' : '';
                     const isBalance = m.local_status === 'balance';
 
-                    html += `<tr>
-                        <td><code>${escHtml(m.action_id)}</code></td>
+                    html += '<tr>';
+                    if (showNetCol) html += `<td>${escHtml(m.network || '')}</td>`;
+                    html += `<td><code>${escHtml(m.action_id)}</code></td>
                         <td><code>${escHtml(m.uniq_id || m.click_id)}</code></td>
                         <td${statusCls}>${escHtml(m.api_status)} → ${escHtml(m.mapped_api_status)}</td>
                         <td${statusCls}>${escHtml(m.local_status)}</td>
@@ -148,6 +166,7 @@
                         <td class="validation-actions">
                             <button type="button" class="button button-small button-primary cashback-overwrite-tx-btn"
                                 data-local-id="${m.local_id}"
+                                data-network="${escHtml(m.network || '')}"
                                 data-api-status="${escHtml(m.api_status)}"
                                 data-api-payment="${m.api_payment}"
                                 data-api-cart="${m.api_cart}"
@@ -166,11 +185,14 @@
             html += '<div class="validation-tab-content" id="tab-missing-local" style="display:none;">';
             if (missingLocalCount > 0) {
                 html += '<table class="widefat striped">';
-                html += '<thead><tr><th>Action ID</th><th>Order ID</th><th>Статус</th><th>Комиссия</th><th>Сумма заказа</th><th>Дата</th><th>Магазин</th><th>Действия</th></tr></thead>';
+                html += '<thead><tr>';
+                if (showNetCol) html += '<th>Сеть</th>';
+                html += '<th>Action ID</th><th>Order ID</th><th>Статус</th><th>Комиссия</th><th>Сумма заказа</th><th>Дата</th><th>Магазин</th><th>Действия</th></tr></thead>';
                 html += '<tbody>';
                 data.missing_local.forEach(function (m) {
-                    html += `<tr>
-                        <td><code>${escHtml(m.action_id)}</code></td>
+                    html += '<tr>';
+                    if (showNetCol) html += `<td>${escHtml(m.network || '')}</td>`;
+                    html += `<td><code>${escHtml(m.action_id)}</code></td>
                         <td>${escHtml(m.order_id)}</td>
                         <td>${escHtml(m.status)}</td>
                         <td>${formatMoney(m.payment)}</td>
@@ -179,6 +201,7 @@
                         <td>${escHtml(m.campaign || '')}</td>
                         <td class="validation-actions">
                             <button type="button" class="button button-small button-primary cashback-add-tx-btn"
+                                data-network="${escHtml(m.network || '')}"
                                 data-action-id="${escHtml(m.action_id)}"
                                 data-click-id="${escHtml(m.click_id || '')}"
                                 data-order-id="${escHtml(m.order_id || '')}"
@@ -205,11 +228,14 @@
             html += '<div class="validation-tab-content" id="tab-missing-api" style="display:none;">';
             if (missingApiCount > 0) {
                 html += '<table class="widefat striped">';
-                html += '<thead><tr><th>Local ID</th><th>Uniq ID</th><th>Click ID</th><th>Статус</th><th>Комиссия</th><th>Сумма заказа</th><th>Создано</th><th>Действия</th></tr></thead>';
+                html += '<thead><tr>';
+                if (showNetCol) html += '<th>Сеть</th>';
+                html += '<th>Local ID</th><th>Uniq ID</th><th>Click ID</th><th>Статус</th><th>Комиссия</th><th>Сумма заказа</th><th>Создано</th><th>Действия</th></tr></thead>';
                 html += '<tbody>';
                 data.missing_api.forEach(function (m) {
-                    html += `<tr data-local-id="${m.local_id}">
-                        <td>#${m.local_id}</td>
+                    html += `<tr data-local-id="${m.local_id}">`;
+                    if (showNetCol) html += `<td>${escHtml(m.network || '')}</td>`;
+                    html += `<td>#${m.local_id}</td>
                         <td><code>${escHtml(m.uniq_id || '—')}</code></td>
                         <td><code>${escHtml(m.click_id || '—')}</code></td>
                         <td class="editable-cell" data-field="order_status" data-value="${escHtml(m.status)}">${escHtml(m.status)}</td>
@@ -230,6 +256,30 @@
         }
 
         $result.html(html).fadeIn();
+    }
+
+    /**
+     * Нормализует мульти-сетевой ответ в формат, совместимый с renderValidationResult.
+     */
+    function normalizeMultiNetworkData(data) {
+        const t = data.totals || {};
+        return {
+            user_id: data.user_id,
+            network: '__all__',
+            _isMultiNetwork: true,
+            _networkLabel: (data.network_names || []).join(', ') || 'Все сети',
+            _errors: data.errors || {},
+            status: data.status,
+            date_range: null,
+            api_total: t.api_total || 0,
+            local_total: t.local_total || 0,
+            matched_count: t.matched_count || 0,
+            mismatch_count: t.mismatch_count || 0,
+            sums: t.sums || null,
+            mismatched: t.mismatched || [],
+            missing_local: t.missing_local || [],
+            missing_api: t.missing_api || [],
+        };
     }
 
     // Переключение вкладок результата
@@ -576,7 +626,7 @@
         const $btn = $(this);
         const $row = $btn.closest('tr');
         const userId = $('#cashback-validate-user-id').val();
-        const network = $('#cashback-validate-network').val();
+        const network = $btn.attr('data-network') || $('#cashback-validate-network').val();
 
         $btn.prop('disabled', true).text(i18n.adding || 'Добавление...');
 
@@ -623,7 +673,7 @@
     $(document).on('click', '.cashback-overwrite-tx-btn', function () {
         const $btn = $(this);
         const $row = $btn.closest('tr');
-        const network = $('#cashback-validate-network').val();
+        const network = $btn.attr('data-network') || $('#cashback-validate-network').val();
 
         if (!confirm(i18n.confirm_overwrite || 'Перезаписать локальные данные данными из API?')) {
             return;
