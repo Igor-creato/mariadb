@@ -1057,22 +1057,38 @@ END;",
     {
         global $wpdb;
 
-        $users = get_users(array('fields' => 'ID'));
+        $batch_size = 500;
+        $offset = 0;
+        $total_initialized = 0;
 
-        if (empty($users)) {
-            error_log('Mariadb Plugin: No existing users to initialize');
-            return;
-        }
+        do {
+            $user_ids = get_users(array(
+                'fields' => 'ID',
+                'number' => $batch_size,
+                'offset' => $offset,
+            ));
 
-        foreach ($users as $user_id) {
-            $result = $this->add_user_to_cashback_tables((int) $user_id);
-            if (!$result) {
-                error_log("[Cashback] Failed to initialize user {$user_id}: " . $wpdb->last_error);
-                throw new Exception("Failed to initialize user {$user_id}.");
+            if (empty($user_ids)) {
+                break;
             }
-        }
 
-        error_log('Mariadb Plugin: Successfully initialized ' . count($users) . ' existing users');
+            foreach ($user_ids as $user_id) {
+                $result = $this->add_user_to_cashback_tables((int) $user_id);
+                if (!$result) {
+                    error_log("[Cashback] Failed to initialize user {$user_id}: " . $wpdb->last_error);
+                    throw new Exception("Failed to initialize user {$user_id}.");
+                }
+                $total_initialized++;
+            }
+
+            $offset += $batch_size;
+        } while (count($user_ids) === $batch_size);
+
+        if ($total_initialized === 0) {
+            error_log('Mariadb Plugin: No existing users to initialize');
+        } else {
+            error_log('Mariadb Plugin: Successfully initialized ' . $total_initialized . ' existing users');
+        }
     }
 
     /**

@@ -423,16 +423,18 @@ class Cashback_Support_DB
             );
         }
 
-        // Проверка MIME-типа
+        // Проверка MIME-типа (обязательна — без finfo загрузка запрещена)
         $finfo = finfo_open(FILEINFO_MIME_TYPE);
-        if ($finfo) {
-            $detected_mime = finfo_file($finfo, $file['tmp_name']);
-            finfo_close($finfo);
+        if (!$finfo) {
+            return 'Проверка MIME-типа недоступна (расширение fileinfo отключено). Загрузка запрещена.';
+        }
 
-            $allowed_mimes = self::get_allowed_mimes();
-            if (isset($allowed_mimes[$ext]) && !in_array($detected_mime, $allowed_mimes[$ext], true)) {
-                return sprintf('Тип файла "%s" не соответствует расширению.', esc_html($file['name']));
-            }
+        $detected_mime = finfo_file($finfo, $file['tmp_name']);
+        finfo_close($finfo);
+
+        $allowed_mimes = self::get_allowed_mimes();
+        if (isset($allowed_mimes[$ext]) && !in_array($detected_mime, $allowed_mimes[$ext], true)) {
+            return sprintf('Тип файла "%s" не соответствует расширению.', esc_html($file['name']));
         }
 
         return true;
@@ -521,6 +523,14 @@ class Cashback_Support_DB
      */
     public static function serve_file(int $attachment_id, int $requesting_user_id, bool $is_admin = false): void
     {
+        // Rate limiting: максимум 10 скачиваний в минуту на пользователя
+        $dl_rate_key = 'cb_file_dl_' . $requesting_user_id;
+        $dl_count = (int) get_transient($dl_rate_key);
+        if ($dl_count >= 10) {
+            wp_die('Слишком много запросов на скачивание. Попробуйте через минуту.', 'Ошибка', ['response' => 429]);
+        }
+        set_transient($dl_rate_key, $dl_count + 1, 60);
+
         $attachment = self::get_attachment($attachment_id);
         if (!$attachment) {
             wp_die('Файл не найден.', 'Ошибка', ['response' => 404]);

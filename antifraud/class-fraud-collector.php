@@ -139,10 +139,16 @@ class Cashback_Fraud_Collector
         }
 
         // Rate-limit: максимум 1 fingerprint за 10 минут на пользователя
+        // Используем wp_cache_add() для атомарной проверки-и-установки (защита от TOCTOU)
         $uid = get_current_user_id();
         $rate_key = 'cb_fp_rate_' . $uid;
         if (get_transient($rate_key)) {
             wp_send_json_success(); // Тихо принимаем, не перегружая БД
+            return;
+        }
+        // Атомарная установка: если другой запрос уже установил — пропускаем
+        if (!wp_cache_add($rate_key, 1, 'cashback', 600)) {
+            wp_send_json_success();
             return;
         }
         set_transient($rate_key, 1, 600);

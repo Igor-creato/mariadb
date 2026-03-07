@@ -309,7 +309,12 @@ class Cashback_API_Client
         $body = json_decode(wp_remote_retrieve_body($response), true);
 
         if ($code !== 200 || empty($body['access_token'])) {
-            error_log('Cashback API Client: Admitad token failed. Code: ' . $code . ', Body: ' . wp_json_encode($body));
+            // Санитизация: удаляем чувствительные данные перед логированием
+            $safe_body = $body;
+            if (is_array($safe_body)) {
+                unset($safe_body['access_token'], $safe_body['refresh_token'], $safe_body['client_secret']);
+            }
+            error_log('Cashback API Client: Admitad token failed. Code: ' . $code . ', Body: ' . wp_json_encode($safe_body));
             return null;
         }
 
@@ -444,9 +449,9 @@ class Cashback_API_Client
             $offset      += $limit;
             $page++;
 
-            // Защита от rate limit — пауза между запросами
+            // Защита от rate limit — пауза между запросами (100ms вместо 300ms для снижения блокировки PHP-процесса)
             if (count($actions) === $limit && $page < $max_pages) {
-                usleep(300000); // 300ms
+                usleep(100000); // 100ms
             }
         } while (count($actions) === $limit && $page < $max_pages);
 

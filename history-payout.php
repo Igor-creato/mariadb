@@ -15,6 +15,8 @@ class HistoryPayout
 
     private $payout_method_labels = null;
 
+    private $bank_names = null;
+
     public static function get_instance()
     {
         if (null === self::$instance) {
@@ -376,28 +378,43 @@ class HistoryPayout
     }
 
     /**
-     * Get bank name by bank code
+     * Load all bank names into cache (one query instead of N+1).
+     */
+    private function load_bank_names(): void
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'cashback_banks';
+        $rows = $wpdb->get_results(
+            "SELECT bank_code, name FROM {$table_name}",
+            ARRAY_A
+        );
+
+        $this->bank_names = [];
+        if ($rows) {
+            foreach ($rows as $row) {
+                $this->bank_names[$row['bank_code']] = $row['name'];
+            }
+        }
+    }
+
+    /**
+     * Get bank name by bank code (cached).
      *
      * @param string $bank_code Bank code
      * @return string Bank name or empty string
      */
     private function get_bank_name_by_code($bank_code)
     {
-        global $wpdb;
-
         if (empty($bank_code)) {
             return '';
         }
 
-        $table_name = $wpdb->prefix . 'cashback_banks';
-        $bank_name = $wpdb->get_var(
-            $wpdb->prepare(
-                "SELECT name FROM {$table_name} WHERE bank_code = %s",
-                $bank_code
-            )
-        );
+        if ($this->bank_names === null) {
+            $this->load_bank_names();
+        }
 
-        return $bank_name ?: '';
+        return $this->bank_names[$bank_code] ?? '';
     }
 }
 

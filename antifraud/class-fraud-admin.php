@@ -54,7 +54,8 @@ class Cashback_Fraud_Admin
     private function get_menu_title(): string
     {
         // Кеширование COUNT чтобы не запрашивать на каждой admin-странице
-        $count = wp_cache_get('cashback_fraud_open_count', 'cashback');
+        // Используем transient вместо wp_cache — wp_cache без persistent cache не сохраняется между запросами
+        $count = get_transient('cashback_fraud_open_count');
         if ($count === false) {
             global $wpdb;
             $table = $wpdb->prefix . 'cashback_fraud_alerts';
@@ -62,7 +63,7 @@ class Cashback_Fraud_Admin
                 "SELECT COUNT(*) FROM `{$table}` WHERE status = %s",
                 'open'
             ));
-            wp_cache_set('cashback_fraud_open_count', $count, 'cashback', 300);
+            set_transient('cashback_fraud_open_count', $count, 300);
         }
 
         $title = __('Защита', 'cashback-plugin');

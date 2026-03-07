@@ -106,6 +106,29 @@ class CashbackWithdrawal
     }
 
     /**
+     * Get all user balances in a single query.
+     *
+     * @param int $user_id
+     * @return array{available: float, pending: float, paid: float}
+     */
+    private function get_all_balances(int $user_id): array
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'cashback_user_balance';
+        $row = $wpdb->get_row($wpdb->prepare(
+            "SELECT available_balance, pending_balance, paid_balance FROM {$table_name} WHERE user_id = %d",
+            $user_id
+        ));
+
+        return [
+            'available' => (float) ($row->available_balance ?? 0.0),
+            'pending'   => (float) ($row->pending_balance ?? 0.0),
+            'paid'      => (float) ($row->paid_balance ?? 0.0),
+        ];
+    }
+
+    /**
      * Get user's available balance
      *
      * @param int $user_id
@@ -118,44 +141,6 @@ class CashbackWithdrawal
         $table_name = $wpdb->prefix . 'cashback_user_balance';
         $balance = $wpdb->get_var($wpdb->prepare(
             "SELECT available_balance FROM {$table_name} WHERE user_id = %d",
-            $user_id
-        ));
-
-        return (float) ($balance ?: 0.0);
-    }
-
-    /**
-     * Get user's pending balance
-     *
-     * @param int $user_id
-     * @return float
-     */
-    private function get_pending_balance(int $user_id): float
-    {
-        global $wpdb;
-
-        $table_name = $wpdb->prefix . 'cashback_user_balance';
-        $balance = $wpdb->get_var($wpdb->prepare(
-            "SELECT pending_balance FROM {$table_name} WHERE user_id = %d",
-            $user_id
-        ));
-
-        return (float) ($balance ?: 0.0);
-    }
-
-    /**
-     * Get user's paid balance
-     *
-     * @param int $user_id
-     * @return float
-     */
-    private function get_paid_balance(int $user_id): float
-    {
-        global $wpdb;
-
-        $table_name = $wpdb->prefix . 'cashback_user_balance';
-        $balance = $wpdb->get_var($wpdb->prepare(
-            "SELECT paid_balance FROM {$table_name} WHERE user_id = %d",
             $user_id
         ));
 
@@ -557,9 +542,10 @@ class CashbackWithdrawal
             return;
         }
 
-        $balance = $this->get_available_balance($user_id);
-        $pending_balance = $this->get_pending_balance($user_id);
-        $paid_balance = $this->get_paid_balance($user_id);
+        $balances = $this->get_all_balances($user_id);
+        $balance = $balances['available'];
+        $pending_balance = $balances['pending'];
+        $paid_balance = $balances['paid'];
         $min_payout_amount = $this->get_min_payout_amount($user_id);
 
         // Получаем информацию о способе вывода и номере счета
@@ -1744,17 +1730,15 @@ class CashbackWithdrawal
         }
 
         $user_id = get_current_user_id();
-        $balance = $this->get_available_balance($user_id);
-        $pending = $this->get_pending_balance($user_id);
-        $paid = $this->get_paid_balance($user_id);
+        $balances = $this->get_all_balances($user_id);
 
         wp_send_json_success(array(
-            'balance' => $balance,
-            'formatted_balance' => wc_price($balance),
-            'pending_balance' => $pending,
-            'formatted_pending' => wc_price($pending),
-            'paid_balance' => $paid,
-            'formatted_paid' => wc_price($paid),
+            'balance' => $balances['available'],
+            'formatted_balance' => wc_price($balances['available']),
+            'pending_balance' => $balances['pending'],
+            'formatted_pending' => wc_price($balances['pending']),
+            'paid_balance' => $balances['paid'],
+            'formatted_paid' => wc_price($balances['paid']),
         ));
     }
 }
