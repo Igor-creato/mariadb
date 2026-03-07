@@ -165,8 +165,9 @@ class Cashback_Payout_Methods_Admin
 
                 <?php echo wp_kses_post($message); ?>
 
+                <div style="display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; margin-bottom: 20px;">
                 <!-- Форма добавления нового способа выплаты -->
-                <div class="card" id="add-payout-method-form" style="margin-bottom: 20px;">
+                <div class="card" id="add-payout-method-form" style="margin: 0;">
                     <h2 class="title">Добавить способ выплаты</h2>
                     <form id="add-payout-method" method="post" action="">
                         <table class="form-table">
@@ -206,6 +207,27 @@ class Cashback_Payout_Methods_Admin
                             <input type="submit" name="add_payout_method" id="add-payout-method-submit" class="button button-primary" value="Добавить способ выплаты" />
                         </p>
                     </form>
+                </div>
+
+                <!-- Настройки выплат -->
+                <div class="card" style="margin: 0;">
+                    <h2 class="title">Настройки выплат</h2>
+                    <form id="withdrawal-settings-form">
+                        <table class="form-table">
+                            <tr>
+                                <th scope="row"><label for="max_withdrawal_amount">Максимальная сумма выплаты:</label></th>
+                                <td>
+                                    <input type="number" id="max_withdrawal_amount" name="max_withdrawal_amount" class="regular-text" value="<?php echo esc_attr(get_option('cashback_max_withdrawal_amount', 50000.00)); ?>" min="1" step="0.01" />
+                                    <p class="description">Максимальная сумма, которую пользователь может вывести за одну заявку. По умолчанию: 50 000.</p>
+                                </td>
+                            </tr>
+                        </table>
+                        <p class="submit">
+                            <input type="submit" class="button button-primary" value="Сохранить настройки" />
+                        </p>
+                    </form>
+                    <div id="withdrawal-settings-message"></div>
+                </div>
                 </div>
 
                 <!-- Таблица существующих способов выплаты -->
@@ -267,26 +289,6 @@ class Cashback_Payout_Methods_Admin
                             <?php endif; ?>
                         </tbody>
                     </table>
-                </div>
-
-                <!-- Настройки выплат -->
-                <div class="card" style="margin-top: 20px;">
-                    <h2 class="title">Настройки выплат</h2>
-                    <form id="withdrawal-settings-form">
-                        <table class="form-table">
-                            <tr>
-                                <th scope="row"><label for="max_withdrawal_amount">Максимальная сумма выплаты:</label></th>
-                                <td>
-                                    <input type="number" id="max_withdrawal_amount" name="max_withdrawal_amount" class="regular-text" value="<?php echo esc_attr(get_option('cashback_max_withdrawal_amount', 50000.00)); ?>" min="1" step="0.01" />
-                                    <p class="description">Максимальная сумма, которую пользователь может вывести за одну заявку. По умолчанию: 50 000.</p>
-                                </td>
-                            </tr>
-                        </table>
-                        <p class="submit">
-                            <input type="submit" class="button button-primary" value="Сохранить настройки" />
-                        </p>
-                    </form>
-                    <div id="withdrawal-settings-message"></div>
                 </div>
 
             </div>

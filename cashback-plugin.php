@@ -295,45 +295,49 @@ class CashbackPlugin
         // Утилита проверки статуса пользователя (для блокировки забаненных)
         $this->require_file('includes/class-cashback-user-status.php');
 
-        // Подключение зависимых файлов
+        // Подключение зависимых файлов (общие — нужны на фронтенде и в админке)
         $this->require_file('mariadb.php');
         $this->require_file('cashback-history.php');
         $this->require_file('cashback-withdrawal.php');
         $this->require_file('history-payout.php');
         $this->require_file('wc-affiliate-url-params.php');
-        $this->require_file('admin/traits/AdminPaginationTrait.php');
-        $this->require_file('admin/payout-methods.php');
-        $this->require_file('admin/users-management.php');
-        $this->require_file('admin/payouts.php');
-        $this->require_file('admin/bank-management.php');
-        $this->require_file('admin/health-check.php');
-        $this->require_file('admin/click-log.php');
-        $this->require_file('admin/transactions.php');
-        $this->require_file('admin/statistics.php');
 
-        // Модуль партнеров
-        $this->require_file('partner/partner-management.php');
-
-        // Модуль поддержки
+        // Модуль поддержки (support-db и user-support нужны на фронтенде)
         $this->require_file('support/support-db.php');
-        $this->require_file('support/admin-support.php');
         $this->require_file('support/user-support.php');
 
-        // Антифрод модуль
+        // Антифрод: collector нужен на фронтенде (fingerprint), detector — для WP Cron
         $this->require_file('antifraud/class-fraud-db.php');
         $this->require_file('antifraud/class-fraud-settings.php');
         $this->require_file('antifraud/class-fraud-collector.php');
         $this->require_file('antifraud/class-fraud-detector.php');
-        $this->require_file('antifraud/class-fraud-admin.php');
 
-        // --- API Валидация ---
+        // Health-check cron обработчик (WP Cron работает через фронтенд-запросы)
+        $this->require_file('admin/health-check.php');
+
+        // API клиент и cron (синхронизация работает через WP Cron)
         $this->require_file('includes/class-cashback-api-client.php');
         $this->require_file('includes/class-cashback-api-migration.php');
         $this->require_file('includes/class-cashback-api-cron.php');
-        $this->require_file('admin/class-cashback-admin-api-validation.php');
 
         // --- REST API для браузерного расширения ---
         $this->require_file('includes/class-cashback-rest-api.php');
+
+        // Admin-only файлы (is_admin() = true для admin pages, admin-ajax.php, REST через admin)
+        if (is_admin()) {
+            $this->require_file('admin/traits/AdminPaginationTrait.php');
+            $this->require_file('admin/payout-methods.php');
+            $this->require_file('admin/users-management.php');
+            $this->require_file('admin/payouts.php');
+            $this->require_file('admin/bank-management.php');
+            $this->require_file('admin/click-log.php');
+            $this->require_file('admin/transactions.php');
+            $this->require_file('admin/statistics.php');
+            $this->require_file('partner/partner-management.php');
+            $this->require_file('support/admin-support.php');
+            $this->require_file('antifraud/class-fraud-admin.php');
+            $this->require_file('admin/class-cashback-admin-api-validation.php');
+        }
     }
 
     /**

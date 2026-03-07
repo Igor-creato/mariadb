@@ -109,8 +109,9 @@ class WC_Affiliate_URL_Params
         $params_table = $wpdb->prefix . 'cashback_affiliate_network_params';
 
         // Получаем все сети
+        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name from $wpdb->prefix, no user input
         $networks = $wpdb->get_results(
-            "SELECT id, name, is_active FROM {$networks_table} ORDER BY sort_order ASC, name ASC",
+            "SELECT id, name, is_active FROM `{$networks_table}` ORDER BY sort_order ASC, name ASC",
             ARRAY_A
         );
 

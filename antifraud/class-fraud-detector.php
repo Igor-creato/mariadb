@@ -262,12 +262,15 @@ class Cashback_Fraud_Detector
         $tx_table = $wpdb->prefix . 'cashback_transactions';
         $alert_ids = [];
 
+        // Ограничиваем анализ 90 днями — достаточно для выявления актуальных паттернов,
+        // при этом не сканирует всю историю (важно при 1M+ транзакций)
         $results = $wpdb->get_results($wpdb->prepare(
             "SELECT user_id,
                     COUNT(*) as total,
                     SUM(CASE WHEN order_status = 'declined' THEN 1 ELSE 0 END) as declined,
                     ROUND(SUM(CASE WHEN order_status = 'declined' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 2) as decline_rate
              FROM `{$tx_table}`
+             WHERE created_at > DATE_SUB(NOW(), INTERVAL 90 DAY)
              GROUP BY user_id
              HAVING total >= %d AND decline_rate > %f",
             $min_tx,

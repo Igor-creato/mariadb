@@ -3,6 +3,14 @@
  * @since 5.0.0
  */
 
+/* Network selector dropdown */
+#cashback-network-selector {
+    min-width: 300px;
+    margin-bottom: 20px;
+    padding: 6px 8px;
+    font-size: 14px;
+}
+
 /* Network cards */
 .cashback-network-card {
     background: #fff;

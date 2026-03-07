@@ -73,7 +73,9 @@ class Cashback_Fraud_DB
             KEY `idx_fingerprint` (`fingerprint_hash`),
             KEY `idx_ip_user` (`ip_address`, `user_id`),
             KEY `idx_fingerprint_user` (`fingerprint_hash`, `user_id`),
-            KEY `idx_created` (`created_at`)
+            KEY `idx_created` (`created_at`),
+            KEY `idx_created_ip_user` (`created_at`, `ip_address`, `user_id`),
+            KEY `idx_created_fp_user` (`created_at`, `fingerprint_hash`, `user_id`)
         ) ENGINE=InnoDB {$charset_collate} COMMENT='User session fingerprints for multi-account detection';";
 
         require_once ABSPATH . 'wp-admin/includes/upgrade.php';

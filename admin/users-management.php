@@ -117,62 +117,60 @@ class Cashback_Users_Management_Admin
             $filter_status = '';
         }
 
-        // Подсчет общего количества пользователей
+        // Получаем поисковый запрос
+        $search = isset($_GET['search']) ? sanitize_text_field(wp_unslash($_GET['search'])) : '';
+
+        // Построение WHERE условий
+        $where_clauses = [];
+        $where_params = [];
+
         if (!empty($filter_status)) {
-            $total_users = $wpdb->get_var(
-                $wpdb->prepare(
-                    "SELECT COUNT(*)
-                    FROM {$this->table_name} u
-                    LEFT JOIN {$this->profile_table_name} cup ON u.ID = cup.user_id
-                    WHERE cup.status = %s",
-                    $filter_status
-                )
-            );
-        } else {
-            $total_users = $wpdb->get_var(
-                $wpdb->prepare(
-                    "SELECT COUNT(*)
-                    FROM {$this->table_name} u
-                    LEFT JOIN {$this->profile_table_name} cup ON u.ID = cup.user_id
-                    WHERE %d = %d",
-                    1,
-                    1
-                )
-            );
+            $where_clauses[] = 'cup.status = %s';
+            $where_params[] = $filter_status;
         }
 
-        // Получаем пользователей с профилями
-        if (!empty($filter_status)) {
-            $users = $wpdb->get_results(
-                $wpdb->prepare(
-                    "SELECT u.ID, u.display_name,
-                            cup.cashback_rate, cup.min_payout_amount, cup.status, cup.ban_reason, cup.banned_at
-                    FROM {$this->table_name} u
-                    LEFT JOIN {$this->profile_table_name} cup ON u.ID = cup.user_id
-                    WHERE cup.status = %s
-                    ORDER BY u.ID ASC
-                    LIMIT %d OFFSET %d",
-                    $filter_status,
-                    $per_page,
-                    $offset
-                ),
-                'ARRAY_A'
-            );
-        } else {
-            $users = $wpdb->get_results(
-                $wpdb->prepare(
-                    "SELECT u.ID, u.display_name,
-                            cup.cashback_rate, cup.min_payout_amount, cup.status, cup.ban_reason, cup.banned_at
-                    FROM {$this->table_name} u
-                    LEFT JOIN {$this->profile_table_name} cup ON u.ID = cup.user_id
-                    ORDER BY u.ID ASC
-                    LIMIT %d OFFSET %d",
-                    $per_page,
-                    $offset
-                ),
-                'ARRAY_A'
-            );
+        if (!empty($search)) {
+            $like = '%' . $wpdb->esc_like($search) . '%';
+            $where_clauses[] = '(u.user_email LIKE %s OR u.display_name LIKE %s)';
+            $where_params[] = $like;
+            $where_params[] = $like;
         }
+
+        $where_sql = !empty($where_clauses)
+            ? 'WHERE ' . implode(' AND ', $where_clauses)
+            : 'WHERE %d = %d';
+
+        if (empty($where_clauses)) {
+            $where_params = [1, 1];
+        }
+
+        // Подсчет общего количества пользователей
+        $count_params = $where_params;
+        $total_users = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT COUNT(*)
+                FROM {$this->table_name} u
+                LEFT JOIN {$this->profile_table_name} cup ON u.ID = cup.user_id
+                {$where_sql}",
+                ...$count_params
+            )
+        );
+
+        // Получаем пользователей с профилями
+        $select_params = array_merge($where_params, [$per_page, $offset]);
+        $users = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT u.ID, u.display_name, u.user_email,
+                        cup.cashback_rate, cup.min_payout_amount, cup.status, cup.ban_reason, cup.banned_at
+                FROM {$this->table_name} u
+                LEFT JOIN {$this->profile_table_name} cup ON u.ID = cup.user_id
+                {$where_sql}
+                ORDER BY u.ID ASC
+                LIMIT %d OFFSET %d",
+                ...$select_params
+            ),
+            'ARRAY_A'
+        );
 
         // Определяем все доступные статусы для фильтра
         $statuses = ['active', 'noactive', 'banned', 'deleted'];
@@ -209,6 +207,11 @@ class Cashback_Users_Management_Admin
                     </select>
                     <button type="submit" id="filter-submit" class="button action">Фильтровать</button>
                 </div>
+                <div class="alignleft actions">
+                    <label for="search-input" class="screen-reader-text">Поиск по email или имени</label>
+                    <input type="search" id="search-input" name="search" value="<?php echo esc_attr($search); ?>" placeholder="Email или имя пользователя" />
+                    <button type="button" id="search-submit" class="button action">Найти</button>
+                </div>
                 <br class="clear">
             </div>
 
@@ -219,6 +222,7 @@ class Cashback_Users_Management_Admin
                         <tr>
                             <th scope="col">ID</th>
                             <th scope="col">Имя пользователя</th>
+                            <th scope="col">Email</th>
                             <th scope="col">Ставка кэшбэка (%)</th>
                             <th scope="col">Мин. сумма выплаты</th>
                             <th scope="col">Статус</th>
@@ -231,6 +235,7 @@ class Cashback_Users_Management_Admin
                         <tr>
                             <th scope="col">ID</th>
                             <th scope="col">Имя пользователя</th>
+                            <th scope="col">Email</th>
                             <th scope="col">Ставка кэшбэка (%)</th>
                             <th scope="col">Мин. сумма выплаты</th>
                             <th scope="col">Статус</th>
@@ -245,6 +250,7 @@ class Cashback_Users_Management_Admin
                                 <tr data-user-id="<?php echo esc_attr($user['ID']); ?>">
                                     <td><?php echo esc_html($user['ID']); ?></td>
                                     <td><?php echo esc_html($user['display_name']); ?></td>
+                                    <td><?php echo esc_html($user['user_email']); ?></td>
                                     <td class="edit-field" data-field="cashback_rate">
                                         <?php echo esc_html($user['cashback_rate'] ?? '60.00'); ?>
                                     </td>
@@ -269,7 +275,7 @@ class Cashback_Users_Management_Admin
                             <?php endforeach; ?>
                         <?php else: ?>
                             <tr>
-                                <td colspan="8">Нет пользователей для отображения.</td>
+                                <td colspan="9">Нет пользователей для отображения.</td>
                             </tr>
                         <?php endif; ?>
                     </tbody>
@@ -284,7 +290,10 @@ class Cashback_Users_Management_Admin
                 'current_page' => $current_page,
                 'total_pages' => (int) ceil($total_users / $per_page),
                 'page_slug'   => 'cashback-users',
-                'add_args'    => !empty($filter_status) ? array('status' => $filter_status) : array(),
+                'add_args'    => array_filter([
+                    'status' => $filter_status ?: null,
+                    'search' => $search ?: null,
+                ]),
             );
 
             $this->render_pagination($pagination_args);

@@ -255,6 +255,18 @@
     }
 
     // =========================================================================
+    // Выбор сети из dropdown
+    // =========================================================================
+
+    $(document).on('change', '#cashback-network-selector', function () {
+        const networkId = $(this).val();
+        $('#cashback-api-settings .cashback-network-card').hide();
+        if (networkId) {
+            $('#cashback-api-settings .cashback-network-card[data-network-id="' + networkId + '"]').show();
+        }
+    });
+
+    // =========================================================================
     // Сохранение настроек сети
     // =========================================================================
 

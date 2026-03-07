@@ -382,11 +382,43 @@ class Cashback_Payouts_Admin
                     </tfoot>
                     <tbody id="payouts-tbody">
                         <?php if (!empty($payouts)): ?>
+                            <?php
+                            // Предзагрузка справочников (2 запроса вместо 2×N)
+                            $all_methods_map = [];
+                            $methods_rows = $wpdb->get_results(
+                                "SELECT slug, name, is_active FROM {$wpdb->prefix}cashback_payout_methods",
+                                ARRAY_A
+                            );
+                            foreach ($methods_rows as $m_row) {
+                                $all_methods_map[$m_row['slug']] = [
+                                    'name'      => $m_row['name'],
+                                    'is_active' => (int) $m_row['is_active'] === 1,
+                                ];
+                            }
+
+                            $all_banks_map = [];
+                            $banks_rows = $wpdb->get_results(
+                                "SELECT bank_code, name, is_active FROM {$wpdb->prefix}cashback_banks",
+                                ARRAY_A
+                            );
+                            foreach ($banks_rows as $b_row) {
+                                $all_banks_map[$b_row['bank_code']] = [
+                                    'name'      => $b_row['name'],
+                                    'is_active' => (int) $b_row['is_active'] === 1,
+                                ];
+                            }
+                            ?>
                             <?php foreach ($payouts as $payout): ?>
                                 <?php
-                                // Проверяем активность платежной системы и банка
-                                $payout_method_info = $this->get_payout_method_info_by_slug($payout['payout_method']);
-                                $bank_info = $this->get_bank_info_by_code($payout['provider'] ?? '');
+                                // Проверяем активность платежной системы и банка (из предзагруженных справочников)
+                                $pm_slug = $payout['payout_method'];
+                                $payout_method_info = $all_methods_map[$pm_slug] ?? ['name' => $pm_slug, 'is_active' => false];
+
+                                $b_code = $payout['provider'] ?? '';
+                                $bank_info = empty($b_code)
+                                    ? ['name' => '', 'is_active' => true]
+                                    : ($all_banks_map[$b_code] ?? ['name' => $b_code, 'is_active' => false]);
+
                                 $is_actionable_status = in_array($payout['status'], ['waiting', 'processing', 'needs_retry'], true);
                                 $method_inactive = !$payout_method_info['is_active'];
                                 $bank_inactive = !$bank_info['is_active'];

@@ -10,12 +10,33 @@ jQuery(document).ready(function($) {
         var url = new URL(window.location);
         if (status) {
             url.searchParams.set('status', status);
-            url.searchParams.delete('paged');
         } else {
             url.searchParams.delete('status');
-            url.searchParams.delete('paged');
         }
+        url.searchParams.delete('paged');
         window.location.href = url.toString();
+    });
+
+    // Обработка поиска
+    function applySearch() {
+        var search = $('#search-input').val().trim();
+        var url = new URL(window.location);
+        if (search) {
+            url.searchParams.set('search', search);
+        } else {
+            url.searchParams.delete('search');
+        }
+        url.searchParams.delete('paged');
+        window.location.href = url.toString();
+    }
+
+    $('#search-submit').on('click', applySearch);
+
+    $('#search-input').on('keypress', function(e) {
+        if (e.which === 13) {
+            e.preventDefault();
+            applySearch();
+        }
     });
 
     // Обработка клика по кнопке "Редактировать" (используем делегирование)

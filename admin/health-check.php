@@ -57,6 +57,7 @@ class Cashback_Health_Check
         $table = $wpdb->prefix . 'cashback_user_balance';
         $issues = [];
 
+        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name from $wpdb->prefix, no user input
         $negative = $wpdb->get_results(
             "SELECT user_id, available_balance, pending_balance, paid_balance, frozen_balance
              FROM `{$table}`
@@ -138,6 +139,7 @@ class Cashback_Health_Check
         $issues = [];
 
         // Пользователи с pending_balance > 0, но без активных заявок
+        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table names from $wpdb->prefix, no user input
         $mismatched = $wpdb->get_results(
             "SELECT b.user_id, b.pending_balance
              FROM `{$table_balance}` b
@@ -180,41 +182,58 @@ class Cashback_Health_Check
         $issues = [];
 
         // Пользователи WordPress без профиля кэшбэка
-        $without_profile = $wpdb->get_col(
-            "SELECT u.ID
+        // COUNT отдельно, затем LIMIT 20 для примеров — защита от OOM на больших сайтах
+        $orphaned_profile_count = (int) $wpdb->get_var(
+            "SELECT COUNT(*)
              FROM `{$wpdb->users}` u
              LEFT JOIN `{$table_profile}` p ON u.ID = p.user_id
              WHERE p.user_id IS NULL"
         );
 
-        if (!empty($without_profile)) {
+        if ($orphaned_profile_count > 0) {
+            $without_profile_sample = $wpdb->get_col(
+                "SELECT u.ID
+                 FROM `{$wpdb->users}` u
+                 LEFT JOIN `{$table_profile}` p ON u.ID = p.user_id
+                 WHERE p.user_id IS NULL
+                 LIMIT 20"
+            );
             $issues[] = [
                 'severity' => 'WARNING',
                 'type' => 'missing_profile',
                 'message' => sprintf(
-                    '%d пользователь(ей) без профиля в кэшбэк-системе: ID %s',
-                    count($without_profile),
-                    implode(', ', array_slice($without_profile, 0, 20))
+                    '%d пользователь(ей) без профиля в кэшбэк-системе: ID %s%s',
+                    $orphaned_profile_count,
+                    implode(', ', $without_profile_sample),
+                    $orphaned_profile_count > 20 ? '...' : ''
                 )
             ];
         }
 
         // Пользователи WordPress без баланса кэшбэка
-        $without_balance = $wpdb->get_col(
-            "SELECT u.ID
+        $orphaned_balance_count = (int) $wpdb->get_var(
+            "SELECT COUNT(*)
              FROM `{$wpdb->users}` u
              LEFT JOIN `{$table_balance}` b ON u.ID = b.user_id
              WHERE b.user_id IS NULL"
         );
 
-        if (!empty($without_balance)) {
+        if ($orphaned_balance_count > 0) {
+            $without_balance_sample = $wpdb->get_col(
+                "SELECT u.ID
+                 FROM `{$wpdb->users}` u
+                 LEFT JOIN `{$table_balance}` b ON u.ID = b.user_id
+                 WHERE b.user_id IS NULL
+                 LIMIT 20"
+            );
             $issues[] = [
                 'severity' => 'WARNING',
                 'type' => 'missing_balance',
                 'message' => sprintf(
-                    '%d пользователь(ей) без баланса в кэшбэк-системе: ID %s',
-                    count($without_balance),
-                    implode(', ', array_slice($without_balance, 0, 20))
+                    '%d пользователь(ей) без баланса в кэшбэк-системе: ID %s%s',
+                    $orphaned_balance_count,
+                    implode(', ', $without_balance_sample),
+                    $orphaned_balance_count > 20 ? '...' : ''
                 )
             ];
         }

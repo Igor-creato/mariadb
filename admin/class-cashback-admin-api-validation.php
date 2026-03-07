@@ -211,8 +211,19 @@ class Cashback_Admin_API_Validation
 
     ?>
         <div id="cashback-api-settings">
+            <?php if (!empty($networks)): ?>
+                <select id="cashback-network-selector">
+                    <option value="">— Выберите сеть —</option>
+                    <?php foreach ($networks as $network): ?>
+                        <option value="<?php echo esc_attr($network['id']); ?>">
+                            <?php echo esc_html($network['name']); ?> (<?php echo esc_html($network['slug']); ?>)<?php echo $network['is_active'] ? '' : ' — неактивна'; ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            <?php endif; ?>
+
             <?php foreach ($networks as $network): ?>
-                <div class="cashback-network-card" data-network-id="<?php echo esc_attr($network['id']); ?>">
+                <div class="cashback-network-card" data-network-id="<?php echo esc_attr($network['id']); ?>" style="display:none">
                     <h2><?php echo esc_html($network['name']); ?>
                         <span class="slug">(<?php echo esc_html($network['slug']); ?>)</span>
                         <?php if ($network['is_active']): ?>
@@ -319,7 +330,6 @@ class Cashback_Admin_API_Validation
                         <span class="cashback-save-status"></span>
                     </p>
                 </div>
-                <hr>
             <?php endforeach; ?>
 
             <?php if (empty($networks)): ?>
