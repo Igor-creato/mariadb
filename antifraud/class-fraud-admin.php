@@ -85,7 +85,8 @@ class Cashback_Fraud_Admin
             'admin_page_cashback-antifraud',
         ];
 
-        $is_page = in_array($hook, $allowed_hooks, true);
+        $is_page = in_array($hook, $allowed_hooks, true) ||
+            (isset($_GET['page']) && sanitize_text_field(wp_unslash($_GET['page'])) === 'cashback-antifraud');
 
         if (!$is_page) {
             return;
