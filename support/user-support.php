@@ -107,10 +107,26 @@ class Cashback_User_Support
         );
 
         wp_enqueue_script(
+            'dompurify',
+            plugins_url('assets/js/purify.min.js', __FILE__),
+            [],
+            '3.3.2',
+            true
+        );
+
+        wp_enqueue_script(
+            'cashback-safe-html',
+            plugins_url('assets/js/safe-html.js', __FILE__),
+            ['dompurify'],
+            '1.0.0',
+            true
+        );
+
+        wp_enqueue_script(
             'cashback-user-support',
             plugins_url('assets/js/user-support.js', __FILE__),
-            ['jquery'],
-            '1.0.0',
+            ['jquery', 'cashback-safe-html'],
+            '1.1.0',
             true
         );
 
@@ -663,9 +679,17 @@ class Cashback_User_Support
             return;
         }
 
-        global $wpdb;
-
+        // Rate limiting: максимум 10 запросов в минуту
         $user_id = get_current_user_id();
+        $rate_key = 'cb_close_ticket_rate_' . $user_id;
+        $rate_count = (int) get_transient($rate_key);
+        if ($rate_count >= 10) {
+            wp_send_json_error(['message' => 'Слишком много запросов. Попробуйте через минуту.']);
+            return;
+        }
+        set_transient($rate_key, $rate_count + 1, MINUTE_IN_SECONDS);
+
+        global $wpdb;
 
         // Проверка статуса "banned"
         if (Cashback_User_Status::is_user_banned($user_id)) {
@@ -727,9 +751,18 @@ class Cashback_User_Support
             return;
         }
 
+        // Rate limiting: максимум 20 запросов в минуту
+        $user_id = get_current_user_id();
+        $rate_key = 'cb_load_ticket_rate_' . $user_id;
+        $rate_count = (int) get_transient($rate_key);
+        if ($rate_count >= 20) {
+            wp_send_json_error(['message' => 'Слишком много запросов. Попробуйте через минуту.']);
+            return;
+        }
+        set_transient($rate_key, $rate_count + 1, MINUTE_IN_SECONDS);
+
         global $wpdb;
 
-        $user_id = get_current_user_id();
         $ticket_id = absint($_POST['ticket_id'] ?? 0);
 
         if (!$ticket_id) {

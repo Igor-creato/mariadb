@@ -269,6 +269,14 @@ class CashbackHistory
             wp_send_json_error(esc_html__('Вы должны быть авторизованы.', 'cashback-plugin'));
         }
 
+        // Rate limiting: максимум 30 запросов в минуту
+        $rate_key = 'cb_hist_page_rate_' . $user_id;
+        $rate_count = (int) get_transient($rate_key);
+        if ($rate_count >= 30) {
+            wp_send_json_error(esc_html__('Слишком много запросов. Попробуйте через минуту.', 'cashback-plugin'));
+        }
+        set_transient($rate_key, $rate_count + 1, MINUTE_IN_SECONDS);
+
         if (!isset($_POST['page'])) {
             wp_send_json_error(esc_html__('Некорректный запрос.', 'cashback-plugin'));
         }

@@ -30,6 +30,7 @@ class Cashback_Support_Admin
         add_action('wp_ajax_support_save_attachment_settings', [$this, 'handle_save_attachment_settings']);
         add_action('wp_ajax_support_admin_download_file', [$this, 'handle_admin_download_file']);
 
+        add_action('admin_enqueue_scripts', [$this, 'enqueue_admin_scripts']);
         add_action('admin_footer', [$this, 'render_badge_updater_script']);
     }
 
@@ -45,6 +46,32 @@ class Cashback_Support_Admin
             'manage_options',
             'cashback-support',
             [$this, 'render_support_page']
+        );
+    }
+
+    /**
+     * Подключение DOMPurify и safe-html на странице поддержки
+     */
+    public function enqueue_admin_scripts(string $hook): void
+    {
+        if (!isset($_GET['page']) || $_GET['page'] !== 'cashback-support') {
+            return;
+        }
+
+        wp_enqueue_script(
+            'dompurify',
+            plugins_url('assets/js/purify.min.js', __FILE__),
+            [],
+            '3.3.2',
+            false
+        );
+
+        wp_enqueue_script(
+            'cashback-safe-html',
+            plugins_url('assets/js/safe-html.js', __FILE__),
+            ['dompurify'],
+            '1.0.0',
+            false
         );
     }
 
@@ -615,7 +642,7 @@ class Cashback_Support_Admin
                     contentType: false,
                     success: function(response) {
                         if (response.success) {
-                            $('#support-messages').append(response.data.html);
+                            $('#support-messages').append(cashbackSafeHtml(response.data.html));
                             $('#support-admin-message').val('').css({'border-color': '', 'box-shadow': ''});
                             if (fileInput) fileInput.value = '';
                             var $statusBadge = $('.form-table .support-admin-badge.status-open, .form-table .support-admin-badge.status-answered, .form-table .support-admin-badge.status-closed');
@@ -679,7 +706,7 @@ class Cashback_Support_Admin
     {
         $is_admin = (int) $msg->is_admin === 1;
         $bg_color = $is_admin ? '#e8f4f8' : '#f9f9f9';
-        $sender = $is_admin ? 'Администратор' : esc_html($msg->user_login ?? 'Пользователь');
+        $sender = $is_admin ? 'Администратор' : ($msg->user_login ?? 'Пользователь');
         $date = date_i18n('d.m.Y H:i', strtotime($msg->created_at));
 
         $attachments_html = '';
@@ -713,7 +740,7 @@ class Cashback_Support_Admin
             </div>',
             esc_attr($bg_color),
             $is_admin ? '#0073aa' : '#999',
-            $sender,
+            esc_html($sender),
             esc_html($date),
             nl2br(esc_html($msg->message)),
             $attachments_html

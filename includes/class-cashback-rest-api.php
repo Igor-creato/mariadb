@@ -47,6 +47,52 @@ class Cashback_REST_API
     {
         add_action('rest_api_init', [$this, 'register_routes']);
         add_filter('rest_authentication_errors', [$this, 'authenticate_extension_cookie'], 99);
+        add_filter('rest_pre_dispatch', [$this, 'block_user_enumeration'], 10, 3);
+        add_action('template_redirect', [$this, 'block_author_enumeration']);
+    }
+
+    /**
+     * Блокировка user enumeration через REST API для неаутентифицированных запросов.
+     *
+     * Закрывает /wp/v2/users и /wp/v2/users/<id> — возвращает 403
+     * если у текущего пользователя нет capability `list_users`.
+     *
+     * @param mixed            $result  Response to replace the requested version with.
+     * @param \WP_REST_Server  $server  Server instance.
+     * @param \WP_REST_Request $request Request used to generate the response.
+     * @return mixed|\WP_Error
+     */
+    public function block_user_enumeration($result, \WP_REST_Server $server, \WP_REST_Request $request)
+    {
+        if (null !== $result) {
+            return $result;
+        }
+
+        $route = $request->get_route();
+
+        if (preg_match('#^/wp/v2/users(?:/|$)#', $route) && !current_user_can('list_users')) {
+            return new \WP_Error(
+                'rest_user_cannot_view',
+                'Доступ запрещён.',
+                ['status' => 403]
+            );
+        }
+
+        return $result;
+    }
+
+    /**
+     * Блокировка author enumeration через /?author=N.
+     *
+     * WordPress редиректит /?author=1 на /author/username/, раскрывая логин.
+     * Для неаутентифицированных — редирект на главную.
+     */
+    public function block_author_enumeration(): void
+    {
+        if (isset($_GET['author']) && !is_user_logged_in()) {
+            wp_safe_redirect(home_url(), 301);
+            exit;
+        }
     }
 
     /**

@@ -1674,6 +1674,16 @@ class CashbackWithdrawal
             return;
         }
 
+        // Rate limiting: максимум 30 запросов в минуту
+        $user_id = get_current_user_id();
+        $rate_key = 'cb_bank_search_rate_' . $user_id;
+        $rate_count = (int) get_transient($rate_key);
+        if ($rate_count >= 30) {
+            wp_send_json_error(array('message' => __('Слишком много запросов. Попробуйте через минуту.', 'cashback-plugin')));
+            return;
+        }
+        set_transient($rate_key, $rate_count + 1, MINUTE_IN_SECONDS);
+
         global $wpdb;
 
         // Санитизация поискового запроса — защита от XSS
@@ -1729,7 +1739,16 @@ class CashbackWithdrawal
             return;
         }
 
+        // Rate limiting: максимум 30 запросов в минуту
         $user_id = get_current_user_id();
+        $rate_key = 'cb_balance_rate_' . $user_id;
+        $rate_count = (int) get_transient($rate_key);
+        if ($rate_count >= 30) {
+            wp_send_json_error(__('Слишком много запросов. Попробуйте через минуту.', 'cashback-plugin'));
+            return;
+        }
+        set_transient($rate_key, $rate_count + 1, MINUTE_IN_SECONDS);
+
         $balances = $this->get_all_balances($user_id);
 
         wp_send_json_success(array(

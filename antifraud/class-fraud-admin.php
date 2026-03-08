@@ -980,6 +980,15 @@ class Cashback_Fraud_Admin
             return;
         }
 
+        // Rate limiting: максимум 2 сканирования за 10 минут
+        $rate_key = 'cb_fraud_scan_rate_' . get_current_user_id();
+        $rate_count = (int) get_transient($rate_key);
+        if ($rate_count >= 2) {
+            wp_send_json_error(['message' => 'Сканирование уже запускалось недавно. Подождите 10 минут.']);
+            return;
+        }
+        set_transient($rate_key, $rate_count + 1, 10 * MINUTE_IN_SECONDS);
+
         if (class_exists('Cashback_Encryption')) {
             Cashback_Encryption::write_audit_log(
                 'fraud_scan_manual',

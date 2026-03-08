@@ -186,7 +186,12 @@ function cashback_plugin_uninstall(): void
     delete_transient('cashback_ext_stores_cache');
 
     // Delete rate limiting and plugin transients
-    $transient_prefixes = ['cb_pp_', 'cb_gl_', 'cb_ip_', 'cb_decrypt_rate_', 'cb_support_rate_', 'cb_fp_rate_'];
+    $transient_prefixes = [
+        'cb_pp_', 'cb_gl_', 'cb_ip_', 'cb_decrypt_rate_', 'cb_support_rate_', 'cb_fp_rate_',
+        'cb_bank_search_rate_', 'cb_balance_rate_', 'cb_load_ticket_rate_',
+        'cb_close_ticket_rate_', 'cb_hist_page_rate_', 'cb_payout_page_rate_',
+        'cb_api_sync_rate_', 'cb_api_validate_rate_', 'cb_fraud_scan_rate_',
+    ];
     $where_parts = [];
     $values = [];
     foreach ($transient_prefixes as $p) {

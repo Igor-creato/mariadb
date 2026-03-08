@@ -130,9 +130,9 @@
                                 }).remove();
                                 var $list = $('#support-tickets-list');
                                 if ($list.length) {
-                                    $list.prepend(response.data.ticket_html);
+                                    $list.prepend(cashbackSafeHtml(response.data.ticket_html));
                                 } else {
-                                    $history.append('<div id="support-tickets-list">' + response.data.ticket_html + '</div><div id="support-pagination"></div>');
+                                    $history.append('<div id="support-tickets-list">' + cashbackSafeHtml(response.data.ticket_html) + '</div><div id="support-pagination"></div>');
                                 }
                                 initPagination();
                             }
@@ -213,7 +213,7 @@
                 contentType: false,
                 success: function(response) {
                     if (response.success) {
-                        $('#support-messages-list').append(response.data.html);
+                        $('#support-messages-list').append(cashbackSafeHtml(response.data.html));
                         $('#support-reply-message').val('');
                         if (fileInput) {
                             fileInput.value = '';
@@ -381,7 +381,7 @@
                 ticket_id: ticketId
             }, function(response) {
                 if (response.success) {
-                    $('#support-ticket-detail-content').html(response.data.html);
+                    $('#support-ticket-detail-content').html(cashbackSafeHtml(response.data.html));
                     updateMenuBadge(response.data.unread_total);
                     if (typeof callback === 'function') {
                         callback();

@@ -506,6 +506,14 @@ class Cashback_Admin_API_Validation
             wp_send_json_error(['message' => 'Недостаточно прав']);
         }
 
+        // Rate limiting: максимум 10 запросов валидации в минуту
+        $rate_key = 'cb_api_validate_rate_' . get_current_user_id();
+        $rate_count = (int) get_transient($rate_key);
+        if ($rate_count >= 10) {
+            wp_send_json_error(['message' => 'Слишком много запросов валидации. Подождите минуту.']);
+        }
+        set_transient($rate_key, $rate_count + 1, MINUTE_IN_SECONDS);
+
         $user_id = (int) ($_POST['user_id'] ?? -1);
         $network = sanitize_text_field($_POST['network'] ?? 'admitad');
         $full    = !empty($_POST['full_check']);
@@ -747,6 +755,14 @@ class Cashback_Admin_API_Validation
         if (!current_user_can('manage_options')) {
             wp_send_json_error(['message' => 'Недостаточно прав']);
         }
+
+        // Rate limiting: максимум 3 синхронизации за 5 минут
+        $rate_key = 'cb_api_sync_rate_' . get_current_user_id();
+        $rate_count = (int) get_transient($rate_key);
+        if ($rate_count >= 3) {
+            wp_send_json_error(['message' => 'Синхронизация уже выполнялась недавно. Подождите 5 минут.']);
+        }
+        set_transient($rate_key, $rate_count + 1, 5 * MINUTE_IN_SECONDS);
 
         $result = Cashback_API_Cron::manual_sync();
 
