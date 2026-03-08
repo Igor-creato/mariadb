@@ -18,6 +18,72 @@
     const i18n = config.i18n || {};
 
     // =========================================================================
+    // Пагинация таблиц расхождений
+    // =========================================================================
+
+    const ITEMS_PER_PAGE = 20;
+    const paginationStore = {};
+
+    function setupPaginatedTable(tabId, items, theadHtml, renderRowFn, showNetCol, emptyMsg) {
+        const totalPages = Math.ceil(items.length / ITEMS_PER_PAGE);
+        paginationStore[tabId] = { items, renderRowFn, showNetCol, totalPages };
+
+        if (items.length === 0) {
+            return '<p class="validation-empty">' + escHtml(emptyMsg) + '</p>';
+        }
+
+        let html = '<div class="validation-paginated-table" data-tab-id="' + tabId + '" data-page="1">';
+        html += '<table class="widefat striped"><thead>' + theadHtml + '</thead>';
+        html += '<tbody>' + renderPageRows(tabId, 1) + '</tbody></table>';
+        if (totalPages > 1) {
+            html += renderPaginationNav(tabId, 1, items.length);
+        }
+        html += '</div>';
+        return html;
+    }
+
+    function renderPageRows(tabId, page) {
+        const store = paginationStore[tabId];
+        const start = (page - 1) * ITEMS_PER_PAGE;
+        const end = Math.min(start + ITEMS_PER_PAGE, store.items.length);
+        let html = '';
+        for (let i = start; i < end; i++) {
+            html += store.renderRowFn(store.items[i], store.showNetCol);
+        }
+        return html;
+    }
+
+    function renderPaginationNav(tabId, page, totalItems) {
+        const totalPages = paginationStore[tabId].totalPages;
+        const start = (page - 1) * ITEMS_PER_PAGE + 1;
+        const end = Math.min(page * ITEMS_PER_PAGE, totalItems);
+
+        return '<div class="validation-pagination">'
+            + '<span class="pagination-info">Показано ' + start + '–' + end + ' из ' + totalItems + '</span>'
+            + '<span class="pagination-buttons">'
+            + '<button type="button" class="button button-small pagination-prev"' + (page <= 1 ? ' disabled' : '') + '>&larr; Пред</button>'
+            + '<span class="pagination-current">Страница ' + page + ' из ' + totalPages + '</span>'
+            + '<button type="button" class="button button-small pagination-next"' + (page >= totalPages ? ' disabled' : '') + '>След &rarr;</button>'
+            + '</span></div>';
+    }
+
+    $(document).on('click', '.validation-pagination .pagination-prev, .validation-pagination .pagination-next', function () {
+        const $btn = $(this);
+        const $wrap = $btn.closest('.validation-paginated-table');
+        const tabId = $wrap.data('tab-id');
+        const store = paginationStore[tabId];
+        if (!store) return;
+
+        const current = parseInt($wrap.data('page'), 10);
+        const newPage = $btn.hasClass('pagination-prev') ? current - 1 : current + 1;
+        if (newPage < 1 || newPage > store.totalPages) return;
+
+        $wrap.data('page', newPage);
+        $wrap.find('tbody').html(renderPageRows(tabId, newPage));
+        $wrap.find('.validation-pagination').replaceWith(renderPaginationNav(tabId, newPage, store.items.length));
+    });
+
+    // =========================================================================
     // Валидация пользователя (вкладка «Проверка»)
     // =========================================================================
 
@@ -138,119 +204,31 @@
 
             // Вкладка 1: Расхождения
             html += '<div class="validation-tab-content" id="tab-mismatched">';
-            if (mismatchedCount > 0) {
-                html += '<table class="widefat striped">';
-                html += '<thead><tr>';
-                if (showNetCol) html += '<th>Сеть</th>';
-                html += '<th>Action ID</th><th>Uniq ID</th><th>API статус</th><th>Локальный статус</th><th>API сумма</th><th>Локальная сумма</th><th>Проблема</th><th>Действия</th></tr></thead>';
-                html += '<tbody>';
-                data.mismatched.forEach(function (m) {
-                    const problems = [];
-                    if (m.status_mismatch) problems.push('статус');
-                    if (m.commission_mismatch) problems.push('комиссия');
-                    if (m.cart_mismatch) problems.push('сумма заказа');
-
-                    const statusCls = m.status_mismatch ? ' class="cell-mismatch"' : '';
-                    const sumCls = m.commission_mismatch ? ' class="cell-mismatch"' : '';
-                    const isBalance = m.local_status === 'balance';
-
-                    html += '<tr>';
-                    if (showNetCol) html += `<td>${escHtml(m.network || '')}</td>`;
-                    html += `<td><code>${escHtml(m.action_id)}</code></td>
-                        <td><code>${escHtml(m.uniq_id || m.click_id)}</code></td>
-                        <td${statusCls}>${escHtml(m.api_status)} → ${escHtml(m.mapped_api_status)}</td>
-                        <td${statusCls}>${escHtml(m.local_status)}</td>
-                        <td${sumCls}>${formatMoney(m.api_payment)}</td>
-                        <td${sumCls}>${formatMoney(m.local_commission)}</td>
-                        <td style="color:red; font-weight:bold;">${problems.join(', ')}</td>
-                        <td class="validation-actions">
-                            <button type="button" class="button button-small button-primary cashback-overwrite-tx-btn"
-                                data-local-id="${m.local_id}"
-                                data-network="${escHtml(m.network || '')}"
-                                data-api-status="${escHtml(m.api_status)}"
-                                data-api-payment="${m.api_payment}"
-                                data-api-cart="${m.api_cart}"
-                                ${isBalance ? 'disabled title="Нельзя изменить транзакцию со статусом balance"' : ''}>Перезаписать</button>
-                            <button type="button" class="button button-small cashback-remove-row-btn">Удалить</button>
-                        </td>
-                    </tr>`;
-                });
-                html += '</tbody></table>';
-            } else {
-                html += '<p class="validation-empty">Нет расхождений в сопоставленных данных.</p>';
+            {
+                let thead = '<tr>';
+                if (showNetCol) thead += '<th>Сеть</th>';
+                thead += '<th>Action ID</th><th>Uniq ID</th><th>API статус</th><th>Локальный статус</th><th>API сумма</th><th>Локальная сумма</th><th>Проблема</th><th>Действия</th></tr>';
+                html += setupPaginatedTable('tab-mismatched', data.mismatched || [], thead, renderMismatchRow, showNetCol, 'Нет расхождений в сопоставленных данных.');
             }
             html += '</div>';
 
             // Вкладка 2: Есть в API, нет на сайте
             html += '<div class="validation-tab-content" id="tab-missing-local" style="display:none;">';
-            if (missingLocalCount > 0) {
-                html += '<table class="widefat striped">';
-                html += '<thead><tr>';
-                if (showNetCol) html += '<th>Сеть</th>';
-                html += '<th>Action ID</th><th>Order ID</th><th>Статус</th><th>Комиссия</th><th>Сумма заказа</th><th>Дата</th><th>Магазин</th><th>Действия</th></tr></thead>';
-                html += '<tbody>';
-                data.missing_local.forEach(function (m) {
-                    html += '<tr>';
-                    if (showNetCol) html += `<td>${escHtml(m.network || '')}</td>`;
-                    html += `<td><code>${escHtml(m.action_id)}</code></td>
-                        <td>${escHtml(m.order_id)}</td>
-                        <td>${escHtml(m.status)}</td>
-                        <td>${formatMoney(m.payment)}</td>
-                        <td>${formatMoney(m.cart)}</td>
-                        <td>${escHtml(m.date)}</td>
-                        <td>${escHtml(m.campaign || '')}</td>
-                        <td class="validation-actions">
-                            <button type="button" class="button button-small button-primary cashback-add-tx-btn"
-                                data-network="${escHtml(m.network || '')}"
-                                data-action-id="${escHtml(m.action_id)}"
-                                data-click-id="${escHtml(m.click_id || '')}"
-                                data-order-id="${escHtml(m.order_id || '')}"
-                                data-status="${escHtml(m.status)}"
-                                data-payment="${m.payment}"
-                                data-cart="${m.cart}"
-                                data-date="${escHtml(m.date || '')}"
-                                data-campaign="${escHtml(m.campaign || '')}"
-                                data-campaign-id="${escHtml(m.campaign_id || '')}"
-                                data-currency="${escHtml(m.currency || 'RUB')}"
-                                data-click-time="${escHtml(m.click_time || '')}"
-                                data-action-type="${escHtml(m.action_type || '')}"
-                                data-website-id="${escHtml(m.website_id || '')}">Добавить</button>
-                        </td>
-                    </tr>`;
-                });
-                html += '</tbody></table>';
-            } else {
-                html += '<p class="validation-empty">Все данные из API найдены в локальной базе.</p>';
+            {
+                let thead = '<tr>';
+                if (showNetCol) thead += '<th>Сеть</th>';
+                thead += '<th>Action ID</th><th>Order ID</th><th>Статус</th><th>Комиссия</th><th>Сумма заказа</th><th>Дата</th><th>Магазин</th><th>Действия</th></tr>';
+                html += setupPaginatedTable('tab-missing-local', data.missing_local || [], thead, renderMissingLocalRow, showNetCol, 'Все данные из API найдены в локальной базе.');
             }
             html += '</div>';
 
             // Вкладка 3: Есть на сайте, нет в API
             html += '<div class="validation-tab-content" id="tab-missing-api" style="display:none;">';
-            if (missingApiCount > 0) {
-                html += '<table class="widefat striped">';
-                html += '<thead><tr>';
-                if (showNetCol) html += '<th>Сеть</th>';
-                html += '<th>Local ID</th><th>Uniq ID</th><th>Click ID</th><th>Статус</th><th>Комиссия</th><th>Сумма заказа</th><th>Создано</th><th>Действия</th></tr></thead>';
-                html += '<tbody>';
-                data.missing_api.forEach(function (m) {
-                    html += `<tr data-local-id="${m.local_id}">`;
-                    if (showNetCol) html += `<td>${escHtml(m.network || '')}</td>`;
-                    html += `<td>#${m.local_id}</td>
-                        <td><code>${escHtml(m.uniq_id || '—')}</code></td>
-                        <td><code>${escHtml(m.click_id || '—')}</code></td>
-                        <td class="editable-cell" data-field="order_status" data-value="${escHtml(m.status)}">${escHtml(m.status)}</td>
-                        <td class="editable-cell" data-field="comission" data-value="${m.commission}">${formatMoney(m.commission)}</td>
-                        <td class="editable-cell" data-field="sum_order" data-value="${m.sum_order || 0}">${formatMoney(m.sum_order)}</td>
-                        <td>${escHtml(m.created)}</td>
-                        <td class="validation-actions">
-                            <button type="button" class="button button-small cashback-edit-tx-btn"
-                                data-local-id="${m.local_id}">Редактировать</button>
-                        </td>
-                    </tr>`;
-                });
-                html += '</tbody></table>';
-            } else {
-                html += '<p class="validation-empty">Все локальные транзакции найдены в API.</p>';
+            {
+                let thead = '<tr>';
+                if (showNetCol) thead += '<th>Сеть</th>';
+                thead += '<th>Local ID</th><th>Uniq ID</th><th>Click ID</th><th>Статус</th><th>Комиссия</th><th>Сумма заказа</th><th>Создано</th><th>Действия</th></tr>';
+                html += setupPaginatedTable('tab-missing-api', data.missing_api || [], thead, renderMissingApiRow, showNetCol, 'Все локальные транзакции найдены в API.');
             }
             html += '</div>';
         }
@@ -449,26 +427,46 @@
         });
     });
 
+    function renderSyncLogRow(row) {
+        const statusColor = row.new_status === 'completed' ? 'green' : row.new_status === 'declined' ? 'red' : '#666';
+        return '<tr>'
+            + '<td>' + escHtml(row.synced_at) + '</td>'
+            + '<td>' + escHtml(row.network_slug) + '</td>'
+            + '<td>#' + row.transaction_id + (row.user_id ? ' (user ' + row.user_id + ')' : '') + '</td>'
+            + '<td><code>' + escHtml(row.action_id || '') + '</code></td>'
+            + '<td>' + escHtml(row.old_status) + '</td>'
+            + '<td style="color:' + statusColor + '; font-weight:bold;">' + escHtml(row.new_status) + '</td>'
+            + '<td>' + formatMoney(row.api_payment) + '</td>'
+            + '</tr>';
+    }
+
     function renderSyncLog(log) {
         const $table = $('#cashback-sync-log-table');
         const $tbody = $table.find('tbody');
         $tbody.empty();
 
+        // Очистить предыдущую пагинацию (при повторной загрузке)
+        let $wrap = $table.closest('.validation-paginated-table');
+        if ($wrap.length) {
+            $wrap.find('.validation-pagination').remove();
+            $wrap.data('page', 1);
+        }
+
         if (log.length === 0) {
             $tbody.append('<tr><td colspan="7" style="text-align:center;">Нет записей за выбранный период</td></tr>');
+            delete paginationStore['sync-log'];
         } else {
-            log.forEach(function (row) {
-                const statusColor = row.new_status === 'completed' ? 'green' : row.new_status === 'declined' ? 'red' : '#666';
-                $tbody.append(`<tr>
-                    <td>${escHtml(row.synced_at)}</td>
-                    <td>${escHtml(row.network_slug)}</td>
-                    <td>#${row.transaction_id}${row.user_id ? ' (user ' + row.user_id + ')' : ''}</td>
-                    <td><code>${escHtml(row.action_id || '')}</code></td>
-                    <td>${escHtml(row.old_status)}</td>
-                    <td style="color:${statusColor}; font-weight:bold;">${escHtml(row.new_status)}</td>
-                    <td>${formatMoney(row.api_payment)}</td>
-                </tr>`);
-            });
+            const totalPages = Math.ceil(log.length / ITEMS_PER_PAGE);
+            paginationStore['sync-log'] = { items: log, renderRowFn: renderSyncLogRow, showNetCol: false, totalPages };
+            $tbody.html(renderPageRows('sync-log', 1));
+
+            if (totalPages > 1) {
+                if (!$wrap.length) {
+                    $table.wrap('<div class="validation-paginated-table" data-tab-id="sync-log" data-page="1"></div>');
+                    $wrap = $table.parent();
+                }
+                $wrap.append(renderPaginationNav('sync-log', 1, log.length));
+            }
         }
 
         $table.show();
@@ -732,6 +730,89 @@
         setTimeout(function () {
             $row.css('background-color', '');
         }, 2000);
+    }
+
+    // =========================================================================
+    // Рендеры строк для пагинированных таблиц
+    // =========================================================================
+
+    function renderMismatchRow(m, showNetCol) {
+        const problems = [];
+        if (m.status_mismatch) problems.push('статус');
+        if (m.commission_mismatch) problems.push('комиссия');
+        if (m.cart_mismatch) problems.push('сумма заказа');
+
+        const statusCls = m.status_mismatch ? ' class="cell-mismatch"' : '';
+        const sumCls = m.commission_mismatch ? ' class="cell-mismatch"' : '';
+        const isBalance = m.local_status === 'balance';
+
+        let row = '<tr>';
+        if (showNetCol) row += '<td>' + escHtml(m.network || '') + '</td>';
+        row += '<td><code>' + escHtml(m.action_id) + '</code></td>'
+            + '<td><code>' + escHtml(m.uniq_id || m.click_id) + '</code></td>'
+            + '<td' + statusCls + '>' + escHtml(m.api_status) + ' &rarr; ' + escHtml(m.mapped_api_status) + '</td>'
+            + '<td' + statusCls + '>' + escHtml(m.local_status) + '</td>'
+            + '<td' + sumCls + '>' + formatMoney(m.api_payment) + '</td>'
+            + '<td' + sumCls + '>' + formatMoney(m.local_commission) + '</td>'
+            + '<td style="color:red; font-weight:bold;">' + problems.join(', ') + '</td>'
+            + '<td class="validation-actions">'
+            + '<button type="button" class="button button-small button-primary cashback-overwrite-tx-btn"'
+            + ' data-local-id="' + m.local_id + '"'
+            + ' data-network="' + escHtml(m.network || '') + '"'
+            + ' data-api-status="' + escHtml(m.api_status) + '"'
+            + ' data-api-payment="' + m.api_payment + '"'
+            + ' data-api-cart="' + m.api_cart + '"'
+            + (isBalance ? ' disabled title="Нельзя изменить транзакцию со статусом balance"' : '') + '>Перезаписать</button>'
+            + '<button type="button" class="button button-small cashback-remove-row-btn">Удалить</button>'
+            + '</td></tr>';
+        return row;
+    }
+
+    function renderMissingLocalRow(m, showNetCol) {
+        let row = '<tr>';
+        if (showNetCol) row += '<td>' + escHtml(m.network || '') + '</td>';
+        row += '<td><code>' + escHtml(m.action_id) + '</code></td>'
+            + '<td>' + escHtml(m.order_id) + '</td>'
+            + '<td>' + escHtml(m.status) + '</td>'
+            + '<td>' + formatMoney(m.payment) + '</td>'
+            + '<td>' + formatMoney(m.cart) + '</td>'
+            + '<td>' + escHtml(m.date) + '</td>'
+            + '<td>' + escHtml(m.campaign || '') + '</td>'
+            + '<td class="validation-actions">'
+            + '<button type="button" class="button button-small button-primary cashback-add-tx-btn"'
+            + ' data-network="' + escHtml(m.network || '') + '"'
+            + ' data-action-id="' + escHtml(m.action_id) + '"'
+            + ' data-click-id="' + escHtml(m.click_id || '') + '"'
+            + ' data-order-id="' + escHtml(m.order_id || '') + '"'
+            + ' data-status="' + escHtml(m.status) + '"'
+            + ' data-payment="' + m.payment + '"'
+            + ' data-cart="' + m.cart + '"'
+            + ' data-date="' + escHtml(m.date || '') + '"'
+            + ' data-campaign="' + escHtml(m.campaign || '') + '"'
+            + ' data-campaign-id="' + escHtml(m.campaign_id || '') + '"'
+            + ' data-currency="' + escHtml(m.currency || 'RUB') + '"'
+            + ' data-click-time="' + escHtml(m.click_time || '') + '"'
+            + ' data-action-type="' + escHtml(m.action_type || '') + '"'
+            + ' data-website-id="' + escHtml(m.website_id || '') + '">Добавить</button>'
+            + '</td></tr>';
+        return row;
+    }
+
+    function renderMissingApiRow(m, showNetCol) {
+        let row = '<tr data-local-id="' + m.local_id + '">';
+        if (showNetCol) row += '<td>' + escHtml(m.network || '') + '</td>';
+        row += '<td>#' + m.local_id + '</td>'
+            + '<td><code>' + escHtml(m.uniq_id || '\u2014') + '</code></td>'
+            + '<td><code>' + escHtml(m.click_id || '\u2014') + '</code></td>'
+            + '<td class="editable-cell" data-field="order_status" data-value="' + escHtml(m.status) + '">' + escHtml(m.status) + '</td>'
+            + '<td class="editable-cell" data-field="comission" data-value="' + m.commission + '">' + formatMoney(m.commission) + '</td>'
+            + '<td class="editable-cell" data-field="sum_order" data-value="' + (m.sum_order || 0) + '">' + formatMoney(m.sum_order) + '</td>'
+            + '<td>' + escHtml(m.created) + '</td>'
+            + '<td class="validation-actions">'
+            + '<button type="button" class="button button-small cashback-edit-tx-btn"'
+            + ' data-local-id="' + m.local_id + '">Редактировать</button>'
+            + '</td></tr>';
+        return row;
     }
 
     // =========================================================================
