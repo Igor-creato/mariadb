@@ -748,13 +748,13 @@ class Cashback_API_Client
                 || (in_array($local_status, $approved_statuses, true)
                     && in_array($mapped_status, $approved_statuses, true));
 
-            // Комиссия: допускаем погрешность 0.02 (округление)
-            $commission_match = abs($api_payment - $local_commission) < 0.02;
+            // Комиссия: допускаем погрешность 0.001 (float-артефакты)
+            $commission_match = abs($api_payment - $local_commission) < 0.001;
 
-            // Сумма заказа: допускаем погрешность 0.02
+            // Сумма заказа: допускаем погрешность 0.001 (float-артефакты)
             // Не считаем mismatch если у одной из сторон 0 (не всегда передаётся)
             $cart_match = ($api_cart == 0 || $local_cart == 0)
-                || abs($api_cart - $local_cart) < 0.02;
+                || abs($api_cart - $local_cart) < 0.001;
 
             if ($status_match && $commission_match && $cart_match) {
                 $matched[] = [
@@ -1105,10 +1105,10 @@ class Cashback_API_Client
                 || (in_array($local_status, $approved_statuses, true)
                     && in_array($mapped_status, $approved_statuses, true));
 
-            $commission_match = abs($api_payment - $local_commission) < 0.02;
+            $commission_match = abs($api_payment - $local_commission) < 0.001;
 
             $cart_match = ($api_cart == 0 || $local_cart == 0)
-                || abs($api_cart - $local_cart) < 0.02;
+                || abs($api_cart - $local_cart) < 0.001;
 
             if ($status_match && $commission_match && $cart_match) {
                 $matched[] = [
@@ -1595,10 +1595,10 @@ class Cashback_API_Client
 
         // Обновляем если статус, комиссия или сумма заказа изменились
         $status_changed     = ($local_status !== $mapped_status);
-        $commission_changed = abs($api_payment - (float) $local['comission']) >= 0.02;
+        $commission_changed = abs($api_payment - (float) $local['comission']) >= 0.001;
 
         $local_cart     = (float) ($local['sum_order'] ?? 0);
-        $cart_changed   = abs($api_cart - $local_cart) >= 0.02;
+        $cart_changed   = abs($api_cart - $local_cart) >= 0.001;
 
         $needs_verify = empty($local['api_verified']);
 
