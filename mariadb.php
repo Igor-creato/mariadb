@@ -73,6 +73,7 @@ class Mariadb_Plugin
             $instance->migrate_add_reference_id();
             $instance->migrate_add_bank_required();
             $instance->create_triggers();
+            $instance->migrate_backfill_webhook_payload_hash();
             $instance->create_events();
             $instance->initialize_existing_users();
 
@@ -624,6 +625,7 @@ class Mariadb_Plugin
             "DROP TRIGGER IF EXISTS `{$safe_prefix}tr_prevent_delete_failed_payout`;",
             "DROP TRIGGER IF EXISTS `{$safe_prefix}tr_prevent_update_failed_payout`;",
             "DROP TRIGGER IF EXISTS `{$safe_prefix}tr_banned_user_update_banned_at`;",
+            "DROP TRIGGER IF EXISTS `{$safe_prefix}tr_webhook_payload_hash`;",
         ];
 
         foreach ($drop_triggers as $drop_trigger) {
@@ -858,6 +860,17 @@ class Mariadb_Plugin
                     WHERE user_id = NEW.user_id;
                 END IF;
             END;",
+
+            // Автоматический расчёт payload_hash при INSERT в cashback_webhooks
+            // Заменяет GENERATED ALWAYS AS (SHA2(payload, 256)) STORED, убранный для совместимости
+            "CREATE TRIGGER IF NOT EXISTS `{$safe_prefix}tr_webhook_payload_hash`
+            BEFORE INSERT ON `{$safe_prefix}cashback_webhooks`
+            FOR EACH ROW
+            BEGIN
+                IF NEW.payload_hash IS NULL THEN
+                    SET NEW.payload_hash = SHA2(NEW.payload, 256);
+                END IF;
+            END;",
         ];
 
         $failed_triggers = [];
@@ -887,6 +900,18 @@ class Mariadb_Plugin
 
         // Валидация префикса таблицы для безопасности
         $safe_prefix = $this->validate_table_prefix($wpdb->prefix);
+
+        // Дропаем существующие события перед пересозданием (аналогично триггерам)
+        $drops = [
+            "DROP EVENT IF EXISTS `{$safe_prefix}cashback_ev_confirmed_cashback`",
+            "DROP EVENT IF EXISTS `{$safe_prefix}cashback_ev_cleanup_cashback_webhooks_old`",
+            "DROP EVENT IF EXISTS `{$safe_prefix}cashback_ev_cleanup_click_log`",
+            "DROP EVENT IF EXISTS `{$safe_prefix}cashback_ev_mark_inactive_profiles`",
+        ];
+
+        foreach ($drops as $drop) {
+            $wpdb->query($drop);
+        }
 
         $events = [
             // Событие ежедневно проверяет одобренный кэшбэк если старше n дней переводит в доступный баланс
@@ -918,20 +943,13 @@ BEGIN
 
         START TRANSACTION;
 
-        -- Временная таблица текущего батча
-        DROP TEMPORARY TABLE IF EXISTS tmp_cashback_batch;
-
-        CREATE TEMPORARY TABLE tmp_cashback_batch (
-            transaction_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
-            user_id BIGINT UNSIGNED NOT NULL,
-            cashback DECIMAL(10,2) NOT NULL,
-            INDEX idx_user (user_id)
-        );
-
-        -- Захватываем транзакции с блокировкой (spam_click=1 пропускаем — только ручная проверка)
-        INSERT INTO tmp_cashback_batch (transaction_id, user_id, cashback)
-        SELECT id, user_id, cashback
-        FROM `{$safe_prefix}cashback_transactions`
+        -- ШАГ 1: Маркируем транзакции (источник истины для идемпотентности)
+        -- UPDATE берёт X-lock на строки, временная таблица не нужна
+        -- spam_click=1 пропускаем — только ручная проверка
+        UPDATE `{$safe_prefix}cashback_transactions`
+        SET
+            processed_at = NOW(),
+            processed_batch_id = v_batch_id
         WHERE
             order_status = 'completed'
             AND api_verified = 1
@@ -939,24 +957,12 @@ BEGIN
             AND cashback IS NOT NULL
             AND cashback > 0
             AND spam_click = 0
-            AND updated_at <= DATE_SUB(NOW(), INTERVAL 7 DAY)
-        FOR UPDATE;
+            AND updated_at <= DATE_SUB(NOW(), INTERVAL 7 DAY);
 
         SET v_affected_rows = ROW_COUNT();
 
         IF v_affected_rows > 0 THEN
-            -- ШАГ 1: КРИТИЧНО - Сначала маркируем транзакции через processed_at
-            -- Это источник истины для идемпотентности
-            -- Если после этого шага упадет БД, при повторном запуске эти транзакции НЕ попадут в tmp_cashback_batch
-            UPDATE `{$safe_prefix}cashback_transactions` ct
-            INNER JOIN tmp_cashback_batch tcb ON ct.id = tcb.transaction_id
-            SET
-                ct.processed_at = NOW(),
-                ct.processed_batch_id = v_batch_id
-            WHERE ct.processed_at IS NULL;
-
             -- ШАГ 2: Начисляем баланс ТОЛЬКО для транзакций с processed_batch_id = v_batch_id
-            -- Используем processed_batch_id как источник данных (уже гарантированно уникальные)
             INSERT INTO `{$safe_prefix}cashback_user_balance`
                 (user_id, available_balance, version)
             SELECT
@@ -979,8 +985,6 @@ BEGIN
                 processed_batch_id = v_batch_id
                 AND order_status = 'completed';
         END IF;
-
-        DROP TEMPORARY TABLE IF EXISTS tmp_cashback_batch;
 
         COMMIT;
 
@@ -1365,6 +1369,50 @@ END;",
                 error_log('[Cashback] Failed to add bank_required column: ' . $wpdb->last_error);
             }
         }
+    }
+
+    /**
+     * Бэкфилл payload_hash для существующих записей в cashback_webhooks.
+     *
+     * После удаления GENERATED ALWAYS AS (SHA2(payload, 256)) STORED
+     * старые записи остались с payload_hash = NULL. Обновляем батчами.
+     */
+    private function migrate_backfill_webhook_payload_hash(): void
+    {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'cashback_webhooks';
+
+        // Проверяем есть ли записи с NULL хешем
+        $null_count = (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM `{$table}` WHERE payload_hash IS NULL"
+        );
+
+        if ($null_count === 0) {
+            return;
+        }
+
+        // Батчевое обновление по 5000 записей
+        $max_iterations = 100;
+        $iteration = 0;
+
+        do {
+            $affected = $wpdb->query(
+                "UPDATE `{$table}` SET payload_hash = SHA2(payload, 256) WHERE payload_hash IS NULL LIMIT 5000"
+            );
+
+            $iteration++;
+        } while ($affected > 0 && $iteration < $max_iterations);
+
+        // Удаляем дубликаты, оставляя самую раннюю запись
+        $wpdb->query(
+            "DELETE w1 FROM `{$table}` w1
+             INNER JOIN `{$table}` w2
+             ON w1.payload_hash = w2.payload_hash
+             AND w1.id > w2.id"
+        );
+
+        error_log(sprintf('[Cashback] Webhook payload_hash backfill complete. Updated %d records.', $null_count));
     }
 }
 

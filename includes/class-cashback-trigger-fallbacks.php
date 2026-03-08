@@ -208,4 +208,17 @@ class Cashback_Trigger_Fallbacks
             $user_id
         ));
     }
+
+    /**
+     * Вычисляет payload_hash перед INSERT в cashback_webhooks
+     * (замена GENERATED ALWAYS AS (SHA2(payload, 256)) STORED).
+     *
+     * @param array $data Данные для вставки (по ссылке)
+     */
+    public static function compute_webhook_payload_hash(array &$data): void
+    {
+        if (empty($data['payload_hash']) && !empty($data['payload'])) {
+            $data['payload_hash'] = hash('sha256', $data['payload']);
+        }
+    }
 }

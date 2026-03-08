@@ -960,8 +960,8 @@ class Cashback_Admin_API_Validation
             $currency = 'RUB';
         }
 
-        // Генерация idempotency_key
-        $idempotency_key = hash('sha256', 'api_add_' . $action_id . '_' . $network . '_' . bin2hex(random_bytes(16)));
+        // Генерация idempotency_key (детерминистический — один action_id+network = один ключ)
+        $idempotency_key = hash('sha256', 'api_add_' . $action_id . '_' . $network);
 
         // Определение таблицы
         $is_unregistered = !is_numeric($user_id) || (int) $user_id === 0 || strtolower($user_id) === 'unregistered';

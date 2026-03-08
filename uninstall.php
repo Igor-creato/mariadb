@@ -89,6 +89,7 @@ function cashback_plugin_uninstall(): void
         "{$prefix}tr_freeze_balance_on_ban",
         "{$prefix}tr_clear_ban_on_unban",
         "{$prefix}tr_unfreeze_balance_on_unban",
+        "{$prefix}tr_webhook_payload_hash",
     ];
 
     // Drop events

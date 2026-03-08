@@ -1742,13 +1742,16 @@ class Cashback_API_Client
             $currency = 'RUB';
         }
 
-        // 8. action_id обязателен (часть UNIQUE KEY)
+        // 8. action_id и network_name обязательны (части UNIQUE KEY unique_uniq_partner)
         if ($action_id === '') {
             return ['success' => false, 'insert_id' => 0, 'table_type' => $table_type, 'error' => 'Missing action_id'];
         }
+        if (empty($network_name)) {
+            return ['success' => false, 'insert_id' => 0, 'table_type' => $table_type, 'error' => 'Missing network name (partner)'];
+        }
 
-        // 9. Ключ идемпотентности
-        $idempotency_key = hash('sha256', 'cron_sync_' . $action_id . '_' . $slug . '_' . bin2hex(random_bytes(16)));
+        // 9. Ключ идемпотентности (детерминистический — один action_id+slug = один ключ)
+        $idempotency_key = hash('sha256', 'cron_sync_' . $action_id . '_' . $slug);
 
         // 10. Формируем данные для INSERT
         $data = [
