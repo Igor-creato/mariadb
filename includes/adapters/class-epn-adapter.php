@@ -256,11 +256,18 @@ class Cashback_Epn_Adapter extends Cashback_Network_Adapter_Base
         $query_params['perPage'] = min((int) ($params['perPage'] ?? 500), 1000);
 
         // Обязательные: tsFrom, tsTo
+        // EPN ограничивает tsFrom: не ранее 1 года от текущей даты.
+        $max_lookback = (new \DateTime())->modify('-365 days')->format('Y-m-d');
+
         if (!empty($params['tsFrom'])) {
             $query_params['tsFrom'] = $params['tsFrom'];
         } elseif (!empty($params['date_start'])) {
-            // Совместимость с форматом Admitad (dd.mm.yyyy) → yyyy-mm-dd
             $query_params['tsFrom'] = self::convert_date($params['date_start']);
+        }
+
+        // Ограничиваем tsFrom одним годом назад (требование EPN API)
+        if (!empty($query_params['tsFrom']) && $query_params['tsFrom'] < $max_lookback) {
+            $query_params['tsFrom'] = $max_lookback;
         }
 
         if (!empty($params['tsTo'])) {
@@ -306,7 +313,16 @@ class Cashback_Epn_Adapter extends Cashback_Network_Adapter_Base
 
         $url = $actions_url . '?' . http_build_query($query_params);
 
-        $response = $this->http_get($url, $auth_headers);
+        // Добавляем стандартные заголовки — nginx на app.epn.bz может блокировать
+        // запросы без Accept/Content-Type или со стандартным WordPress User-Agent
+        // (возвращает 403 Forbidden).
+        $headers = array_merge([
+            'Accept'       => 'application/json',
+            'Content-Type' => 'application/json',
+            'User-Agent'   => 'CashbackPlugin/1.0',
+        ], $auth_headers);
+
+        $response = $this->http_get($url, $headers);
 
         if (is_wp_error($response)) {
             return $this->fetch_error($response->get_error_message());

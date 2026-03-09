@@ -74,10 +74,19 @@ abstract class Cashback_Network_Adapter_Base implements Cashback_Network_Adapter
      */
     protected function http_get(string $url, array $headers, int $timeout = 60)
     {
-        return wp_remote_get($url, [
+        $args = [
             'timeout' => $timeout,
             'headers' => $headers,
-        ]);
+        ];
+
+        // wp_remote_get использует отдельный параметр user-agent,
+        // который перезаписывает заголовок User-Agent из headers.
+        if (isset($headers['User-Agent'])) {
+            $args['user-agent'] = $headers['User-Agent'];
+            unset($args['headers']['User-Agent']);
+        }
+
+        return wp_remote_get($url, $args);
     }
 
     /**
