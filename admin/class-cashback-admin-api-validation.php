@@ -50,6 +50,9 @@ class Cashback_Admin_API_Validation
         add_action('wp_ajax_cashback_get_sync_log', [$this, 'ajax_get_sync_log']);
         add_action('wp_ajax_cashback_get_validation_status', [$this, 'ajax_get_validation_status']);
 
+        // Тест подключения к API
+        add_action('wp_ajax_cashback_test_connection', [$this, 'ajax_test_connection']);
+
         // AJAX обработчики действий из таблиц валидации
         add_action('wp_ajax_cashback_edit_transaction', [$this, 'ajax_edit_transaction']);
         add_action('wp_ajax_cashback_add_transaction', [$this, 'ajax_add_transaction']);
@@ -243,13 +246,24 @@ class Cashback_Admin_API_Validation
                                     placeholder="https://api.admitad.com">
                             </td>
                         </tr>
+                        <?php $auth_type = $network['api_auth_type'] ?? 'oauth2'; ?>
                         <tr>
+                            <th>Тип авторизации</th>
+                            <td>
+                                <select class="api-field cashback-auth-type-select" name="api_auth_type">
+                                    <option value="oauth2" <?php selected($auth_type, 'oauth2'); ?>>OAuth2 (Client Credentials)</option>
+                                    <option value="api_key" <?php selected($auth_type, 'api_key'); ?>>API Key</option>
+                                </select>
+                            </td>
+                        </tr>
+                        <tr class="auth-field auth-oauth2" <?php if ($auth_type === 'api_key') echo 'style="display:none"'; ?>>
                             <th>Token Endpoint</th>
                             <td>
                                 <input type="text" class="regular-text api-field"
                                     name="api_token_endpoint"
                                     value="<?php echo esc_attr($network['api_token_endpoint'] ?? ''); ?>"
-                                    placeholder="/token/">
+                                    placeholder="/token/ или полный URL">
+                                <p class="description">Относительный путь от Base URL или полный URL (https://...)</p>
                             </td>
                         </tr>
                         <tr>
@@ -258,10 +272,11 @@ class Cashback_Admin_API_Validation
                                 <input type="text" class="regular-text api-field"
                                     name="api_actions_endpoint"
                                     value="<?php echo esc_attr($network['api_actions_endpoint'] ?? ''); ?>"
-                                    placeholder="/statistics/actions/">
+                                    placeholder="/statistics/actions/ или полный URL">
+                                <p class="description">Если домен отличается от Base URL, укажите полный URL (например https://app.epn.bz/transactions/user)</p>
                             </td>
                         </tr>
-                        <tr>
+                        <tr class="auth-field auth-oauth2" <?php if ($auth_type === 'api_key') echo 'style="display:none"'; ?>>
                             <th>Client ID</th>
                             <td>
                                 <input type="text" class="regular-text api-credential"
@@ -269,10 +284,10 @@ class Cashback_Admin_API_Validation
                                     value=""
                                     placeholder="<?php echo !empty($network['api_credentials']) ? '••••••• (сохранён)' : 'Введите Client ID'; ?>"
                                     autocomplete="off">
-                                <p class="description">Credentials хранятся зашифрованными (AES-256-CBC)</p>
+                                <p class="description">Credentials хранятся зашифрованными (AES-256-GCM)</p>
                             </td>
                         </tr>
-                        <tr>
+                        <tr class="auth-field auth-oauth2" <?php if ($auth_type === 'api_key') echo 'style="display:none"'; ?>>
                             <th>Client Secret</th>
                             <td>
                                 <input type="password" class="regular-text api-credential"
@@ -280,6 +295,17 @@ class Cashback_Admin_API_Validation
                                     value=""
                                     placeholder="<?php echo !empty($network['api_credentials']) ? '••••••• (сохранён)' : 'Введите Client Secret'; ?>"
                                     autocomplete="off">
+                            </td>
+                        </tr>
+                        <tr class="auth-field auth-api-key" <?php if ($auth_type !== 'api_key') echo 'style="display:none"'; ?>>
+                            <th>API Key</th>
+                            <td>
+                                <input type="password" class="regular-text api-credential"
+                                    name="api_key"
+                                    value=""
+                                    placeholder="<?php echo !empty($network['api_credentials']) ? '••••••• (сохранён)' : 'Введите API Key'; ?>"
+                                    autocomplete="off">
+                                <p class="description">Credentials хранятся зашифрованными (AES-256-GCM)</p>
                             </td>
                         </tr>
                         <tr>
@@ -326,6 +352,10 @@ class Cashback_Admin_API_Validation
                         <button type="button" class="button button-primary cashback-save-network-btn"
                             data-network-id="<?php echo esc_attr($network['id']); ?>">
                             Сохранить настройки
+                        </button>
+                        <button type="button" class="button cashback-test-connection-btn"
+                            data-network-id="<?php echo esc_attr($network['id']); ?>">
+                            Проверить соединение
                         </button>
                         <span class="cashback-save-status"></span>
                     </p>
@@ -684,8 +714,14 @@ class Cashback_Admin_API_Validation
         }
 
         // Обновляем обычные поля
+        $auth_type = sanitize_text_field($_POST['api_auth_type'] ?? 'oauth2');
+        if (!in_array($auth_type, ['oauth2', 'api_key'], true)) {
+            $auth_type = 'oauth2';
+        }
+
         $fields = [
             'api_base_url'         => sanitize_text_field($_POST['api_base_url'] ?? ''),
+            'api_auth_type'        => $auth_type,
             'api_token_endpoint'   => sanitize_text_field($_POST['api_token_endpoint'] ?? ''),
             'api_actions_endpoint' => sanitize_text_field($_POST['api_actions_endpoint'] ?? ''),
             'api_user_field'       => sanitize_text_field($_POST['api_user_field'] ?? ''),
@@ -714,25 +750,36 @@ class Cashback_Admin_API_Validation
         }
 
         // Сохраняем credentials если указаны новые
-        $client_id     = sanitize_text_field($_POST['client_id'] ?? '');
-        $client_secret = sanitize_text_field($_POST['client_secret'] ?? '');
+        $client = Cashback_API_Client::get_instance();
+        $existing = $client->get_credentials($network_id) ?: [];
+        $credentials_changed = false;
 
-        if (!empty($client_id) && !empty($client_secret)) {
-            $client = Cashback_API_Client::get_instance();
-
-            // Получаем текущие credentials для мерджа (scope и т.д.)
-            $existing = $client->get_credentials($network_id) ?: [];
-
-            $credentials = array_merge($existing, [
-                'client_id'     => $client_id,
-                'client_secret' => $client_secret,
-            ]);
-
-            if (!empty($_POST['scope'])) {
-                $credentials['scope'] = sanitize_text_field($_POST['scope']);
+        if ($auth_type === 'api_key') {
+            $api_key = sanitize_text_field($_POST['api_key'] ?? '');
+            if (!empty($api_key) && !str_starts_with($api_key, '•')) {
+                $existing['api_key'] = $api_key;
+                $credentials_changed = true;
             }
+        } else {
+            $client_id     = sanitize_text_field($_POST['client_id'] ?? '');
+            $client_secret = sanitize_text_field($_POST['client_secret'] ?? '');
 
-            $saved = $client->save_credentials($network_id, $credentials);
+            if (!empty($client_id) && !str_starts_with($client_id, '•')) {
+                $existing['client_id'] = $client_id;
+                $credentials_changed = true;
+            }
+            if (!empty($client_secret) && !str_starts_with($client_secret, '•')) {
+                $existing['client_secret'] = $client_secret;
+                $credentials_changed = true;
+            }
+            if (!empty($_POST['scope'])) {
+                $existing['scope'] = sanitize_text_field($_POST['scope']);
+                $credentials_changed = true;
+            }
+        }
+
+        if ($credentials_changed) {
+            $saved = $client->save_credentials($network_id, $existing);
 
             if (!$saved) {
                 wp_send_json_error(['message' => 'Настройки сохранены, но credentials не удалось зашифровать. Проверьте CB_ENCRYPTION_KEY.']);
@@ -743,6 +790,32 @@ class Cashback_Admin_API_Validation
         $this->log_audit('api_credentials_updated', 0, ['network_id' => $network_id]);
 
         wp_send_json_success(['message' => 'Настройки сохранены']);
+    }
+
+    /**
+     * AJAX: Проверка подключения к API CPA-сети (OAuth2 токен)
+     */
+    public function ajax_test_connection(): void
+    {
+        check_ajax_referer('cashback_api_validation', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Недостаточно прав']);
+        }
+
+        $network_id = (int) ($_POST['network_id'] ?? 0);
+        if ($network_id < 1) {
+            wp_send_json_error(['message' => 'Неверный ID сети']);
+        }
+
+        $client = Cashback_API_Client::get_instance();
+        $result = $client->test_connection($network_id);
+
+        if ($result['success']) {
+            wp_send_json_success(['message' => $result['message']]);
+        } else {
+            wp_send_json_error(['message' => $result['message']]);
+        }
     }
 
     /**

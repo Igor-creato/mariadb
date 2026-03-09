@@ -295,6 +295,17 @@
     });
 
     // =========================================================================
+    // Переключение полей авторизации (OAuth2 / API Key)
+    // =========================================================================
+
+    $(document).on('change', '.cashback-auth-type-select', function () {
+        const type = $(this).val();
+        const $card = $(this).closest('.cashback-network-card');
+        $card.find('.auth-oauth2').toggle(type === 'oauth2');
+        $card.find('.auth-api-key').toggle(type === 'api_key');
+    });
+
+    // =========================================================================
     // Сохранение настроек сети
     // =========================================================================
 
@@ -350,6 +361,50 @@
             error: function () {
                 $btn.prop('disabled', false);
                 $status.text('❌ Ошибка сети').css('color', 'red');
+            },
+        });
+    });
+
+    // =========================================================================
+    // Проверка соединения с API
+    // =========================================================================
+
+    $(document).on('click', '.cashback-test-connection-btn', function () {
+        const $btn = $(this);
+        const $card = $btn.closest('.cashback-network-card');
+        const networkId = $btn.data('network-id');
+        const $status = $card.find('.cashback-save-status');
+        const originalText = $btn.text();
+
+        $btn.prop('disabled', true).text('Проверка...');
+        $status.text('').css('color', '');
+
+        $.ajax({
+            url: config.ajaxUrl,
+            method: 'POST',
+            data: {
+                action: 'cashback_test_connection',
+                nonce: config.nonce,
+                network_id: networkId,
+            },
+            timeout: 30000,
+            success: function (response) {
+                $btn.prop('disabled', false).text(originalText);
+                if (response.success) {
+                    $status.text('✅ ' + response.data.message).css('color', 'green');
+                } else {
+                    $status.text('❌ ' + (response.data?.message || 'Ошибка')).css('color', 'red');
+                }
+                setTimeout(function () {
+                    $status.text('');
+                }, 8000);
+            },
+            error: function () {
+                $btn.prop('disabled', false).text(originalText);
+                $status.text('❌ Таймаут или ошибка сети').css('color', 'red');
+                setTimeout(function () {
+                    $status.text('');
+                }, 8000);
             },
         });
     });

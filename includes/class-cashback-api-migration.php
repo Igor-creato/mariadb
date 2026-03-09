@@ -182,8 +182,12 @@ class Cashback_API_Migration
             'api_base_url' => "ALTER TABLE `{$table}` ADD COLUMN `api_base_url` varchar(500) DEFAULT NULL
                 COMMENT 'Base URL API сети (например https://api.admitad.com)' AFTER `notes`",
 
+            'api_auth_type' => "ALTER TABLE `{$table}` ADD COLUMN `api_auth_type`
+                enum('oauth2','api_key') NOT NULL DEFAULT 'oauth2'
+                COMMENT 'Тип авторизации API' AFTER `api_base_url`",
+
             'api_credentials' => "ALTER TABLE `{$table}` ADD COLUMN `api_credentials` BLOB DEFAULT NULL
-                COMMENT 'AES-256-CBC зашифрованные credentials (JSON)' AFTER `api_base_url`",
+                COMMENT 'AES-256-CBC зашифрованные credentials (JSON)' AFTER `api_auth_type`",
 
             'api_user_field' => "ALTER TABLE `{$table}` ADD COLUMN `api_user_field` varchar(100) DEFAULT NULL
                 COMMENT 'Имя поля в API, содержащего user_id (subid для Admitad)' AFTER `api_credentials`",
@@ -309,9 +313,9 @@ class Cashback_API_Migration
             $wpdb->update(
                 $table,
                 [
-                    'api_base_url'         => 'https://api.epn.bz',
+                    'api_base_url'         => 'https://oauth2.epn.bz',
                     'api_token_endpoint'   => '/token',
-                    'api_actions_endpoint' => '/creative/actions',
+                    'api_actions_endpoint' => 'https://app.epn.bz/transactions/user',
                     'api_user_field'       => 'sub',
                     'api_click_field'      => 'click_id',
                     'api_status_map'       => wp_json_encode([

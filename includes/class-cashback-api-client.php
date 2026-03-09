@@ -3,9 +3,9 @@
 /**
  * Универсальный API-клиент для CPA-сетей
  *
- * Поддерживает: Admitad, EPN (расширяемо).
+ * Фасад, делегирующий сетевую специфику адаптерам (Cashback_Network_Adapter_Interface).
+ * Встроенные адаптеры: Admitad, EPN. Расширяемо через register_adapter() или хук cashback_register_network_adapters.
  * Хранит credentials зашифрованными через Cashback_Encryption.
- * Использует wp_remote_* для HTTP-запросов.
  *
  * Стратегия reconciliation (индустриальный стандарт кэшбэк-сервисов):
  *   МАТЧИНГ:    API.subid1 == DB.click_id (UUID, генерируемый кэшбэк-сервисом)
@@ -49,8 +49,8 @@ class Cashback_API_Client
     /** @var string Таблица кликов */
     private string $click_log_table;
 
-    /** @var array Кеш токенов в рамках одного запроса */
-    private array $token_cache = [];
+    /** @var array<string, Cashback_Network_Adapter_Interface> Реестр адаптеров (slug => adapter) */
+    private array $adapters = [];
 
     /**
      * @return self
@@ -73,6 +73,59 @@ class Cashback_API_Client
         $this->unregistered_table = $wpdb->prefix . 'cashback_unregistered_transactions';
         $this->sync_log_table     = $wpdb->prefix . 'cashback_sync_log';
         $this->click_log_table    = $wpdb->prefix . 'cashback_click_log';
+
+        // Регистрация встроенных адаптеров CPA-сетей
+        $this->register_adapter(new Cashback_Admitad_Adapter());
+        $this->register_adapter(new Cashback_Epn_Adapter());
+
+        /**
+         * Позволяет внешним плагинам регистрировать свои адаптеры CPA-сетей.
+         *
+         * @param Cashback_API_Client $client Экземпляр API-клиента
+         */
+        do_action('cashback_register_network_adapters', $this);
+    }
+
+    // =========================================================================
+    // Adapter registry
+    // =========================================================================
+
+    /**
+     * Зарегистрировать адаптер CPA-сети
+     *
+     * @param Cashback_Network_Adapter_Interface $adapter
+     */
+    public function register_adapter(Cashback_Network_Adapter_Interface $adapter): void
+    {
+        $this->adapters[$adapter->get_slug()] = $adapter;
+
+        foreach ($adapter->get_aliases() as $alias) {
+            if (!isset($this->adapters[$alias])) {
+                $this->adapters[$alias] = $adapter;
+            }
+        }
+    }
+
+    /**
+     * Получить адаптер по slug сети
+     *
+     * @param string $slug Slug сети (admitad, epn и др.)
+     * @return Cashback_Network_Adapter_Interface|null
+     */
+    public function get_adapter(string $slug): ?Cashback_Network_Adapter_Interface
+    {
+        return $this->adapters[$slug] ?? null;
+    }
+
+    /**
+     * Проверить, зарегистрирован ли адаптер для сети
+     *
+     * @param string $slug
+     * @return bool
+     */
+    public function has_adapter(string $slug): bool
+    {
+        return isset($this->adapters[$slug]);
     }
 
     // =========================================================================
@@ -202,33 +255,17 @@ class Cashback_API_Client
     }
 
     /**
-     * Маппинг статусов по умолчанию
-     *
-     * Admitad документация: status = pending / approved / declined / approved_but_stalled
-     * https://developers.admitad.com/knowledge-base/article/publisher-reports_1
+     * Маппинг статусов по умолчанию (делегация адаптеру)
      */
     private function get_default_status_map(string $slug): array
     {
-        $maps = [
-            'admitad' => [
-                'pending'              => 'waiting',
-                'approved'             => 'completed',
-                'approved_but_stalled' => 'completed',  // подтверждён, но у рекламодателя нет средств
-                'declined'             => 'declined',
-                'rejected'             => 'declined',
-                'open'                 => 'waiting',
-                'hold'                 => 'waiting',
-            ],
-            'epn' => [
-                'pending'    => 'waiting',
-                'approved'   => 'completed',
-                'rejected'   => 'declined',
-                'canceled'   => 'declined',
-                'hold'       => 'waiting',
-            ],
-        ];
+        $adapter = $this->get_adapter($slug);
+        if ($adapter) {
+            return $adapter->get_default_status_map();
+        }
 
-        return $maps[$slug] ?? [
+        // Общий fallback для сетей без адаптера
+        return [
             'pending'  => 'waiting',
             'approved' => 'completed',
             'declined' => 'declined',
@@ -236,7 +273,7 @@ class Cashback_API_Client
     }
 
     // =========================================================================
-    // URL builder
+    // URL builder (used by test_connection for api_key branch)
     // =========================================================================
 
     /**
@@ -247,6 +284,10 @@ class Cashback_API_Client
         $base     = rtrim($network_config['api_base_url'] ?? '', '/');
         $endpoint = $network_config[$endpoint_key] ?? '';
 
+        if ($endpoint !== '' && preg_match('#^https?://#i', $endpoint)) {
+            return $endpoint;
+        }
+
         if ($base !== '' && $endpoint !== '') {
             return $base . '/' . ltrim($endpoint, '/');
         }
@@ -255,212 +296,152 @@ class Cashback_API_Client
     }
 
     // =========================================================================
-    // OAuth2 — Admitad
+    // Универсальная авторизация (OAuth2 / API Key)
     // =========================================================================
 
     /**
-     * Получить OAuth2 токен Admitad (с кешированием в transient)
+     * Сформировать заголовки авторизации в зависимости от типа (делегация адаптеру)
+     *
+     * @param array  $credentials   Расшифрованные credentials
+     * @param array  $network_config Конфигурация сети (api_auth_type, api_base_url, slug, ...)
+     * @param string $network_slug  Slug сети для роутинга (epn, admitad и др.)
+     * @return array|null Массив заголовков или null при ошибке
      */
-    public function get_admitad_token(array $credentials, array $network_config = []): ?string
+    private function build_auth_headers(array $credentials, array $network_config, string $network_slug = ''): ?array
     {
-        $cache_key = 'cashback_admitad_token_' . md5($credentials['client_id'] ?? '');
+        $auth_type = $network_config['api_auth_type'] ?? 'oauth2';
 
-        // Проверяем transient
-        $cached = get_transient($cache_key);
-        if ($cached) {
-            return $cached;
-        }
-
-        // Проверяем runtime кеш
-        if (isset($this->token_cache[$cache_key])) {
-            return $this->token_cache[$cache_key];
-        }
-
-        $client_id     = $credentials['client_id'] ?? '';
-        $client_secret = $credentials['client_secret'] ?? '';
-        $scope         = $credentials['scope'] ?? 'statistics';
-
-        if (empty($client_id) || empty($client_secret)) {
-            error_log('Cashback API Client: Admitad credentials incomplete');
-            return null;
-        }
-
-        $token_url = $this->build_api_url($network_config, 'api_token_endpoint', 'https://api.admitad.com/token/');
-
-        $response = wp_remote_post($token_url, [
-            'timeout' => 30,
-            'headers' => [
-                'Authorization' => 'Basic ' . base64_encode($client_id . ':' . $client_secret),
-                'Content-Type'  => 'application/x-www-form-urlencoded',
-            ],
-            'body' => [
-                'grant_type' => 'client_credentials',
-                'client_id'  => $client_id,
-                'scope'      => $scope,
-            ],
-        ]);
-
-        if (is_wp_error($response)) {
-            error_log('Cashback API Client: Admitad token error: ' . $response->get_error_message());
-            return null;
-        }
-
-        $code = wp_remote_retrieve_response_code($response);
-        $body = json_decode(wp_remote_retrieve_body($response), true);
-
-        if ($code !== 200 || empty($body['access_token'])) {
-            // Санитизация: удаляем чувствительные данные перед логированием
-            $safe_body = $body;
-            if (is_array($safe_body)) {
-                unset($safe_body['access_token'], $safe_body['refresh_token'], $safe_body['client_secret']);
+        if ($auth_type === 'api_key') {
+            $api_key = $credentials['api_key'] ?? '';
+            if (empty($api_key)) {
+                error_log('Cashback API Client: API key is empty');
+                return null;
             }
-            error_log('Cashback API Client: Admitad token failed. Code: ' . $code . ', Body: ' . wp_json_encode($safe_body));
-            return null;
+            return ['Authorization' => 'Bearer ' . $api_key];
         }
 
-        $token    = $body['access_token'];
-        $expires  = (int) ($body['expires_in'] ?? 3600);
+        // OAuth2: делегация адаптеру
+        $adapter = $this->get_adapter($network_slug);
+        if (!$adapter) {
+            error_log('Cashback API Client: No adapter registered for network: ' . $network_slug);
+            return null;
+        }
+        return $adapter->build_auth_headers($credentials, $network_config);
+    }
 
-        // Кешируем с запасом 5 минут
-        set_transient($cache_key, $token, max(60, $expires - 300));
-        $this->token_cache[$cache_key] = $token;
+    /**
+     * Проверить подключение к API CPA-сети
+     *
+     * @param int $network_id ID сети
+     * @return array ['success' => bool, 'message' => string]
+     */
+    public function test_connection(int $network_id): array
+    {
+        global $wpdb;
 
-        return $token;
+        $network = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM {$this->networks_table} WHERE id = %d",
+            $network_id
+        ), ARRAY_A);
+
+        if (!$network) {
+            return ['success' => false, 'message' => 'Сеть не найдена'];
+        }
+
+        $credentials = $this->get_credentials($network_id);
+        $auth_type   = $network['api_auth_type'] ?? 'oauth2';
+
+        // Проверка наличия credentials
+        if ($auth_type === 'api_key') {
+            if (!$credentials || empty($credentials['api_key'])) {
+                return ['success' => false, 'message' => 'API Key не настроен. Сохраните API Key.'];
+            }
+        } else {
+            if (!$credentials || empty($credentials['client_id']) || empty($credentials['client_secret'])) {
+                return ['success' => false, 'message' => 'API credentials не настроены. Сохраните client_id и client_secret.'];
+            }
+        }
+
+        $network_config = $network;
+
+        if ($auth_type === 'api_key') {
+            // Для API Key: пробуем GET-запрос к actions endpoint с limit=1
+            $auth_headers = $this->build_auth_headers($credentials, $network_config);
+            if (!$auth_headers) {
+                return ['success' => false, 'message' => 'Не удалось сформировать заголовки авторизации.'];
+            }
+
+            $actions_url = $this->build_api_url($network_config, 'api_actions_endpoint', '');
+            if (empty($actions_url)) {
+                return ['success' => false, 'message' => 'Actions Endpoint не настроен.'];
+            }
+
+            $url = $actions_url . '?' . http_build_query(['limit' => 1]);
+
+            $response = wp_remote_get($url, [
+                'timeout' => 30,
+                'headers' => $auth_headers,
+            ]);
+
+            if (is_wp_error($response)) {
+                return ['success' => false, 'message' => 'Ошибка запроса: ' . $response->get_error_message()];
+            }
+
+            $code = wp_remote_retrieve_response_code($response);
+            if ($code >= 200 && $code < 300) {
+                return ['success' => true, 'message' => 'Соединение успешно. API ответил HTTP ' . $code . '.'];
+            }
+
+            return ['success' => false, 'message' => 'API вернул HTTP ' . $code . '. Проверьте API Key и URL.'];
+        }
+
+        // OAuth2: делегация адаптеру
+        $slug = $network['slug'] ?? '';
+        $adapter = $this->get_adapter($slug);
+
+        if (!$adapter) {
+            return ['success' => false, 'message' => 'Нет зарегистрированного адаптера для сети: ' . $slug];
+        }
+
+        $token = $adapter->get_token($credentials, $network_config);
+
+        if ($token) {
+            return ['success' => true, 'message' => 'Соединение успешно. OAuth2 токен получен.'];
+        }
+
+        $detail = $adapter->get_last_token_error()
+            ?: 'Проверьте client_id, client_secret и URL эндпоинта.';
+
+        return ['success' => false, 'message' => 'Не удалось получить токен. ' . $detail];
     }
 
     // =========================================================================
-    // Fetch actions from CPA networks
+    // Fetch actions from CPA networks (delegated to adapters)
     // =========================================================================
 
     /**
-     * Получить действия из Admitad API
+     * Универсальный fetch: делегация адаптеру по slug сети
      *
-     * Параметры фильтрации по документации:
-     * https://developers.admitad.com/knowledge-base/article/publisher-reports_1
-     *
-     * @param array  $credentials  API credentials
-     * @param array  $params       Параметры запроса (subid, subid1..4, date_start, date_end, etc)
+     * @param string $slug          Slug сети (epn, admitad, ...)
+     * @param array  $credentials   API credentials
+     * @param array  $params        Параметры запроса
+     * @param int    $max_pages     Максимальное количество страниц
      * @param array  $network_config Конфигурация сети
      * @return array ['success' => bool, 'actions' => [...], 'total' => int, 'error' => string|null]
      */
-    public function fetch_admitad_actions(array $credentials, array $params, array $network_config = []): array
+    public function fetch_all_actions_for_network(string $slug, array $credentials, array $params, int $max_pages = 20, array $network_config = []): array
     {
-        $token = $this->get_admitad_token($credentials, $network_config);
-        if (!$token) {
-            return ['success' => false, 'actions' => [], 'total' => 0, 'error' => 'Failed to get access token'];
-        }
-
-        $query_params = [];
-
-        // Поддержка всех subid-вариантов (subid, subid1-subid4)
-        foreach ($params as $key => $value) {
-            if ($value !== '' && $value !== null && preg_match('/^subid\d?$/', $key)) {
-                $query_params[$key] = $value;
-            }
-        }
-
-        // Даты
-        foreach (['date_start', 'date_end', 'status_updated_start', 'status_updated_end'] as $date_key) {
-            if (!empty($params[$date_key])) {
-                $query_params[$date_key] = $params[$date_key];
-            }
-        }
-
-        // Площадка
-        if (!empty($params['website'])) {
-            $query_params['website'] = $params['website'];
-        }
-
-        $query_params['limit']  = min((int) ($params['limit'] ?? 500), 500);
-        $query_params['offset'] = (int) ($params['offset'] ?? 0);
-        $query_params['order_by'] = $params['order_by'] ?? 'datetime';
-
-        $actions_url = $this->build_api_url($network_config, 'api_actions_endpoint', 'https://api.admitad.com/statistics/actions/');
-        $url = $actions_url . '?' . http_build_query($query_params);
-
-        $response = wp_remote_get($url, [
-            'timeout' => 60,
-            'headers' => [
-                'Authorization' => 'Bearer ' . $token,
-            ],
-        ]);
-
-        if (is_wp_error($response)) {
+        $adapter = $this->get_adapter($slug);
+        if (!$adapter) {
             return [
                 'success' => false,
                 'actions' => [],
                 'total'   => 0,
-                'error'   => $response->get_error_message(),
+                'error'   => 'No adapter registered for network: ' . $slug,
             ];
         }
 
-        $code = wp_remote_retrieve_response_code($response);
-        $body = json_decode(wp_remote_retrieve_body($response), true);
-
-        if ($code !== 200) {
-            return [
-                'success' => false,
-                'actions' => [],
-                'total'   => 0,
-                'error'   => "HTTP {$code}: " . wp_json_encode($body),
-            ];
-        }
-
-        $results = $body['results'] ?? [];
-        $total   = (int) ($body['_meta']['count'] ?? count($results));
-
-        return [
-            'success' => true,
-            'actions' => $results,
-            'total'   => $total,
-            'error'   => null,
-        ];
-    }
-
-    /**
-     * Получить ВСЕ действия из Admitad с автоматической пагинацией
-     */
-    public function fetch_all_admitad_actions(array $credentials, array $params, int $max_pages = 20, array $network_config = []): array
-    {
-        $all_actions = [];
-        $offset      = 0;
-        $limit       = 500;
-        $total       = 0;
-        $page        = 0;
-
-        do {
-            $params['offset'] = $offset;
-            $params['limit']  = $limit;
-
-            $result = $this->fetch_admitad_actions($credentials, $params, $network_config);
-
-            if (!$result['success']) {
-                return [
-                    'success' => false,
-                    'actions' => $all_actions,
-                    'total'   => $total,
-                    'error'   => $result['error'],
-                ];
-            }
-
-            $actions      = $result['actions'];
-            $total        = $result['total'];
-            $all_actions  = array_merge($all_actions, $actions);
-            $offset      += $limit;
-            $page++;
-
-            // Защита от rate limit — пауза между запросами (100ms вместо 300ms для снижения блокировки PHP-процесса)
-            if (count($actions) === $limit && $page < $max_pages) {
-                usleep(100000); // 100ms
-            }
-        } while (count($actions) === $limit && $page < $max_pages);
-
-        return [
-            'success' => true,
-            'actions' => $all_actions,
-            'total'   => $total,
-            'error'   => null,
-        ];
+        return $adapter->fetch_all_actions($credentials, $params, $max_pages, $network_config);
     }
 
     // =========================================================================
@@ -589,7 +570,7 @@ class Cashback_API_Client
             $api_params['website'] = $network['api_website_id'];
         }
 
-        $api_result = $this->fetch_all_admitad_actions($network['credentials'], $api_params, 20, $network);
+        $api_result = $this->fetch_all_actions_for_network($network_slug, $network['credentials'], $api_params, 20, $network);
 
         if (!$api_result['success']) {
             return [
@@ -1002,7 +983,7 @@ class Cashback_API_Client
             $api_params['website'] = $network['api_website_id'];
         }
 
-        $api_result = $this->fetch_all_admitad_actions($network['credentials'], $api_params, 20, $network);
+        $api_result = $this->fetch_all_actions_for_network($network_slug, $network['credentials'], $api_params, 20, $network);
 
         $api_actions = [];
         if ($api_result['success'] && !empty($api_result['actions'])) {
@@ -1282,7 +1263,7 @@ class Cashback_API_Client
                 $sync_params['website'] = $config['api_website_id'];
             }
 
-            $api_result = $this->fetch_all_admitad_actions($config['credentials'], $sync_params, 20, $config);
+            $api_result = $this->fetch_all_actions_for_network($slug, $config['credentials'], $sync_params, 20, $config);
 
             if (!$api_result['success']) {
                 $results[$slug] = ['success' => false, 'error' => $api_result['error']];
@@ -1959,7 +1940,8 @@ class Cashback_API_Client
 
         $max_pages  = 20;
         $page_limit = 500;
-        $api_result = $this->fetch_all_admitad_actions(
+        $api_result = $this->fetch_all_actions_for_network(
+            $slug,
             $config['credentials'],
             $api_params,
             $max_pages,

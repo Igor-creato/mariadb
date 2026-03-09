@@ -216,6 +216,10 @@ class CashbackPlugin
         }
 
         // --- API Валидация: cron фоновой синхронизации ---
+        $this->require_file('includes/adapters/interface-cashback-network-adapter.php');
+        $this->require_file('includes/adapters/abstract-cashback-network-adapter.php');
+        $this->require_file('includes/adapters/class-admitad-adapter.php');
+        $this->require_file('includes/adapters/class-epn-adapter.php');
         $this->require_file('includes/class-cashback-api-client.php');
         $this->require_file('includes/class-cashback-api-cron.php');
         if (class_exists('Cashback_API_Cron')) {
@@ -322,6 +326,12 @@ class CashbackPlugin
 
         // Health-check cron обработчик (WP Cron работает через фронтенд-запросы)
         $this->require_file('admin/health-check.php');
+
+        // API адаптеры CPA-сетей (загружаются перед API-клиентом)
+        $this->require_file('includes/adapters/interface-cashback-network-adapter.php');
+        $this->require_file('includes/adapters/abstract-cashback-network-adapter.php');
+        $this->require_file('includes/adapters/class-admitad-adapter.php');
+        $this->require_file('includes/adapters/class-epn-adapter.php');
 
         // API клиент и cron (синхронизация работает через WP Cron)
         $this->require_file('includes/class-cashback-api-client.php');
