@@ -276,18 +276,8 @@ class Cashback_Epn_Adapter extends Cashback_Network_Adapter_Base
             $query_params['tsTo'] = self::convert_date($params['date_end']);
         }
 
-        // Фильтр по обновлению статуса
-        if (!empty($params['statusUpdatedStart'])) {
-            $query_params['statusUpdatedStart'] = $params['statusUpdatedStart'];
-        } elseif (!empty($params['status_updated_start'])) {
-            $query_params['statusUpdatedStart'] = self::convert_datetime($params['status_updated_start']);
-        }
-
-        if (!empty($params['statusUpdatedEnd'])) {
-            $query_params['statusUpdatedEnd'] = $params['statusUpdatedEnd'];
-        } elseif (!empty($params['status_updated_end'])) {
-            $query_params['statusUpdatedEnd'] = self::convert_datetime($params['status_updated_end']);
-        }
+        // EPN API не поддерживает statusUpdatedStart/statusUpdatedEnd —
+        // фильтрация по дате обновления статуса не доступна, используем только tsFrom/tsTo.
 
         // Дополнительные EPN-фильтры
         if (!empty($params['offerIds'])) {
@@ -531,14 +521,4 @@ class Cashback_Epn_Adapter extends Cashback_Network_Adapter_Base
         return $date;
     }
 
-    /**
-     * Конвертация datetime из формата Admitad (dd.mm.yyyy HH:MM:SS) в EPN (yyyy-mm-dd HH:MM:SS)
-     */
-    private static function convert_datetime(string $datetime): string
-    {
-        // "01.01.2020 00:00:00" → "2020-01-01 00:00:00"
-        $parts = explode(' ', $datetime, 2);
-        $date = self::convert_date($parts[0]);
-        return isset($parts[1]) ? $date . ' ' . $parts[1] : $date;
-    }
 }

@@ -91,12 +91,21 @@ class Cashback_Transactions_Admin
         $table_name = ($current_tab === 'registered') ? $this->registered_table : $this->unregistered_table;
 
         // Filters
-        $filter_status = isset($_GET['status']) ? sanitize_text_field(wp_unslash($_GET['status'])) : '';
-        $search_query  = isset($_GET['search']) ? sanitize_text_field(wp_unslash($_GET['search'])) : '';
+        $filter_status  = isset($_GET['status']) ? sanitize_text_field(wp_unslash($_GET['status'])) : '';
+        $filter_partner = isset($_GET['partner']) ? sanitize_text_field(wp_unslash($_GET['partner'])) : '';
+        $search_query   = isset($_GET['search']) ? sanitize_text_field(wp_unslash($_GET['search'])) : '';
 
         $allowed_statuses = ['waiting', 'completed', 'declined', 'hold', 'balance'];
         if (!empty($filter_status) && !in_array($filter_status, $allowed_statuses, true)) {
             $filter_status = '';
+        }
+
+        // Получаем список уникальных сетей для фильтра
+        $available_partners = $wpdb->get_col(
+            "SELECT DISTINCT partner FROM {$table_name} WHERE partner IS NOT NULL AND partner != '' ORDER BY partner ASC"
+        );
+        if (!empty($filter_partner) && !in_array($filter_partner, $available_partners, true)) {
+            $filter_partner = '';
         }
 
         // Pagination (с ограничением верхней границы для защиты от DoS)
@@ -111,6 +120,11 @@ class Cashback_Transactions_Admin
         if (!empty($filter_status)) {
             $where_conditions[] = 'order_status = %s';
             $where_params[] = $filter_status;
+        }
+
+        if (!empty($filter_partner)) {
+            $where_conditions[] = 'partner = %s';
+            $where_params[] = $filter_partner;
         }
 
         if (!empty($search_query)) {
@@ -144,7 +158,7 @@ class Cashback_Transactions_Admin
         if (!empty($query_params)) {
             $transactions = $wpdb->get_results(
                 $wpdb->prepare(
-                    "SELECT id, user_id, order_number, order_status, sum_order, comission, cashback, click_id, created_at
+                    "SELECT id, user_id, order_number, partner, order_status, sum_order, comission, cashback, click_id, created_at
                      FROM {$table_name}{$where_clause}
                      ORDER BY created_at DESC
                      LIMIT %d OFFSET %d",
@@ -155,7 +169,7 @@ class Cashback_Transactions_Admin
         } else {
             $transactions = $wpdb->get_results(
                 $wpdb->prepare(
-                    "SELECT id, user_id, order_number, order_status, sum_order, comission, cashback, click_id, created_at
+                    "SELECT id, user_id, order_number, partner, order_status, sum_order, comission, cashback, click_id, created_at
                      FROM {$table_name}
                      ORDER BY created_at DESC
                      LIMIT %d OFFSET %d",
@@ -196,13 +210,22 @@ class Cashback_Transactions_Admin
                         <?php endforeach; ?>
                     </select>
 
+                    <select id="filter-partner">
+                        <option value="">Все сети</option>
+                        <?php foreach ($available_partners as $partner_name): ?>
+                            <option value="<?php echo esc_attr($partner_name); ?>" <?php selected($filter_partner, $partner_name); ?>>
+                                <?php echo esc_html($partner_name); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+
                     <input type="search" id="filter-search"
                            value="<?php echo esc_attr($search_query); ?>"
                            placeholder="Поиск по click_id или order_number"
                            style="min-width: 280px;" />
 
                     <button type="button" id="filter-submit" class="button action">Фильтровать</button>
-                    <?php if (!empty($filter_status) || !empty($search_query)): ?>
+                    <?php if (!empty($filter_status) || !empty($filter_partner) || !empty($search_query)): ?>
                         <button type="button" id="filter-reset" class="button action">Сбросить</button>
                     <?php endif; ?>
                 </div>
@@ -220,6 +243,7 @@ class Cashback_Transactions_Admin
                         <th scope="col" style="width: 50px;">ID</th>
                         <th scope="col" style="width: 80px;">User ID</th>
                         <th scope="col">Номер заказа</th>
+                        <th scope="col">Сеть</th>
                         <th scope="col" style="width: 140px;">Статус</th>
                         <th scope="col" style="width: 120px;">Сумма заказа</th>
                         <th scope="col" style="width: 120px;">Комиссия</th>
@@ -238,6 +262,7 @@ class Cashback_Transactions_Admin
                                 <td><?php echo esc_html($tx['id']); ?></td>
                                 <td><?php echo esc_html($tx['user_id']); ?></td>
                                 <td><?php echo esc_html($tx['order_number'] ?? ''); ?></td>
+                                <td><?php echo esc_html($tx['partner'] ?? ''); ?></td>
                                 <td class="<?php echo $is_editable ? 'edit-field' : ''; ?>" data-field="order_status">
                                     <?php echo esc_html($this->get_status_label($tx['order_status'])); ?>
                                 </td>
@@ -263,7 +288,7 @@ class Cashback_Transactions_Admin
                         <?php endforeach; ?>
                     <?php else: ?>
                         <tr>
-                            <td colspan="10">
+                            <td colspan="11">
                                 <?php if (!empty($search_query)): ?>
                                     По запросу &laquo;<?php echo esc_html($search_query); ?>&raquo; транзакции не найдены.
                                 <?php else: ?>
@@ -283,9 +308,10 @@ class Cashback_Transactions_Admin
                 'total_pages'  => $total_pages,
                 'page_slug'    => 'cashback-transactions',
                 'add_args'     => array_filter([
-                    'tab'    => $current_tab,
-                    'status' => $filter_status,
-                    'search' => $search_query,
+                    'tab'     => $current_tab,
+                    'status'  => $filter_status,
+                    'partner' => $filter_partner,
+                    'search'  => $search_query,
                 ]),
             ]);
             ?>
@@ -433,7 +459,7 @@ class Cashback_Transactions_Admin
 
         // Return fresh data (cashback may have been recalculated by trigger)
         $updated = $wpdb->get_row($wpdb->prepare(
-            "SELECT id, user_id, order_number, order_status, sum_order, comission, cashback, click_id, created_at
+            "SELECT id, user_id, order_number, partner, order_status, sum_order, comission, cashback, click_id, created_at
              FROM {$table_name} WHERE id = %d",
             $transaction_id
         ), ARRAY_A);
@@ -468,7 +494,7 @@ class Cashback_Transactions_Admin
         $table_name = ($tab === 'unregistered') ? $this->unregistered_table : $this->registered_table;
 
         $data = $wpdb->get_row($wpdb->prepare(
-            "SELECT id, user_id, order_number, order_status, sum_order, comission, cashback, click_id, created_at
+            "SELECT id, user_id, order_number, partner, order_status, sum_order, comission, cashback, click_id, created_at
              FROM {$table_name} WHERE id = %d",
             $transaction_id
         ), ARRAY_A);

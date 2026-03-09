@@ -35,6 +35,7 @@
         // --- Filters ---
         $('#filter-submit').on('click', function () {
             var status = $('#filter-status').val();
+            var partner = $('#filter-partner').val();
             var search = $('#filter-search').val();
             var url = new URL(window.location.href);
 
@@ -42,6 +43,12 @@
                 url.searchParams.set('status', status);
             } else {
                 url.searchParams.delete('status');
+            }
+
+            if (partner) {
+                url.searchParams.set('partner', partner);
+            } else {
+                url.searchParams.delete('partner');
             }
 
             if (search) {
@@ -57,6 +64,7 @@
         $('#filter-reset').on('click', function () {
             var url = new URL(window.location.href);
             url.searchParams.delete('status');
+            url.searchParams.delete('partner');
             url.searchParams.delete('search');
             url.searchParams.delete('paged');
             window.location.href = url.toString();

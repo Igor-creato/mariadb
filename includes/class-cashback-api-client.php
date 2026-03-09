@@ -1257,6 +1257,7 @@ class Cashback_API_Client
                 'status_updated_start' => $date_start . ' 00:00:00',
                 'status_updated_end'   => $date_end . ' 23:59:59',
                 'date_start'           => '01.01.2020',
+                'date_end'             => $date_end,
             ];
 
             if (!empty($config['api_website_id'])) {
