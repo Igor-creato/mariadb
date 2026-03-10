@@ -341,9 +341,42 @@ class Cashback_Admin_API_Validation
                         <tr>
                             <th>Маппинг статусов</th>
                             <td>
-                                <textarea class="large-text code api-field" name="api_status_map" rows="6"
-                                    placeholder='{"pending":"hold","approved":"completed","declined":"declined"}'><?php echo esc_textarea($network['api_status_map'] ?? ''); ?></textarea>
-                                <p class="description">JSON: ключ = статус CPA-сети, значение = локальный статус (waiting/hold/completed/declined)</p>
+                                <input type="hidden" class="api-field" name="api_status_map"
+                                    value="<?php echo esc_attr($network['api_status_map'] ?? ''); ?>">
+
+                                <div class="status-map-header">
+                                    <span class="status-map-col-label">Статус CPA-сети</span>
+                                    <span class="status-map-arrow-spacer"></span>
+                                    <span class="status-map-col-label">Наша система</span>
+                                </div>
+                                <div class="status-map-editor" data-network-id="<?php echo esc_attr($network['id']); ?>">
+                                    <?php
+                                    $status_map = json_decode($network['api_status_map'] ?? '', true);
+                                    if (!is_array($status_map)) {
+                                        $status_map = [];
+                                    }
+                                    $local_statuses = ['waiting', 'hold', 'completed', 'declined'];
+                                    foreach ($status_map as $cpa_key => $local_val) : ?>
+                                    <div class="status-map-row">
+                                        <input type="text" class="status-map-cpa regular-text"
+                                               placeholder="статус CPA" value="<?php echo esc_attr($cpa_key); ?>">
+                                        <span class="status-map-arrow">→</span>
+                                        <select class="status-map-local">
+                                            <?php foreach ($local_statuses as $s) : ?>
+                                            <option value="<?php echo esc_attr($s); ?>"<?php selected($local_val, $s); ?>><?php echo esc_html($s); ?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                        <button type="button" class="status-map-remove button-link">
+                                            <span class="dashicons dashicons-no-alt" style="color:#dc3232;"></span>
+                                        </button>
+                                    </div>
+                                    <?php endforeach; ?>
+                                </div>
+
+                                <button type="button" class="button status-map-add-btn" style="margin-top:8px;">
+                                    + Добавить статус
+                                </button>
+                                <p class="description">Преобразование статуса заказа из CPA-сети в нашу систему. Допустимые значения: waiting / hold / completed / declined</p>
                             </td>
                         </tr>
                     </table>

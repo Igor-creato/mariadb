@@ -306,6 +306,46 @@
     });
 
     // =========================================================================
+    // Визуальный редактор маппинга статусов
+    // =========================================================================
+
+    function statusMapRowHtml() {
+        return '<div class="status-map-row">'
+            + '<input type="text" class="status-map-cpa regular-text" placeholder="статус CPA" value="">'
+            + '<span class="status-map-arrow">→</span>'
+            + '<select class="status-map-local">'
+            + '<option value="waiting">waiting</option>'
+            + '<option value="hold">hold</option>'
+            + '<option value="completed">completed</option>'
+            + '<option value="declined">declined</option>'
+            + '</select>'
+            + '<button type="button" class="status-map-remove button-link">'
+            + '<span class="dashicons dashicons-no-alt" style="color:#dc3232;"></span>'
+            + '</button>'
+            + '</div>';
+    }
+
+    $(document).on('click', '.status-map-add-btn', function () {
+        $(this).prev('.status-map-editor').append(statusMapRowHtml());
+    });
+
+    $(document).on('click', '.status-map-remove', function () {
+        $(this).closest('.status-map-row').remove();
+    });
+
+    function serializeStatusMap($card) {
+        const map = {};
+        $card.find('.status-map-row').each(function () {
+            const key = $(this).find('.status-map-cpa').val().trim();
+            const val = $(this).find('.status-map-local').val();
+            if (key) {
+                map[key] = val;
+            }
+        });
+        $card.find('input[name="api_status_map"]').val(JSON.stringify(map));
+    }
+
+    // =========================================================================
     // Сохранение настроек сети
     // =========================================================================
 
@@ -320,6 +360,9 @@
             nonce: config.nonce,
             network_id: networkId,
         };
+
+        // Сериализуем визуальный редактор маппинга в hidden input
+        serializeStatusMap($card);
 
         // Собираем все поля
         $card.find('.api-field').each(function () {
