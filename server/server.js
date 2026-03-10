@@ -620,7 +620,16 @@ app.put('/api/transactions/:id', (req, res) => {
   const idx = txs.findIndex(t => t.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Not found' });
 
-  const updated = { ...txs[idx], ...req.body, id: txs[idx].id, created_at: txs[idx].created_at };
+  // Обновляем action_time при каждом PUT (если не передан явно),
+  // чтобы status_updated_start фильтр в background_sync() видел изменения.
+  const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+  const updated = {
+    ...txs[idx],
+    ...req.body,
+    id:          txs[idx].id,
+    created_at:  txs[idx].created_at,
+    action_time: req.body.action_time !== undefined ? req.body.action_time : now,
+  };
   txs[idx] = updated;
   saveTransactions(txs);
   res.json(updated);

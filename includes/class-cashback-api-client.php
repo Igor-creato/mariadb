@@ -607,22 +607,14 @@ class Cashback_API_Client
         ), ARRAY_A);
 
         // ─── Индексы для матчинга ───
-        // Основной: по click_id (= API.subid1)
+        // 1. Основной: по click_id (= API.subid1, наш UUID)
         $local_by_click_id = [];
-        // Fallback: по order_number (= API.order_id)
-        $local_by_order_number = [];
-
-        // Fallback 3: по uniq_id (= action_id CPA-сети)
+        // 2. Fallback: по uniq_id (= API.action_id, уникальный ID в рамках CPA-сети)
         $local_by_uniq_id = [];
 
         foreach ($local_transactions as $tx) {
             if (!empty($tx['click_id'])) {
                 $local_by_click_id[$tx['click_id']] = $tx;
-            }
-            if (!empty($tx['order_number'])) {
-                // Может быть несколько транзакций с одним order_number (разные магазины)
-                // Используем первую непривязанную
-                $local_by_order_number[$tx['order_number']] = $tx;
             }
             if (!empty($tx['uniq_id'])) {
                 $local_by_uniq_id[$tx['uniq_id']] = $tx;
@@ -646,8 +638,12 @@ class Cashback_API_Client
         // Суммы по локальным сматченным (по статусам)
         $local_sums = ['approved' => 0.0, 'pending' => 0.0, 'declined' => 0.0];
 
-        // Множество сматченных click_id для обратной проверки
+        // Множество сматченных click_id для обратной проверки (только полные совпадения)
         $matched_click_ids = [];
+
+        // Множество click_id локальных транзакций, найденных в API (совпавших или расходящихся)
+        // Используется в обратной проверке missing_api, чтобы не дублировать mismatched
+        $api_matched_local_click_ids = [];
 
         // Debug: логируем ключи первого action из API для диагностики маппинга
         if (defined('WP_DEBUG') && WP_DEBUG && !empty($api_actions)) {
@@ -672,25 +668,15 @@ class Cashback_API_Client
                 $api_sums['declined'] += $api_payment;
             }
 
-            // ─── МАТЧИНГ: API.subid1 → DB.click_id ───
+            // ─── МАТЧИНГ ───
             $local_tx = null;
 
-            // 1. Основной ключ: click_id
+            // 1. Основной ключ: click_id (наш UUID, наиболее надёжный)
             if ($api_click_id !== '' && isset($local_by_click_id[$api_click_id])) {
                 $local_tx = $local_by_click_id[$api_click_id];
             }
 
-            // 2. Fallback: order_id → order_number
-            //    Используем только если click_id не сматчился
-            //    (order_id может быть неуникален между разными магазинами)
-            if (!$local_tx) {
-                $order_id = (string) ($action['order_id'] ?? '');
-                if ($order_id !== '' && isset($local_by_order_number[$order_id])) {
-                    $local_tx = $local_by_order_number[$order_id];
-                }
-            }
-
-            // 3. Fallback: action_id → uniq_id (надёжный ключ CPA-сети)
+            // 2. Fallback: action_id → uniq_id (уникальный ID в рамках CPA-сети)
             if (!$local_tx) {
                 $action_id_key = (string) ($action['action_id'] ?? '');
                 if ($action_id_key !== '' && isset($local_by_uniq_id[$action_id_key])) {
@@ -715,6 +701,11 @@ class Cashback_API_Client
                     'website_id'     => $action['website_id'] ?? $action['website_name'] ?? $action['website'] ?? ($network['api_website_id'] ?? ''),
                 ];
                 continue;
+            }
+
+            // Запоминаем что эта локальная транзакция найдена в API (независимо от расхождений)
+            if (!empty($local_tx['click_id'])) {
+                $api_matched_local_click_ids[$local_tx['click_id']] = true;
             }
 
             // Запоминаем что эта локальная транзакция сматчена
@@ -801,8 +792,8 @@ class Cashback_API_Client
         // ─── Обратная проверка: транзакции есть у нас, но нет в API ───
         $missing_api = [];
         foreach ($local_transactions as $tx) {
-            // Пропускаем если уже сматчено
-            if (!empty($tx['click_id']) && isset($matched_click_ids[$tx['click_id']])) {
+            // Пропускаем если транзакция найдена в API (полное совпадение или расхождение — неважно)
+            if (!empty($tx['click_id']) && isset($api_matched_local_click_ids[$tx['click_id']])) {
                 continue;
             }
             // Пропускаем balance — финализировано, может быть за пределами API
@@ -987,16 +978,14 @@ class Cashback_API_Client
         }
 
         // ─── Индексы для матчинга ───
+        // 1. Основной: по click_id (= API.subid1, наш UUID)
         $local_by_click_id = [];
-        $local_by_order_number = [];
+        // 2. Fallback: по uniq_id (= API.action_id, уникальный ID в рамках CPA-сети)
         $local_by_uniq_id = [];
 
         foreach ($local_transactions as $tx) {
             if (!empty($tx['click_id'])) {
                 $local_by_click_id[$tx['click_id']] = $tx;
-            }
-            if (!empty($tx['order_number'])) {
-                $local_by_order_number[$tx['order_number']] = $tx;
             }
             if (!empty($tx['uniq_id'])) {
                 $local_by_uniq_id[$tx['uniq_id']] = $tx;
@@ -1044,7 +1033,8 @@ class Cashback_API_Client
         $api_sums   = ['approved' => 0.0, 'pending' => 0.0, 'declined' => 0.0];
         $local_sums = ['approved' => 0.0, 'pending' => 0.0, 'declined' => 0.0];
 
-        $matched_click_ids = [];
+        $matched_click_ids           = [];
+        $api_matched_local_click_ids = [];
 
         foreach ($api_actions as $action) {
             $api_click_id  = (string) ($action[$click_field] ?? '');
@@ -1065,20 +1055,12 @@ class Cashback_API_Client
             // ─── МАТЧИНГ ───
             $local_tx = null;
 
-            // 1. Основной ключ: click_id
+            // 1. Основной ключ: click_id (наш UUID, наиболее надёжный)
             if ($api_click_id !== '' && isset($local_by_click_id[$api_click_id])) {
                 $local_tx = $local_by_click_id[$api_click_id];
             }
 
-            // 2. Fallback: order_id → order_number
-            if (!$local_tx) {
-                $order_id = (string) ($action['order_id'] ?? '');
-                if ($order_id !== '' && isset($local_by_order_number[$order_id])) {
-                    $local_tx = $local_by_order_number[$order_id];
-                }
-            }
-
-            // 3. Fallback: action_id → uniq_id (надёжный ключ CPA-сети)
+            // 2. Fallback: action_id → uniq_id (уникальный ID в рамках CPA-сети)
             if (!$local_tx) {
                 $action_id_key = (string) ($action['action_id'] ?? '');
                 if ($action_id_key !== '' && isset($local_by_uniq_id[$action_id_key])) {
@@ -1103,6 +1085,11 @@ class Cashback_API_Client
                     'website_id'     => $action['website_id'] ?? $action['website_name'] ?? $action['website'] ?? ($network['api_website_id'] ?? ''),
                 ];
                 continue;
+            }
+
+            // Запоминаем что эта локальная транзакция найдена в API (независимо от расхождений)
+            if (!empty($local_tx['click_id'])) {
+                $api_matched_local_click_ids[$local_tx['click_id']] = true;
             }
 
             // Запоминаем что эта локальная транзакция сматчена
@@ -1184,7 +1171,8 @@ class Cashback_API_Client
         // ─── Обратная проверка: транзакции есть у нас, но нет в API ───
         $missing_api = [];
         foreach ($local_transactions as $tx) {
-            if (!empty($tx['click_id']) && isset($matched_click_ids[$tx['click_id']])) {
+            // Пропускаем если транзакция найдена в API (полное совпадение или расхождение — неважно)
+            if (!empty($tx['click_id']) && isset($api_matched_local_click_ids[$tx['click_id']])) {
                 continue;
             }
             if ($tx['order_status'] === 'balance') {
@@ -1355,18 +1343,13 @@ class Cashback_API_Client
             $click_field  = $config['api_click_field'] ?? 'subid1';
             $network_name = $config['name'] ?? $slug;
 
-            // Собираем click_id, order_id и action_id из API-ответа
+            // Собираем click_id и action_id из API-ответа
             $api_click_ids  = [];
-            $api_order_ids  = [];
             $api_action_ids = [];
             foreach ($api_actions as $action) {
                 $cid = (string) ($action[$click_field] ?? '');
                 if ($cid !== '') {
                     $api_click_ids[] = $cid;
-                }
-                $oid = (string) ($action['order_id'] ?? '');
-                if ($oid !== '') {
-                    $api_order_ids[] = $oid;
                 }
                 $aid = (string) ($action['action_id'] ?? '');
                 if ($aid !== '') {
@@ -1375,14 +1358,13 @@ class Cashback_API_Client
             }
 
             // ─── Batch-запросы: cashback_transactions ───
+            // 1. По click_id (наш UUID)
             $local_map_by_click = [];
-            $local_map_by_order = [];
-
             if (!empty($api_click_ids)) {
                 $placeholders = implode(',', array_fill(0, count($api_click_ids), '%s'));
                 $query_args = array_merge($api_click_ids, [$slug, $network_name]);
                 $rows = $wpdb->get_results($wpdb->prepare(
-                    "SELECT id, click_id, order_number, order_status, comission, sum_order, api_verified
+                    "SELECT id, click_id, uniq_id, order_status, comission, sum_order, api_verified
                      FROM {$this->transactions_table}
                      WHERE click_id IN ({$placeholders})
                        AND (LOWER(partner) = LOWER(%s) OR LOWER(partner) = LOWER(%s))",
@@ -1394,31 +1376,13 @@ class Cashback_API_Client
                 }
             }
 
-            if (!empty($api_order_ids)) {
-                $placeholders = implode(',', array_fill(0, count($api_order_ids), '%s'));
-                $query_args = array_merge($api_order_ids, [$slug, $network_name]);
-                $rows = $wpdb->get_results($wpdb->prepare(
-                    "SELECT id, click_id, order_number, order_status, comission, sum_order, api_verified
-                     FROM {$this->transactions_table}
-                     WHERE order_number IN ({$placeholders})
-                       AND (LOWER(partner) = LOWER(%s) OR LOWER(partner) = LOWER(%s))",
-                    ...$query_args
-                ), ARRAY_A);
-
-                foreach ($rows as $row) {
-                    if (!isset($local_map_by_order[$row['order_number']])) {
-                        $local_map_by_order[$row['order_number']] = $row;
-                    }
-                }
-            }
-
-            // Fallback 3: по uniq_id (= action_id CPA-сети) для cashback_transactions
+            // 2. По uniq_id (уникальный action_id CPA-сети, надёжный fallback)
             $local_map_by_uniq = [];
             if (!empty($api_action_ids)) {
                 $placeholders = implode(',', array_fill(0, count($api_action_ids), '%s'));
                 $query_args = array_merge($api_action_ids, [$slug, $network_name]);
                 $rows = $wpdb->get_results($wpdb->prepare(
-                    "SELECT id, click_id, order_number, uniq_id, order_status, comission, sum_order, api_verified
+                    "SELECT id, click_id, uniq_id, order_status, comission, sum_order, api_verified
                      FROM {$this->transactions_table}
                      WHERE uniq_id IN ({$placeholders})
                        AND (LOWER(partner) = LOWER(%s) OR LOWER(partner) = LOWER(%s))",
@@ -1433,14 +1397,13 @@ class Cashback_API_Client
             }
 
             // ─── Batch-запросы: cashback_unregistered_transactions ───
+            // 1. По click_id
             $unreg_map_by_click = [];
-            $unreg_map_by_order = [];
-
             if (!empty($api_click_ids)) {
                 $placeholders = implode(',', array_fill(0, count($api_click_ids), '%s'));
                 $query_args = array_merge($api_click_ids, [$slug, $network_name]);
                 $rows = $wpdb->get_results($wpdb->prepare(
-                    "SELECT id, click_id, order_number, order_status, comission, sum_order, user_id, api_verified
+                    "SELECT id, click_id, uniq_id, order_status, comission, sum_order, user_id, api_verified
                      FROM {$this->unregistered_table}
                      WHERE click_id IN ({$placeholders})
                        AND (LOWER(partner) = LOWER(%s) OR LOWER(partner) = LOWER(%s))",
@@ -1452,31 +1415,13 @@ class Cashback_API_Client
                 }
             }
 
-            if (!empty($api_order_ids)) {
-                $placeholders = implode(',', array_fill(0, count($api_order_ids), '%s'));
-                $query_args = array_merge($api_order_ids, [$slug, $network_name]);
-                $rows = $wpdb->get_results($wpdb->prepare(
-                    "SELECT id, click_id, order_number, order_status, comission, sum_order, user_id, api_verified
-                     FROM {$this->unregistered_table}
-                     WHERE order_number IN ({$placeholders})
-                       AND (LOWER(partner) = LOWER(%s) OR LOWER(partner) = LOWER(%s))",
-                    ...$query_args
-                ), ARRAY_A);
-
-                foreach ($rows as $row) {
-                    if (!isset($unreg_map_by_order[$row['order_number']])) {
-                        $unreg_map_by_order[$row['order_number']] = $row;
-                    }
-                }
-            }
-
-            // Fallback 3: по uniq_id (= action_id CPA-сети) для cashback_unregistered_transactions
+            // 2. По uniq_id
             $unreg_map_by_uniq = [];
             if (!empty($api_action_ids)) {
                 $placeholders = implode(',', array_fill(0, count($api_action_ids), '%s'));
                 $query_args = array_merge($api_action_ids, [$slug, $network_name]);
                 $rows = $wpdb->get_results($wpdb->prepare(
-                    "SELECT id, click_id, order_number, uniq_id, order_status, comission, sum_order, user_id, api_verified
+                    "SELECT id, click_id, uniq_id, order_status, comission, sum_order, user_id, api_verified
                      FROM {$this->unregistered_table}
                      WHERE uniq_id IN ({$placeholders})
                        AND (LOWER(partner) = LOWER(%s) OR LOWER(partner) = LOWER(%s))",
@@ -1496,12 +1441,10 @@ class Cashback_API_Client
 
             foreach ($api_actions as $action) {
                 $cid = (string) ($action[$click_field] ?? '');
-                $oid = (string) ($action['order_id'] ?? '');
 
                 // Проверяем, найдётся ли action в одной из таблиц
                 $aid_check = (string) ($action['action_id'] ?? '');
                 $would_match = ($cid !== '' && (isset($local_map_by_click[$cid]) || isset($unreg_map_by_click[$cid])))
-                    || ($oid !== '' && (isset($local_map_by_order[$oid]) || isset($unreg_map_by_order[$oid])))
                     || ($aid_check !== '' && (isset($local_map_by_uniq[$aid_check]) || isset($unreg_map_by_uniq[$aid_check])));
 
                 if (!$would_match) {
@@ -1541,20 +1484,12 @@ class Cashback_API_Client
                 // ─── Матчинг: cashback_transactions ───
                 $local = null;
 
-                // 1. Основной: click_id
+                // 1. Основной: click_id (наш UUID)
                 if ($api_click_id !== '' && isset($local_map_by_click[$api_click_id])) {
                     $local = $local_map_by_click[$api_click_id];
                 }
 
-                // 2. Fallback: order_id → order_number
-                if (!$local) {
-                    $order_id = (string) ($action['order_id'] ?? '');
-                    if ($order_id !== '' && isset($local_map_by_order[$order_id])) {
-                        $local = $local_map_by_order[$order_id];
-                    }
-                }
-
-                // 3. Fallback: action_id → uniq_id (надёжный ключ CPA-сети)
+                // 2. Fallback: action_id → uniq_id (уникальный ID в рамках CPA-сети)
                 if (!$local) {
                     $action_id_key = (string) ($action['action_id'] ?? '');
                     if ($action_id_key !== '' && isset($local_map_by_uniq[$action_id_key])) {
@@ -1571,18 +1506,12 @@ class Cashback_API_Client
                 // ─── Матчинг: cashback_unregistered_transactions ───
                 $unreg = null;
 
+                // 1. Основной: click_id
                 if ($api_click_id !== '' && isset($unreg_map_by_click[$api_click_id])) {
                     $unreg = $unreg_map_by_click[$api_click_id];
                 }
 
-                if (!$unreg) {
-                    $order_id = (string) ($action['order_id'] ?? '');
-                    if ($order_id !== '' && isset($unreg_map_by_order[$order_id])) {
-                        $unreg = $unreg_map_by_order[$order_id];
-                    }
-                }
-
-                // 3. Fallback: action_id → uniq_id для unregistered
+                // 2. Fallback: action_id → uniq_id
                 if (!$unreg) {
                     $action_id_key = (string) ($action['action_id'] ?? '');
                     if ($action_id_key !== '' && isset($unreg_map_by_uniq[$action_id_key])) {

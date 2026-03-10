@@ -164,11 +164,29 @@
         html += `<tr><td>Пользователь</td><td><strong>${userLabel}</strong></td></tr>`;
         html += `<tr><td>Сеть</td><td>${escHtml(data._networkLabel || data.network)}</td></tr>`;
         html += `<tr><td>Период</td><td>${escHtml(data.date_range?.start || '')} — ${escHtml(data.date_range?.end || '')}</td></tr>`;
-        html += `<tr><td>Действий в API</td><td>${data.api_total || 0}</td></tr>`;
-        html += `<tr><td>Транзакций локально</td><td>${data.local_total || 0}</td></tr>`;
+        const apiTotal = data.api_total || 0;
+        const localTotal = data.local_total || 0;
+        const apiTotalStyle = apiTotal === 0 && localTotal > 0 ? ' style="color:red;font-weight:bold;"' : '';
+        html += `<tr><td>Действий в API</td><td${apiTotalStyle}>${apiTotal}</td></tr>`;
+        html += `<tr><td>Транзакций локально</td><td>${localTotal}</td></tr>`;
         html += `<tr><td>Совпадений</td><td style="color:green;">${data.matched_count || 0}</td></tr>`;
         html += `<tr><td>Расхождений</td><td style="color:${data.mismatch_count > 0 ? 'red' : 'green'};">${data.mismatch_count || 0}</td></tr>`;
         html += '</tbody></table>';
+
+        // Предупреждение: API вернул 0, но локально есть данные
+        if (apiTotal === 0 && localTotal > 0) {
+            const userId = data.user_id !== undefined ? data.user_id : '?';
+            html += `<div class="notice notice-warning" style="margin-top:15px;padding:10px 15px;">
+                <p><strong>⚠️ API вернул 0 транзакций</strong> при ${localTotal} локальных — все они отображаются как «Есть на сайте, нет в API».</p>
+                <p style="margin-top:6px;">Возможные причины:</p>
+                <ul style="list-style:disc;padding-left:20px;margin-top:4px;">
+                    <li>В тестовом сервере нет транзакций — добавьте их через интерфейс mock-сервера.</li>
+                    <li>Неверный <code>subid2</code> в тестовых данных — должен быть равен User ID = <strong>${userId}</strong>.</li>
+                    <li>Неверный <code>subid1</code> (click_id) — должен совпадать с UUID из таблицы <code>cashback_click_log</code>.</li>
+                    <li>Некорректные API credentials или недоступный endpoint.</li>
+                </ul>
+            </div>`;
+        }
 
         // Финансовая сверка
         if (data.sums) {

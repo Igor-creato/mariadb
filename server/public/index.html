@@ -368,8 +368,9 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
           <span style="font-size:11px;color:var(--muted)">Это поле — ключ матчинга. Должно совпадать с click_id в БД плагина.</span>
         </div>
         <div class="form-group">
-          <label id="lbl-subid2">subid2 / User ID</label>
+          <label id="lbl-subid2">subid2 / User ID *</label>
           <input id="tx-user-id" type="text" placeholder="WordPress user_id (числовой)">
+          <span style="font-size:11px;color:var(--muted)">Обязательно. Должен совпадать с WordPress user_id пользователя — используется как фильтр в API запросе.</span>
         </div>
         <div class="form-group">
           <label>Статус</label>
@@ -770,7 +771,7 @@ function fillDefaults() {
   $('tx-action-id').value   = String(Date.now()).slice(-6);
   $('tx-order-id').value    = 'ORD-' + String(Date.now()).slice(-5);
   $('tx-click-id').value    = uuid;
-  $('tx-user-id').value     = '1';
+  $('tx-user-id').value     = '';
   $('tx-status').value      = 'approved';
   $('tx-order-sum').value   = '5000.00';
   $('tx-payment').value     = '300.00';
@@ -787,6 +788,9 @@ function fillDefaults() {
 async function addTransaction() {
   const clickId = $('tx-click-id').value.trim();
   if (!clickId) { showAlert('add-alert','error','Click ID обязателен — должен совпадать с UUID из cashback_click_log'); return; }
+
+  const userId = $('tx-user-id').value.trim();
+  if (!userId) { showAlert('add-alert','error','User ID обязателен — укажите WordPress user_id пользователя (используется как subid2 в API фильтре)'); return; }
 
   const dt = s => s ? s.replace('T',' ') + ':00' : '';
 
