@@ -612,6 +612,9 @@ class Cashback_API_Client
         // Fallback: по order_number (= API.order_id)
         $local_by_order_number = [];
 
+        // Fallback 3: по uniq_id (= action_id CPA-сети)
+        $local_by_uniq_id = [];
+
         foreach ($local_transactions as $tx) {
             if (!empty($tx['click_id'])) {
                 $local_by_click_id[$tx['click_id']] = $tx;
@@ -620,6 +623,9 @@ class Cashback_API_Client
                 // Может быть несколько транзакций с одним order_number (разные магазины)
                 // Используем первую непривязанную
                 $local_by_order_number[$tx['order_number']] = $tx;
+            }
+            if (!empty($tx['uniq_id'])) {
+                $local_by_uniq_id[$tx['uniq_id']] = $tx;
             }
         }
 
@@ -684,6 +690,14 @@ class Cashback_API_Client
                 }
             }
 
+            // 3. Fallback: action_id → uniq_id (надёжный ключ CPA-сети)
+            if (!$local_tx) {
+                $action_id_key = (string) ($action['action_id'] ?? '');
+                if ($action_id_key !== '' && isset($local_by_uniq_id[$action_id_key])) {
+                    $local_tx = $local_by_uniq_id[$action_id_key];
+                }
+            }
+
             if (!$local_tx) {
                 $missing_local[] = [
                     'action_id'      => $action['action_id'] ?? '',
@@ -696,9 +710,9 @@ class Cashback_API_Client
                     'campaign'       => $action['advcampaign_name'] ?? '',
                     'campaign_id'    => $action['advcampaign_id'] ?? '',
                     'currency'       => $action['currency'] ?? 'RUB',
-                    'click_time'     => $action['click_time'] ?? $action['click_date'] ?? $action['closing_date'] ?? '',
+                    'click_time'     => $action['click_date'] ?? $action['click_time'] ?? $action['closing_date'] ?? '',
                     'action_type'    => $action['action_type'] ?? '',
-                    'website_id'     => $action['website_id'] ?? $action['website'] ?? ($network['api_website_id'] ?? ''),
+                    'website_id'     => $action['website_id'] ?? $action['website_name'] ?? $action['website'] ?? ($network['api_website_id'] ?? ''),
                 ];
                 continue;
             }
@@ -764,6 +778,23 @@ class Cashback_API_Client
                     'action_id'          => $action['action_id'] ?? '',
                     'order_id'           => $action['order_id'] ?? '',
                 ];
+
+                // Авто-обновляем расхождения — синхронизируем локальные данные с API
+                $dummy_updated = 0;
+                $dummy_skipped = 0;
+                $this->sync_update_local(
+                    $wpdb,
+                    $this->transactions_table,
+                    $local_tx,
+                    $mapped_status,
+                    $api_payment,
+                    $api_cart,
+                    $network_slug,
+                    $api_click_id,
+                    $action,
+                    $dummy_updated,
+                    $dummy_skipped
+                );
             }
         }
 
@@ -958,6 +989,7 @@ class Cashback_API_Client
         // ─── Индексы для матчинга ───
         $local_by_click_id = [];
         $local_by_order_number = [];
+        $local_by_uniq_id = [];
 
         foreach ($local_transactions as $tx) {
             if (!empty($tx['click_id'])) {
@@ -965,6 +997,9 @@ class Cashback_API_Client
             }
             if (!empty($tx['order_number'])) {
                 $local_by_order_number[$tx['order_number']] = $tx;
+            }
+            if (!empty($tx['uniq_id'])) {
+                $local_by_uniq_id[$tx['uniq_id']] = $tx;
             }
         }
 
@@ -1043,6 +1078,14 @@ class Cashback_API_Client
                 }
             }
 
+            // 3. Fallback: action_id → uniq_id (надёжный ключ CPA-сети)
+            if (!$local_tx) {
+                $action_id_key = (string) ($action['action_id'] ?? '');
+                if ($action_id_key !== '' && isset($local_by_uniq_id[$action_id_key])) {
+                    $local_tx = $local_by_uniq_id[$action_id_key];
+                }
+            }
+
             if (!$local_tx) {
                 $missing_local[] = [
                     'action_id'      => $action['action_id'] ?? '',
@@ -1055,9 +1098,9 @@ class Cashback_API_Client
                     'campaign'       => $action['advcampaign_name'] ?? '',
                     'campaign_id'    => $action['advcampaign_id'] ?? '',
                     'currency'       => $action['currency'] ?? 'RUB',
-                    'click_time'     => $action['click_time'] ?? $action['click_date'] ?? $action['closing_date'] ?? '',
+                    'click_time'     => $action['click_date'] ?? $action['click_time'] ?? $action['closing_date'] ?? '',
                     'action_type'    => $action['action_type'] ?? '',
-                    'website_id'     => $action['website_id'] ?? $action['website'] ?? ($network['api_website_id'] ?? ''),
+                    'website_id'     => $action['website_id'] ?? $action['website_name'] ?? $action['website'] ?? ($network['api_website_id'] ?? ''),
                 ];
                 continue;
             }
@@ -1118,6 +1161,23 @@ class Cashback_API_Client
                     'action_id'          => $action['action_id'] ?? '',
                     'order_id'           => $action['order_id'] ?? '',
                 ];
+
+                // Авто-обновляем расхождения — синхронизируем локальные данные с API
+                $dummy_updated = 0;
+                $dummy_skipped = 0;
+                $this->sync_update_local(
+                    $wpdb,
+                    $this->unregistered_table,
+                    $local_tx,
+                    $mapped_status,
+                    $api_payment,
+                    $api_cart,
+                    $network_slug,
+                    $api_click_id,
+                    $action,
+                    $dummy_updated,
+                    $dummy_skipped
+                );
             }
         }
 
@@ -1295,9 +1355,10 @@ class Cashback_API_Client
             $click_field  = $config['api_click_field'] ?? 'subid1';
             $network_name = $config['name'] ?? $slug;
 
-            // Собираем click_id и order_id из API-ответа
-            $api_click_ids = [];
-            $api_order_ids = [];
+            // Собираем click_id, order_id и action_id из API-ответа
+            $api_click_ids  = [];
+            $api_order_ids  = [];
+            $api_action_ids = [];
             foreach ($api_actions as $action) {
                 $cid = (string) ($action[$click_field] ?? '');
                 if ($cid !== '') {
@@ -1306,6 +1367,10 @@ class Cashback_API_Client
                 $oid = (string) ($action['order_id'] ?? '');
                 if ($oid !== '') {
                     $api_order_ids[] = $oid;
+                }
+                $aid = (string) ($action['action_id'] ?? '');
+                if ($aid !== '') {
+                    $api_action_ids[] = $aid;
                 }
             }
 
@@ -1343,6 +1408,26 @@ class Cashback_API_Client
                 foreach ($rows as $row) {
                     if (!isset($local_map_by_order[$row['order_number']])) {
                         $local_map_by_order[$row['order_number']] = $row;
+                    }
+                }
+            }
+
+            // Fallback 3: по uniq_id (= action_id CPA-сети) для cashback_transactions
+            $local_map_by_uniq = [];
+            if (!empty($api_action_ids)) {
+                $placeholders = implode(',', array_fill(0, count($api_action_ids), '%s'));
+                $query_args = array_merge($api_action_ids, [$slug, $network_name]);
+                $rows = $wpdb->get_results($wpdb->prepare(
+                    "SELECT id, click_id, order_number, uniq_id, order_status, comission, sum_order, api_verified
+                     FROM {$this->transactions_table}
+                     WHERE uniq_id IN ({$placeholders})
+                       AND (LOWER(partner) = LOWER(%s) OR LOWER(partner) = LOWER(%s))",
+                    ...$query_args
+                ), ARRAY_A);
+
+                foreach ($rows as $row) {
+                    if (!isset($local_map_by_uniq[$row['uniq_id']])) {
+                        $local_map_by_uniq[$row['uniq_id']] = $row;
                     }
                 }
             }
@@ -1385,6 +1470,26 @@ class Cashback_API_Client
                 }
             }
 
+            // Fallback 3: по uniq_id (= action_id CPA-сети) для cashback_unregistered_transactions
+            $unreg_map_by_uniq = [];
+            if (!empty($api_action_ids)) {
+                $placeholders = implode(',', array_fill(0, count($api_action_ids), '%s'));
+                $query_args = array_merge($api_action_ids, [$slug, $network_name]);
+                $rows = $wpdb->get_results($wpdb->prepare(
+                    "SELECT id, click_id, order_number, uniq_id, order_status, comission, sum_order, user_id, api_verified
+                     FROM {$this->unregistered_table}
+                     WHERE uniq_id IN ({$placeholders})
+                       AND (LOWER(partner) = LOWER(%s) OR LOWER(partner) = LOWER(%s))",
+                    ...$query_args
+                ), ARRAY_A);
+
+                foreach ($rows as $row) {
+                    if (!isset($unreg_map_by_uniq[$row['uniq_id']])) {
+                        $unreg_map_by_uniq[$row['uniq_id']] = $row;
+                    }
+                }
+            }
+
             // ─── Batch-проверка существования пользователей для INSERT ───
             $user_field = $config['api_user_field'] ?? 'subid';
             $potential_user_ids = [];
@@ -1394,8 +1499,10 @@ class Cashback_API_Client
                 $oid = (string) ($action['order_id'] ?? '');
 
                 // Проверяем, найдётся ли action в одной из таблиц
+                $aid_check = (string) ($action['action_id'] ?? '');
                 $would_match = ($cid !== '' && (isset($local_map_by_click[$cid]) || isset($unreg_map_by_click[$cid])))
-                    || ($oid !== '' && (isset($local_map_by_order[$oid]) || isset($unreg_map_by_order[$oid])));
+                    || ($oid !== '' && (isset($local_map_by_order[$oid]) || isset($unreg_map_by_order[$oid])))
+                    || ($aid_check !== '' && (isset($local_map_by_uniq[$aid_check]) || isset($unreg_map_by_uniq[$aid_check])));
 
                 if (!$would_match) {
                     $uid = (string) ($action[$user_field] ?? '');
@@ -1447,6 +1554,14 @@ class Cashback_API_Client
                     }
                 }
 
+                // 3. Fallback: action_id → uniq_id (надёжный ключ CPA-сети)
+                if (!$local) {
+                    $action_id_key = (string) ($action['action_id'] ?? '');
+                    if ($action_id_key !== '' && isset($local_map_by_uniq[$action_id_key])) {
+                        $local = $local_map_by_uniq[$action_id_key];
+                    }
+                }
+
                 // ─── Если найдено в cashback_transactions — обновляем ───
                 if ($local) {
                     $this->sync_update_local($wpdb, $this->transactions_table, $local, $mapped_status, $api_payment, $api_cart, $slug, $api_click_id, $action, $updated, $skipped);
@@ -1464,6 +1579,14 @@ class Cashback_API_Client
                     $order_id = (string) ($action['order_id'] ?? '');
                     if ($order_id !== '' && isset($unreg_map_by_order[$order_id])) {
                         $unreg = $unreg_map_by_order[$order_id];
+                    }
+                }
+
+                // 3. Fallback: action_id → uniq_id для unregistered
+                if (!$unreg) {
+                    $action_id_key = (string) ($action['action_id'] ?? '');
+                    if ($action_id_key !== '' && isset($unreg_map_by_uniq[$action_id_key])) {
+                        $unreg = $unreg_map_by_uniq[$action_id_key];
                     }
                 }
 
@@ -1704,7 +1827,7 @@ class Cashback_API_Client
 
         // 5. Парсим даты
         $action_date_mysql = self::parse_api_date((string) ($action['action_date'] ?? ''));
-        $click_time_raw    = (string) ($action['click_time'] ?? $action['click_date'] ?? $action['closing_date'] ?? '');
+        $click_time_raw    = (string) ($action['click_date'] ?? $action['click_time'] ?? $action['closing_date'] ?? '');
         $click_time_mysql  = self::parse_api_date($click_time_raw);
 
         // 6. Извлекаем поля

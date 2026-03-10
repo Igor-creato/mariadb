@@ -322,6 +322,19 @@ class Cashback_Epn_Adapter extends Cashback_Network_Adapter_Base
         $raw_body = wp_remote_retrieve_body($response);
         $body     = json_decode($raw_body, true);
 
+        // На 401 — сбрасываем кеш токена и повторяем один раз
+        if ($code === 401 && empty($params['_retry_after_401'])) {
+            $client_id = $credentials['client_id'] ?? '';
+            $cache_key = 'cashback_epn_token_' . md5($client_id);
+            delete_transient($cache_key);
+            unset($this->token_cache[$cache_key]);
+
+            error_log('Cashback EPN: 401 on actions endpoint, invalidating token and retrying');
+
+            $params['_retry_after_401'] = true;
+            return $this->fetch_actions($credentials, $params, $network_config);
+        }
+
         // На 403 пробуем сбросить кеш токена и повторить один раз
         if ($code === 403 && empty($params['_retry_after_403'])) {
             $client_id = $credentials['client_id'] ?? '';

@@ -172,6 +172,19 @@ class Cashback_Admitad_Adapter extends Cashback_Network_Adapter_Base
         $code = wp_remote_retrieve_response_code($response);
         $body = json_decode(wp_remote_retrieve_body($response), true);
 
+        // На 401 — сбрасываем кеш токена и повторяем один раз
+        if ($code === 401 && empty($params['_retry_after_401'])) {
+            $client_id = $credentials['client_id'] ?? '';
+            $cache_key = 'cashback_admitad_token_' . md5($client_id);
+            delete_transient($cache_key);
+            unset($this->token_cache[$cache_key]);
+
+            error_log('Cashback Admitad: 401 on actions endpoint, invalidating token and retrying');
+
+            $params['_retry_after_401'] = true;
+            return $this->fetch_actions($credentials, $params, $network_config);
+        }
+
         if ($code !== 200) {
             return $this->fetch_error("HTTP {$code}: " . wp_json_encode($body));
         }
