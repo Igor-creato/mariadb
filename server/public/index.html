@@ -1,0 +1,971 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CPA Mock Server</title>
+<style>
+:root {
+  --bg: #0f172a; --surface: #1e293b; --surface2: #273549; --border: #334155;
+  --text: #e2e8f0; --muted: #94a3b8; --accent: #3b82f6; --accent2: #60a5fa;
+  --green: #22c55e; --red: #ef4444; --yellow: #f59e0b; --purple: #a855f7;
+  --admitad: #ff6b35; --epn: #7c3aed;
+  --radius: 8px; --font: 'Segoe UI', system-ui, sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; }
+a { color: var(--accent2); text-decoration: none; }
+
+/* Layout */
+.layout { display: flex; min-height: 100vh; }
+.sidebar { width: 220px; background: var(--surface); border-right: 1px solid var(--border);
+           padding: 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; flex-shrink: 0; }
+.main { flex: 1; padding: 24px; overflow-y: auto; max-width: 1400px; }
+
+/* Sidebar */
+.logo { padding: 20px 16px 12px; font-size: 16px; font-weight: 700; color: var(--text);
+        border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
+.logo-icon { font-size: 20px; }
+.nav-section { padding: 12px 0 4px; }
+.nav-label { padding: 4px 16px; font-size: 11px; font-weight: 600; color: var(--muted);
+             text-transform: uppercase; letter-spacing: .08em; }
+.nav-item { display: flex; align-items: center; gap: 8px; padding: 8px 16px; cursor: pointer;
+            border-left: 3px solid transparent; transition: all .15s; color: var(--muted); }
+.nav-item:hover { background: var(--surface2); color: var(--text); }
+.nav-item.active { border-color: var(--accent); background: rgba(59,130,246,.1); color: var(--accent2); }
+.nav-icon { font-size: 16px; width: 20px; text-align: center; }
+.nav-badge { margin-left: auto; background: var(--accent); color: #fff; border-radius: 10px;
+             padding: 1px 7px; font-size: 11px; font-weight: 600; }
+
+/* Cards */
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+        margin-bottom: 16px; overflow: hidden; }
+.card-header { padding: 14px 18px; border-bottom: 1px solid var(--border);
+               display: flex; align-items: center; justify-content: space-between; }
+.card-title { font-weight: 600; font-size: 15px; }
+.card-body { padding: 18px; }
+
+/* Stats row */
+.stats-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.stat-box { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+            padding: 14px; text-align: center; }
+.stat-val { font-size: 28px; font-weight: 700; line-height: 1.1; }
+.stat-lbl { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+/* Tabs */
+.tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 18px; }
+.tab { padding: 9px 18px; cursor: pointer; border-bottom: 2px solid transparent;
+       font-weight: 500; color: var(--muted); transition: all .15s; }
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--accent2); border-color: var(--accent); }
+
+/* Network badge */
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+.badge-admitad { background: rgba(255,107,53,.15); color: var(--admitad); }
+.badge-epn     { background: rgba(124,58,237,.15); color: #a78bfa; }
+.badge-green   { background: rgba(34,197,94,.12); color: var(--green); }
+.badge-red     { background: rgba(239,68,68,.12); color: var(--red); }
+.badge-yellow  { background: rgba(245,158,11,.12); color: var(--yellow); }
+.badge-blue    { background: rgba(59,130,246,.12); color: var(--accent2); }
+
+/* Forms */
+.form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+.form-group { display: flex; flex-direction: column; gap: 5px; }
+.form-group label { font-size: 12px; color: var(--muted); font-weight: 500; }
+input, select, textarea { background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 5px; padding: 7px 10px; color: var(--text); font-size: 13px; width: 100%;
+  transition: border-color .15s; font-family: inherit; }
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+select option { background: var(--surface2); }
+textarea { min-height: 90px; resize: vertical; }
+
+/* Buttons */
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 5px;
+       cursor: pointer; font-size: 13px; font-weight: 500; border: none; transition: all .15s;
+       font-family: inherit; }
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:hover { background: #2563eb; }
+.btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+.btn-secondary:hover { background: var(--border); }
+.btn-danger { background: rgba(239,68,68,.15); color: var(--red); border: 1px solid rgba(239,68,68,.3); }
+.btn-danger:hover { background: rgba(239,68,68,.25); }
+.btn-success { background: rgba(34,197,94,.15); color: var(--green); border: 1px solid rgba(34,197,94,.3); }
+.btn-success:hover { background: rgba(34,197,94,.25); }
+.btn-sm { padding: 4px 10px; font-size: 12px; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+
+/* Table */
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { padding: 9px 10px; text-align: left; font-weight: 600; color: var(--muted); font-size: 11px;
+     text-transform: uppercase; letter-spacing: .05em; border-bottom: 1px solid var(--border); }
+td { padding: 9px 10px; border-bottom: 1px solid rgba(51,65,85,.5); vertical-align: middle; }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: rgba(255,255,255,.02); }
+.mono { font-family: 'Consolas', 'Fira Code', monospace; font-size: 12px; }
+.truncate { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Log */
+.log-entry { display: flex; gap: 10px; align-items: baseline; padding: 5px 0;
+             border-bottom: 1px solid rgba(51,65,85,.3); font-size: 12px; font-family: monospace; }
+.log-entry:last-child { border-bottom: none; }
+.log-ts { color: var(--muted); flex-shrink: 0; }
+.log-method { flex-shrink: 0; width: 50px; font-weight: 600; }
+.log-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-status { flex-shrink: 0; }
+.method-get { color: var(--green); }
+.method-post { color: var(--accent2); }
+.method-put { color: var(--yellow); }
+.method-delete { color: var(--red); }
+
+/* Alerts */
+.alert { padding: 10px 14px; border-radius: 5px; margin-bottom: 12px; font-size: 13px; display: flex; gap: 8px; }
+.alert-success { background: rgba(34,197,94,.12); border: 1px solid rgba(34,197,94,.3); color: #86efac; }
+.alert-error   { background: rgba(239,68,68,.12);  border: 1px solid rgba(239,68,68,.3);  color: #fca5a5; }
+.alert-info    { background: rgba(59,130,246,.12); border: 1px solid rgba(59,130,246,.3); color: #93c5fd; }
+
+/* URL blocks */
+.url-block { background: var(--surface2); border: 1px solid var(--border); border-radius: 5px;
+             padding: 8px 12px; font-family: monospace; font-size: 12px; color: var(--accent2);
+             display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.url-label { color: var(--muted); font-size: 11px; margin-bottom: 3px; }
+
+/* Section */
+.section { display: none; }
+.section.active { display: block; }
+.page-title { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+.page-sub   { color: var(--muted); margin-bottom: 20px; font-size: 13px; }
+
+/* Spinner */
+.spin { display: inline-block; animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Misc */
+.text-muted { color: var(--muted); }
+.text-green { color: var(--green); }
+.text-red   { color: var(--red); }
+.gap-8 { gap: 8px; }
+.flex { display: flex; }
+.flex-center { display: flex; align-items: center; }
+.items-start { align-items: flex-start; }
+hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+</style>
+</head>
+<body>
+
+<div class="layout">
+<!-- ══════════════ SIDEBAR ══════════════ -->
+<nav class="sidebar">
+  <div class="logo"><span class="logo-icon">🔌</span> CPA Mock</div>
+  <div class="nav-section">
+    <div class="nav-label">Обзор</div>
+    <div class="nav-item active" data-section="dashboard" onclick="showSection('dashboard',this)">
+      <span class="nav-icon">📊</span> Дашборд
+    </div>
+    <div class="nav-item" data-section="connect" onclick="showSection('connect',this)">
+      <span class="nav-icon">🔗</span> Подключение
+    </div>
+  </div>
+  <div class="nav-section">
+    <div class="nav-label">Данные</div>
+    <div class="nav-item" data-section="transactions" onclick="showSection('transactions',this)">
+      <span class="nav-icon">💳</span> Транзакции
+      <span class="nav-badge" id="nav-tx-count">0</span>
+    </div>
+    <div class="nav-item" data-section="add-tx" onclick="showSection('add-tx',this)">
+      <span class="nav-icon">➕</span> Добавить
+    </div>
+    <div class="nav-item" data-section="import" onclick="showSection('import',this)">
+      <span class="nav-icon">📥</span> Импорт / Экспорт
+    </div>
+  </div>
+  <div class="nav-section">
+    <div class="nav-label">Настройки</div>
+    <div class="nav-item" data-section="credentials" onclick="showSection('credentials',this)">
+      <span class="nav-icon">🔑</span> Credentials
+    </div>
+    <div class="nav-item" data-section="logs" onclick="showSection('logs',this)">
+      <span class="nav-icon">📋</span> Лог запросов
+    </div>
+  </div>
+</nav>
+
+<!-- ══════════════ MAIN ══════════════ -->
+<main class="main">
+
+<!-- ─── DASHBOARD ─── -->
+<section class="section active" id="section-dashboard">
+  <div class="page-title">Дашборд</div>
+  <div class="page-sub">Состояние mock-сервера</div>
+
+  <div class="stats-row" id="stats-row">
+    <div class="stat-box"><div class="stat-val" id="stat-total">—</div><div class="stat-lbl">Транзакций</div></div>
+    <div class="stat-box"><div class="stat-val" style="color:var(--admitad)" id="stat-admitad">—</div><div class="stat-lbl">Admitad</div></div>
+    <div class="stat-box"><div class="stat-val" style="color:#a78bfa" id="stat-epn">—</div><div class="stat-lbl">EPN</div></div>
+    <div class="stat-box"><div class="stat-val text-green" id="stat-tokens">—</div><div class="stat-lbl">Активных токенов</div></div>
+    <div class="stat-box"><div class="stat-val" id="stat-uptime">—</div><div class="stat-lbl">Uptime (сек)</div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><span class="card-title">Быстрые действия</span></div>
+    <div class="card-body">
+      <div class="btn-row">
+        <button class="btn btn-secondary" onclick="loadStatus()">↻ Обновить статус</button>
+        <button class="btn btn-danger btn-sm" onclick="clearTokens()">Сбросить токены</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><span class="card-title">Последние запросы к API</span></div>
+    <div class="card-body" id="dash-logs" style="max-height:300px;overflow-y:auto;">
+      <div class="text-muted">Загрузка...</div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── CONNECTION INFO ─── -->
+<section class="section" id="section-connect">
+  <div class="page-title">Подключение</div>
+  <div class="page-sub">Настройте эти URL в WordPress Plugin Admin → API Validation → Credentials</div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">🟠 Admitad — настройки сети</span>
+    </div>
+    <div class="card-body">
+      <div class="alert alert-info">Убедитесь что credentials совпадают с настройками в разделе «Credentials» этого сервера.</div>
+
+      <div class="url-label">api_base_url (оставьте пустым или укажите)</div>
+      <div class="url-block" id="url-admitad-base">http://host.docker.internal:3000/admitad <button class="btn btn-sm btn-secondary" onclick="copyUrl(this)">⎘</button></div>
+
+      <div class="url-label">api_token_endpoint</div>
+      <div class="url-block" id="url-admitad-token">http://host.docker.internal:3000/admitad/token/ <button class="btn btn-sm btn-secondary" onclick="copyUrl(this)">⎘</button></div>
+
+      <div class="url-label">api_actions_endpoint</div>
+      <div class="url-block" id="url-admitad-actions">http://host.docker.internal:3000/admitad/statistics/actions/ <button class="btn btn-sm btn-secondary" onclick="copyUrl(this)">⎘</button></div>
+
+      <div class="url-label">api_user_field (subid2 = user_id)</div>
+      <div class="url-block">subid2 <button class="btn btn-sm btn-secondary" onclick="copyUrl(this)">⎘</button></div>
+
+      <div class="url-label">api_click_field (subid1 = click_id)</div>
+      <div class="url-block">subid1 <button class="btn btn-sm btn-secondary" onclick="copyUrl(this)">⎘</button></div>
+
+      <div class="url-label">api_status_map (JSON)</div>
+      <div class="url-block" style="font-size:11px">{"pending":"waiting","approved":"completed","declined":"declined","hold":"waiting"} <button class="btn btn-sm btn-secondary" onclick="copyUrl(this)">⎘</button></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">🟣 EPN — настройки сети</span>
+    </div>
+    <div class="card-body">
+      <div class="url-label">api_base_url (для SSID и token)</div>
+      <div class="url-block">http://host.docker.internal:3000/epn <button class="btn btn-sm btn-secondary" onclick="copyUrl(this)">⎘</button></div>
+
+      <div class="url-label">api_token_endpoint</div>
+      <div class="url-block">http://host.docker.internal:3000/epn/token <button class="btn btn-sm btn-secondary" onclick="copyUrl(this)">⎘</button></div>
+
+      <div class="url-label">api_actions_endpoint</div>
+      <div class="url-block">http://host.docker.internal:3000/epn/transactions/user <button class="btn btn-sm btn-secondary" onclick="copyUrl(this)">⎘</button></div>
+
+      <div class="url-label">api_user_field (sub2 = user_id)</div>
+      <div class="url-block">sub2 <button class="btn btn-sm btn-secondary" onclick="copyUrl(this)">⎘</button></div>
+
+      <div class="url-label">api_click_field (click_id = click_id)</div>
+      <div class="url-block">click_id <button class="btn btn-sm btn-secondary" onclick="copyUrl(this)">⎘</button></div>
+
+      <div class="url-label">api_status_map (JSON)</div>
+      <div class="url-block" style="font-size:11px">{"pending":"waiting","approved":"completed","rejected":"declined","canceled":"declined","hold":"waiting"} <button class="btn btn-sm btn-secondary" onclick="copyUrl(this)">⎘</button></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><span class="card-title">Если WordPress на хосте (не в Docker)</span></div>
+    <div class="card-body">
+      <div class="alert alert-info">Замените <code>host.docker.internal</code> на <code>localhost</code> в URL выше.</div>
+      <div class="url-label">Пример api_token_endpoint для Admitad</div>
+      <div class="url-block">http://localhost:3000/admitad/token/ <button class="btn btn-sm btn-secondary" onclick="copyUrl(this)">⎘</button></div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── TRANSACTIONS ─── -->
+<section class="section" id="section-transactions">
+  <div class="page-title">Транзакции</div>
+  <div class="page-sub">Тестовые данные, которые возвращает mock-сервер</div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Список транзакций</span>
+      <div class="flex gap-8">
+        <select id="filter-network" onchange="loadTransactions()" style="width:140px">
+          <option value="">Все сети</option>
+          <option value="admitad">Admitad</option>
+          <option value="epn">EPN</option>
+        </select>
+        <button class="btn btn-secondary btn-sm" onclick="loadTransactions()">↻</button>
+        <button class="btn btn-danger btn-sm" onclick="clearTransactions()">Очистить</button>
+      </div>
+    </div>
+    <div class="card-body" style="padding:0">
+      <div class="table-wrap">
+        <table id="tx-table">
+          <thead>
+            <tr>
+              <th>Сеть</th>
+              <th>Action ID</th>
+              <th>Order ID</th>
+              <th>Click ID (subid1)</th>
+              <th>User ID (subid2)</th>
+              <th>Статус</th>
+              <th>Сумма</th>
+              <th>Комиссия</th>
+              <th>Дата</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="tx-tbody">
+            <tr><td colspan="10" class="text-muted" style="text-align:center;padding:20px">Загрузка...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── ADD TRANSACTION ─── -->
+<section class="section" id="section-add-tx">
+  <div class="page-title">Добавить транзакцию</div>
+  <div class="page-sub">Заполните поля и нажмите «Добавить»</div>
+
+  <div id="add-alert"></div>
+
+  <div class="card">
+    <div class="card-header"><span class="card-title">Данные транзакции</span></div>
+    <div class="card-body">
+      <div class="form-grid">
+        <div class="form-group" style="grid-column:span 2">
+          <label>Сеть *</label>
+          <select id="tx-network" onchange="updateNetworkHints()">
+            <option value="admitad">Admitad</option>
+            <option value="epn">EPN</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Action ID</label>
+          <input id="tx-action-id" type="text" placeholder="auto">
+        </div>
+        <div class="form-group">
+          <label>Order ID (номер заказа у партнёра)</label>
+          <input id="tx-order-id" type="text" placeholder="ORD-001">
+        </div>
+        <div class="form-group" style="grid-column:span 2">
+          <label id="lbl-subid1">subid1 / Click ID — UUID из cashback_click_log *</label>
+          <input id="tx-click-id" type="text" placeholder="Вставьте click_id из таблицы cashback_click_log">
+          <span style="font-size:11px;color:var(--muted)">Это поле — ключ матчинга. Должно совпадать с click_id в БД плагина.</span>
+        </div>
+        <div class="form-group">
+          <label id="lbl-subid2">subid2 / User ID</label>
+          <input id="tx-user-id" type="text" placeholder="WordPress user_id (числовой)">
+        </div>
+        <div class="form-group">
+          <label>Статус</label>
+          <select id="tx-status">
+            <option value="pending">pending (→ waiting)</option>
+            <option value="approved">approved (→ completed)</option>
+            <option value="declined">declined (→ declined)</option>
+            <option value="hold">hold (→ waiting)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Сумма заказа (order_sum / revenue)</label>
+          <input id="tx-order-sum" type="number" step="0.01" value="5000.00">
+        </div>
+        <div class="form-group">
+          <label>Комиссия (payment_webmaster / commission_user)</label>
+          <input id="tx-payment" type="number" step="0.01" value="300.00">
+        </div>
+        <div class="form-group">
+          <label>Валюта</label>
+          <input id="tx-currency" type="text" value="RUB" maxlength="3">
+        </div>
+        <div class="form-group">
+          <label>Дата действия (action_date)</label>
+          <input id="tx-action-date" type="date">
+        </div>
+        <div class="form-group">
+          <label>Время действия (action_time)</label>
+          <input id="tx-action-time" type="datetime-local">
+        </div>
+        <div class="form-group">
+          <label>Время клика (click_time)</label>
+          <input id="tx-click-time" type="datetime-local">
+        </div>
+        <div class="form-group">
+          <label>Offer ID (advcampaign_id)</label>
+          <input id="tx-offer-id" type="number" value="100">
+        </div>
+        <div class="form-group">
+          <label>Название оффера (advcampaign_name)</label>
+          <input id="tx-offer-name" type="text" value="Test Offer">
+        </div>
+        <div class="form-group">
+          <label>Website ID (площадка)</label>
+          <input id="tx-website-id" type="text" placeholder="12345">
+        </div>
+        <div class="form-group">
+          <label>Код страны</label>
+          <input id="tx-country" type="text" value="RU" maxlength="2">
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-primary" onclick="addTransaction()">➕ Добавить транзакцию</button>
+        <button class="btn btn-secondary" onclick="fillDefaults()">🎲 Заполнить примером</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── IMPORT / EXPORT ─── -->
+<section class="section" id="section-import">
+  <div class="page-title">Импорт / Экспорт</div>
+  <div class="page-sub">Массовая загрузка данных</div>
+
+  <div id="import-alert"></div>
+
+  <div class="card">
+    <div class="card-header"><span class="card-title">Экспорт</span></div>
+    <div class="card-body">
+      <div class="btn-row">
+        <button class="btn btn-secondary" onclick="exportJSON('all')">📥 Все транзакции</button>
+        <button class="btn btn-secondary" onclick="exportJSON('admitad')">📥 Только Admitad</button>
+        <button class="btn btn-secondary" onclick="exportJSON('epn')">📥 Только EPN</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">📂 Импорт из Hook-файла</span>
+    </div>
+    <div class="card-body">
+      <div class="alert alert-info">
+        Формат: одна транзакция на строку, <code>key=val&amp;key=val&amp;...</code><br>
+        Статусы в файле — EPN-нативные. При выборе <b>Admitad</b> они автоматически конвертируются:<br>
+        <code>waiting → approved_but_stalled &nbsp;|&nbsp; rejected → declined &nbsp;|&nbsp; completed → approved</code>
+      </div>
+      <div id="hook-alert"></div>
+      <div class="form-grid" style="margin-bottom:12px">
+        <div class="form-group">
+          <label>Сеть *</label>
+          <select id="hook-network">
+            <option value="admitad">Admitad</option>
+            <option value="epn">EPN</option>
+          </select>
+        </div>
+        <div class="form-group" style="justify-content:flex-end;flex-direction:row;align-items:flex-end;gap:8px">
+          <label for="hook-file-input" class="btn btn-secondary" style="cursor:pointer;margin:0">
+            📁 Загрузить файл
+          </label>
+          <input type="file" id="hook-file-input" accept=".txt,.log,.csv" style="display:none" onchange="loadHookFile(this)">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Содержимое hook-файла</label>
+        <textarea id="hook-text" rows="8" placeholder="click_id=abc123&amp;user_id=2&amp;uniq_id=12345&amp;order_number=ORD-1&amp;offer_id=100&amp;offer_name=iHerb&amp;order_status=approved&amp;sum_order=5000&amp;comission=300&amp;currency=RUB&amp;action_date=2026-01-15 10:30:00&amp;click_time=2026-01-15 10:00:00&amp;website_id=12345&amp;action_type=sale"></textarea>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-secondary" onclick="previewHook()">🔍 Разобрать (предпросмотр)</button>
+      </div>
+
+      <!-- Preview section — hidden until parsed -->
+      <div id="hook-preview" style="display:none;margin-top:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <span id="hook-preview-count" style="font-weight:600"></span>
+          <button class="btn btn-primary" onclick="confirmHookImport()">✅ Подтвердить загрузку</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Сеть</th>
+                <th>click_id</th>
+                <th>user_id</th>
+                <th>Order</th>
+                <th>Статус (исх. → mapped)</th>
+                <th>Сумма</th>
+                <th>Комиссия</th>
+                <th>Дата</th>
+              </tr>
+            </thead>
+            <tbody id="hook-preview-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><span class="card-title">Импорт JSON</span></div>
+    <div class="card-body">
+      <div class="form-group">
+        <label>Вставьте JSON-массив транзакций</label>
+        <textarea id="import-json" rows="10" placeholder='[
+  {
+    "network": "admitad",
+    "order_id": "ORD-001",
+    "click_id": "your-click-uuid-here",
+    "subid1": "your-click-uuid-here",
+    "subid2": "42",
+    "status": "approved",
+    "order_sum": 5000,
+    "payment": 300,
+    "currency": "RUB",
+    "action_date": "2024-01-15",
+    "advcampaign_name": "Test Shop"
+  }
+]'></textarea>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-primary" onclick="importJSON()">📤 Загрузить</button>
+        <button class="btn btn-secondary" onclick="loadSample()">📋 Загрузить пример</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── CREDENTIALS ─── -->
+<section class="section" id="section-credentials">
+  <div class="page-title">Credentials</div>
+  <div class="page-sub">Логин/пароль для подключения плагина к mock-серверу</div>
+
+  <div id="cred-alert"></div>
+
+  <div class="card">
+    <div class="card-header"><span class="card-title">🟠 Admitad</span></div>
+    <div class="card-body">
+      <div class="form-grid">
+        <div class="form-group">
+          <label>client_id</label>
+          <input id="adm-client-id" type="text" value="test_client">
+        </div>
+        <div class="form-group">
+          <label>client_secret</label>
+          <input id="adm-client-secret" type="text" value="test_secret">
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-primary" onclick="saveCredentials('admitad')">💾 Сохранить</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><span class="card-title">🟣 EPN</span></div>
+    <div class="card-body">
+      <div class="form-grid">
+        <div class="form-group">
+          <label>client_id</label>
+          <input id="epn-client-id" type="text" value="test_client">
+        </div>
+        <div class="form-group">
+          <label>client_secret</label>
+          <input id="epn-client-secret" type="text" value="test_secret">
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-primary" onclick="saveCredentials('epn')">💾 Сохранить</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── LOGS ─── -->
+<section class="section" id="section-logs">
+  <div class="page-title">Лог запросов</div>
+  <div class="page-sub">Последние 100 запросов к CPA mock-эндпоинтам</div>
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Запросы</span>
+      <button class="btn btn-secondary btn-sm" onclick="loadLogs()">↻ Обновить</button>
+    </div>
+    <div class="card-body" id="logs-body" style="max-height:600px;overflow-y:auto;">
+      <div class="text-muted">Загрузка...</div>
+    </div>
+  </div>
+</section>
+
+</main><!-- /main -->
+</div><!-- /layout -->
+
+<script>
+// ──────────────────────────────────────────────────────────────────────────────
+// Utils
+// ──────────────────────────────────────────────────────────────────────────────
+
+const $ = id => document.getElementById(id);
+
+function esc(str) {
+  return String(str || '')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;');
+}
+
+async function api(method, path, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body !== undefined) opts.body = JSON.stringify(body);
+  const r = await fetch(path, opts);
+  return r.json();
+}
+
+function showAlert(containerId, type, msg) {
+  $(containerId).innerHTML = `<div class="alert alert-${type}">${esc(msg)}</div>`;
+  setTimeout(() => { if ($(containerId)) $(containerId).innerHTML = ''; }, 5000);
+}
+
+function showSection(name, el) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  $('section-' + name).classList.add('active');
+  el.classList.add('active');
+  if (name === 'dashboard') { loadStatus(); loadLogs(); }
+  if (name === 'transactions') loadTransactions();
+  if (name === 'logs') loadLogs();
+  if (name === 'credentials') loadCredentialsUI();
+}
+
+function copyUrl(btn) {
+  const text = btn.closest('.url-block').childNodes[0].textContent.trim();
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = '✓'; setTimeout(() => btn.textContent = '⎘', 1500);
+  });
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Status / Dashboard
+// ──────────────────────────────────────────────────────────────────────────────
+
+async function loadStatus() {
+  const d = await api('GET', '/api/status');
+  $('stat-total').textContent   = d.transactions.total;
+  $('stat-admitad').textContent = d.transactions.admitad;
+  $('stat-epn').textContent     = d.transactions.epn;
+  $('stat-tokens').textContent  = d.active_tokens;
+  $('stat-uptime').textContent  = d.uptime_seconds;
+  $('nav-tx-count').textContent = d.transactions.total;
+  loadLogs();
+}
+
+async function loadLogs() {
+  const logs = await api('GET', '/api/logs');
+  const el   = $('dash-logs');
+  const lb   = $('logs-body');
+  const html = logs.length === 0
+    ? '<div class="text-muted">Нет запросов</div>'
+    : logs.map(l => {
+        const m   = l.method || 'GET';
+        const cls = 'method-' + m.toLowerCase();
+        const sc  = l.status >= 400 ? 'text-red' : l.status >= 200 ? 'text-green' : '';
+        const time = l.ts ? l.ts.slice(11,19) : '';
+        return `<div class="log-entry">
+          <span class="log-ts">${esc(time)}</span>
+          <span class="log-method ${cls}">${esc(m)}</span>
+          <span class="log-path">${esc(l.path)}</span>
+          <span class="log-status ${sc}">${l.status}</span>
+        </div>`;
+      }).join('');
+  if (el) el.innerHTML = html;
+  if (lb) lb.innerHTML = html;
+}
+
+async function clearTokens() {
+  await api('POST', '/api/tokens/clear');
+  showAlert('dash-logs', 'success', 'Токены сброшены'); // quick feedback
+  loadStatus();
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Transactions
+// ──────────────────────────────────────────────────────────────────────────────
+
+async function loadTransactions() {
+  const net  = $('filter-network')?.value || '';
+  const url  = '/api/transactions' + (net ? '?network=' + net : '');
+  const txs  = await api('GET', url);
+  const tb   = $('tx-tbody');
+  $('nav-tx-count').textContent = txs.length;
+
+  if (!txs.length) {
+    tb.innerHTML = '<tr><td colspan="10" class="text-muted" style="text-align:center;padding:20px">Нет транзакций. Добавьте их в разделе «Добавить».</td></tr>';
+    return;
+  }
+
+  tb.innerHTML = txs.map(tx => `
+    <tr>
+      <td><span class="badge badge-${tx.network}">${esc(tx.network)}</span></td>
+      <td class="mono">${esc(tx.action_id)}</td>
+      <td class="mono">${esc(tx.order_id)}</td>
+      <td class="mono truncate" title="${esc(tx.subid1 || tx.click_id)}">${esc(tx.subid1 || tx.click_id)}</td>
+      <td class="mono">${esc(tx.subid2)}</td>
+      <td>${statusBadge(tx.status)}</td>
+      <td>${esc(tx.order_sum)}</td>
+      <td>${esc(tx.payment)}</td>
+      <td>${esc(tx.action_date)}</td>
+      <td><button class="btn btn-danger btn-sm" onclick="deleteTx('${esc(tx.id)}')">✕</button></td>
+    </tr>`).join('');
+}
+
+function statusBadge(s) {
+  const map = { approved:'green', completed:'green', pending:'yellow', waiting:'yellow',
+                declined:'red', rejected:'red', hold:'blue', balance:'green' };
+  const cls = 'badge-' + (map[s] || 'blue');
+  return `<span class="badge ${cls}">${esc(s)}</span>`;
+}
+
+async function deleteTx(id) {
+  await api('DELETE', '/api/transactions/' + id);
+  loadTransactions();
+}
+
+async function clearTransactions() {
+  const net = $('filter-network')?.value || '';
+  if (!confirm(`Удалить все транзакции${net ? ' сети ' + net : ''}?`)) return;
+  await api('POST', '/api/transactions/clear', net ? { network: net } : {});
+  loadTransactions();
+  loadStatus();
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Add transaction form
+// ──────────────────────────────────────────────────────────────────────────────
+
+function updateNetworkHints() {
+  const net = $('tx-network').value;
+  if (net === 'epn') {
+    $('lbl-subid1').textContent = 'click_id / sub1 — UUID из cashback_click_log *';
+    $('lbl-subid2').textContent = 'sub2 / User ID';
+  } else {
+    $('lbl-subid1').textContent = 'subid1 / Click ID — UUID из cashback_click_log *';
+    $('lbl-subid2').textContent = 'subid2 / User ID';
+  }
+}
+
+function pad2(n) { return String(n).padStart(2,'0'); }
+
+function nowDatetime() {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+function nowDate() {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
+}
+
+function fillDefaults() {
+  const uuid = crypto.randomUUID ? crypto.randomUUID().replace(/-/g,'') : Math.random().toString(36).slice(2);
+  $('tx-action-id').value   = String(Date.now()).slice(-6);
+  $('tx-order-id').value    = 'ORD-' + String(Date.now()).slice(-5);
+  $('tx-click-id').value    = uuid;
+  $('tx-user-id').value     = '1';
+  $('tx-status').value      = 'approved';
+  $('tx-order-sum').value   = '5000.00';
+  $('tx-payment').value     = '300.00';
+  $('tx-currency').value    = 'RUB';
+  $('tx-action-date').value = nowDate();
+  $('tx-action-time').value = nowDatetime();
+  $('tx-click-time').value  = nowDatetime();
+  $('tx-offer-id').value    = '100';
+  $('tx-offer-name').value  = 'Test Offer';
+  $('tx-website-id').value  = '12345';
+  $('tx-country').value     = 'RU';
+}
+
+async function addTransaction() {
+  const clickId = $('tx-click-id').value.trim();
+  if (!clickId) { showAlert('add-alert','error','Click ID обязателен — должен совпадать с UUID из cashback_click_log'); return; }
+
+  const dt = s => s ? s.replace('T',' ') + ':00' : '';
+
+  const tx = {
+    network:         $('tx-network').value,
+    action_id:       $('tx-action-id').value || String(Date.now()),
+    order_id:        $('tx-order-id').value,
+    click_id:        clickId,
+    subid1:          clickId,
+    subid2:          $('tx-user-id').value,
+    status:          $('tx-status').value,
+    order_sum:       parseFloat($('tx-order-sum').value || 0),
+    payment:         parseFloat($('tx-payment').value || 0),
+    currency:        $('tx-currency').value || 'RUB',
+    action_date:     $('tx-action-date').value || nowDate(),
+    action_time:     dt($('tx-action-time').value) || new Date().toISOString().slice(0,19).replace('T',' '),
+    click_time:      dt($('tx-click-time').value),
+    advcampaign_id:  parseInt($('tx-offer-id').value || 0),
+    advcampaign_name: $('tx-offer-name').value,
+    website_id:      $('tx-website-id').value,
+    country_code:    $('tx-country').value || 'RU',
+    action_type:     'sale',
+  };
+
+  const r = await api('POST', '/api/transactions', tx);
+  if (r.error) { showAlert('add-alert','error', r.error); return; }
+  showAlert('add-alert','success', `Транзакция добавлена! ID: ${r.transactions[0].id}`);
+  loadStatus();
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Import / Export
+// ──────────────────────────────────────────────────────────────────────────────
+
+async function exportJSON(network) {
+  const url = '/api/transactions' + (network !== 'all' ? '?network=' + network : '');
+  const txs = await api('GET', url);
+  const blob = new Blob([JSON.stringify(txs, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `cpa-mock-${network}-${new Date().toISOString().slice(0,10)}.json`;
+  a.click();
+}
+
+async function importJSON() {
+  let data;
+  try { data = JSON.parse($('import-json').value); }
+  catch { showAlert('import-alert','error','Неверный JSON'); return; }
+  if (!Array.isArray(data)) data = [data];
+  const r = await api('POST', '/api/transactions', data);
+  if (r.error) { showAlert('import-alert','error', r.error); return; }
+  showAlert('import-alert','success', `Загружено ${r.added} транзакций`);
+  loadStatus();
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Hook file import
+// ──────────────────────────────────────────────────────────────────────────────
+
+/** Статусы для отображения в колонке «Статус» предпросмотра */
+const EPN_TO_ADMITAD_DISPLAY = {
+  pending: 'pending', approved: 'approved', completed: 'approved',
+  rejected: 'declined', waiting: 'approved_but_stalled',
+};
+
+function loadHookFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => { $('hook-text').value = e.target.result; };
+  reader.readAsText(file, 'utf-8');
+}
+
+/** Предпросмотр: парсим на сервере, показываем таблицу без сохранения */
+async function previewHook() {
+  const text    = $('hook-text').value.trim();
+  const network = $('hook-network').value;
+  if (!text) { showAlert('hook-alert', 'error', 'Вставьте содержимое hook-файла'); return; }
+
+  const r = await api('POST', '/api/preview/hook', { text, network });
+  if (r.error) { showAlert('hook-alert', 'error', r.error); return; }
+
+  $('hook-preview-count').textContent = `Найдено ${r.found} транзакций${r.skipped ? ` (пропущено строк: ${r.skipped})` : ''}`;
+
+  const rows = r.transactions.map(tx => {
+    // Определяем исходный статус из hook-текста (обратный поиск для отображения)
+    const rawLine = text.split('\n').find(l => l.includes('click_id=' + tx.click_id)) || '';
+    const rawMatch = rawLine.match(/order_status=([^&\s]+)/);
+    const rawStatus = rawMatch ? rawMatch[1] : '?';
+    const mappedStatus = network === 'admitad'
+      ? (EPN_TO_ADMITAD_DISPLAY[rawStatus] || rawStatus)
+      : rawStatus;
+    const statusChanged = rawStatus !== mappedStatus;
+
+    return `<tr>
+      <td><span class="badge badge-${tx.network}">${esc(tx.network)}</span></td>
+      <td class="mono truncate" title="${esc(tx.click_id)}">${esc(tx.click_id.slice(0,16))}…</td>
+      <td class="mono">${esc(tx.subid2)}</td>
+      <td class="mono">${esc(tx.order_id)}</td>
+      <td>${esc(rawStatus)} ${statusChanged ? `<span style="color:var(--accent2)">→</span> <b>${esc(mappedStatus)}</b>` : ''}</td>
+      <td>${esc(tx.order_sum)} ${esc(tx.currency)}</td>
+      <td>${esc(tx.payment)}</td>
+      <td>${esc(tx.action_date)}</td>
+    </tr>`;
+  }).join('');
+
+  $('hook-preview-tbody').innerHTML = rows || '<tr><td colspan="8" class="text-muted">Нет данных</td></tr>';
+  $('hook-preview').style.display = 'block';
+}
+
+/** Подтвердить загрузку — фактически сохраняем на сервере */
+async function confirmHookImport() {
+  const text    = $('hook-text').value.trim();
+  const network = $('hook-network').value;
+
+  const r = await api('POST', '/api/import/hook', { text, network });
+  if (r.error) { showAlert('hook-alert', 'error', r.error); return; }
+
+  $('hook-preview').style.display = 'none';
+  $('hook-text').value = '';
+  showAlert('hook-alert', 'success', `Загружено ${r.added} транзакций для сети ${network}`);
+  loadStatus();
+}
+
+function loadSample() {
+  const uuid1 = 'aabbcc112233445566778899aabb0011';
+  const uuid2 = 'deadbeef11223344556677889900aabb';
+  const sample = [
+    {
+      network:'admitad', order_id:'ORD-001', click_id: uuid1,
+      subid1: uuid1, subid2:'42', status:'approved',
+      order_sum:5000, payment:300, currency:'RUB',
+      action_date:'2024-01-15', action_time:'2024-01-15 14:30:00',
+      click_time:'2024-01-15 14:25:00',
+      advcampaign_id:100, advcampaign_name:'Test Shop', website_id:'12345'
+    },
+    {
+      network:'epn', order_id:'ORD-002', click_id: uuid2,
+      subid1: uuid2, subid2:'42', status:'pending',
+      order_sum:2500, payment:150, currency:'RUB',
+      action_date:'2024-01-16', action_time:'2024-01-16 10:00:00',
+      click_time:'2024-01-16 09:55:00',
+      advcampaign_id:200, advcampaign_name:'Another Shop', website_id:'12345'
+    }
+  ];
+  $('import-json').value = JSON.stringify(sample, null, 2);
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Credentials
+// ──────────────────────────────────────────────────────────────────────────────
+
+async function loadCredentialsUI() {
+  const d = await api('GET', '/api/credentials');
+  $('adm-client-id').value = d.admitad?.client_id || '';
+  $('epn-client-id').value = d.epn?.client_id || '';
+}
+
+async function saveCredentials(network) {
+  const clientId     = $(network === 'admitad' ? 'adm-client-id'     : 'epn-client-id').value.trim();
+  const clientSecret = $(network === 'admitad' ? 'adm-client-secret' : 'epn-client-secret').value.trim();
+  if (!clientId || !clientSecret) { showAlert('cred-alert','error','Заполните оба поля'); return; }
+  const r = await api('POST', '/api/credentials', { network, client_id: clientId, client_secret: clientSecret });
+  if (r.error) { showAlert('cred-alert','error', r.error); return; }
+  showAlert('cred-alert','success', `Credentials для ${network} сохранены. Токены сети сброшены.`);
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Init
+// ──────────────────────────────────────────────────────────────────────────────
+
+// Set default dates
+document.addEventListener('DOMContentLoaded', () => {
+  $('tx-action-date').value = nowDate();
+  $('tx-action-time').value = nowDatetime();
+  $('tx-click-time').value  = nowDatetime();
+  loadStatus();
+  setInterval(loadStatus, 30000); // auto-refresh every 30s
+});
+</script>
+</body>
+</html>

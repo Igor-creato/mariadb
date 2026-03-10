@@ -1,0 +1,21 @@
+services:
+  cpa-mock:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cpa-mock-server
+    ports:
+      - '3000:3000'
+    volumes:
+      # Данные (транзакции, credentials) сохраняются на хосте
+      - ./data:/app/data
+    environment:
+      - PORT=3000
+      # Время жизни токенов в секундах (86400 = 24 часа)
+      - MOCK_TOKEN_LIFETIME=86400
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:3000/api/status']
+      interval: 15s
+      timeout: 5s
+      retries: 3

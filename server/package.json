@@ -1,0 +1,14 @@
+{
+  "name": "cpa-mock-server",
+  "version": "1.0.0",
+  "description": "Mock server for Admitad and EPN CPA network APIs",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "uuid": "^9.0.0"
+  }
+}
