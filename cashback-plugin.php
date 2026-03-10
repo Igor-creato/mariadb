@@ -104,6 +104,16 @@ class CashbackPlugin
         add_action('plugins_loaded', array($this, 'init'));
         add_action('init', array($this, 'load_textdomain'));
         add_action('before_woocommerce_init', array($this, 'declare_woocommerce_compatibility'));
+        // WooCommerce транзакционные письма используют собственный фильтр woocommerce_email_from_name
+        add_filter('woocommerce_email_from_name', function (string $name): string {
+            $custom = (string) get_option('cashback_email_sender_name', '');
+            return trim($custom) !== '' ? $custom : $name;
+        });
+        // WordPress core и прочие письма — приоритет 20 перекрывает WC_Emails (приоритет 10)
+        add_filter('wp_mail_from_name', function (string $name): string {
+            $custom = (string) get_option('cashback_email_sender_name', '');
+            return trim($custom) !== '' ? $custom : $name;
+        }, 20);
     }
 
     /**

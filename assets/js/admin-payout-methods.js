@@ -138,7 +138,8 @@ jQuery(document).ready(function($) {
         $.post(ajaxurl, {
             'action': 'save_withdrawal_settings',
             'nonce': cashbackPayoutMethodsData.saveSettingsNonce,
-            'max_withdrawal_amount': $('#max_withdrawal_amount').val()
+            'max_withdrawal_amount': $('#max_withdrawal_amount').val(),
+            'email_sender_name': $('#email_sender_name').val()
         }, function(response) {
             if (response.success) {
                 $msg.html('<div class="notice notice-success is-dismissible"><p>' + response.data.message + '</p></div>');

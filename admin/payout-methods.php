@@ -221,6 +221,13 @@ class Cashback_Payout_Methods_Admin
                                     <p class="description">Максимальная сумма, которую пользователь может вывести за одну заявку. По умолчанию: 50 000.</p>
                                 </td>
                             </tr>
+                            <tr>
+                                <th scope="row"><label for="email_sender_name">Имя отправителя писем:</label></th>
+                                <td>
+                                    <input type="text" id="email_sender_name" name="email_sender_name" class="regular-text" value="<?php echo esc_attr(get_option('cashback_email_sender_name', '')); ?>" placeholder="Кэшбэк сервис" maxlength="100" />
+                                    <p class="description">Имя, от которого пользователи будут получать письма. Применяется ко всем письмам WordPress. Если не задано — используется стандартное имя WordPress.</p>
+                                </td>
+                            </tr>
                         </table>
                         <p class="submit">
                             <input type="submit" class="button button-primary" value="Сохранить настройки" />
@@ -443,6 +450,11 @@ class Cashback_Payout_Methods_Admin
         }
 
         update_option('cashback_max_withdrawal_amount', $max_amount);
+
+        $email_sender_name = isset($_POST['email_sender_name'])
+            ? sanitize_text_field(wp_unslash($_POST['email_sender_name']))
+            : '';
+        update_option('cashback_email_sender_name', $email_sender_name);
 
         wp_send_json_success(['message' => 'Настройки сохранены.']);
     }
