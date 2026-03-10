@@ -615,7 +615,7 @@ class CashbackWithdrawal
         echo '<form id="withdrawal-form">';
         echo '<p class="form-row">';
         echo '<label for="withdrawal-amount">' . __('Сумма вывода', 'cashback-plugin') . ' <span class="required">*</span></label>';
-        echo '<input type="number" class="input-text" name="withdrawal_amount" id="withdrawal-amount" placeholder="' . esc_attr__('Введите сумму', 'cashback-plugin') . '" value="" step="0.01" min="' . esc_attr($min_payout_amount) . '" />';
+        echo '<input type="number" class="input-text" name="withdrawal_amount" id="withdrawal-amount" placeholder="' . esc_attr__('Введите сумму', 'cashback-plugin') . '" value="" step="0.01" min="' . esc_attr((string)$min_payout_amount) . '" />';
         echo '</p>';
         echo '<p class="form-row">';
         echo '<button type="submit" class="woocommerce-Button button" id="withdrawal-submit" name="withdrawal_submit" value="' . esc_attr__('Вывести', 'cashback-plugin') . '">' . __('Вывести', 'cashback-plugin') . '</button>';
@@ -682,7 +682,7 @@ class CashbackWithdrawal
         foreach ($payout_methods as $method) {
             $selected = ($payout_method_id === intval($method['id'])) ? 'selected' : '';
             $bank_req_attr = isset($method['bank_required']) ? intval($method['bank_required']) : 1;
-            echo '<option value="' . esc_attr($method['id']) . '" data-slug="' . esc_attr($method['slug']) . '" data-bank-required="' . esc_attr($bank_req_attr) . '" ' . $selected . '>' . esc_html($method['name']) . '</option>';
+            echo '<option value="' . esc_attr((string)$method['id']) . '" data-slug="' . esc_attr($method['slug']) . '" data-bank-required="' . esc_attr((string)$bank_req_attr) . '" ' . $selected . '>' . esc_html($method['name']) . '</option>';
         }
         echo '</select>';
         echo '</p>';
@@ -697,7 +697,7 @@ class CashbackWithdrawal
         $bank_row_style = $bank_required_for_current ? '' : ' style="display:none"';
         echo '<div class="woocommerce-form-row woocommerce-form-row--wide form-row form-row-wide"' . $bank_row_style . '>';
         echo '<label for="bank_search_input" id="bank_search_label">' . __('Банк', 'cashback-plugin') . ' <span class="required">*</span></label>';
-        echo '<input type="hidden" name="bank_id" id="bank_id" value="' . esc_attr($bank_id) . '" />';
+        echo '<input type="hidden" name="bank_id" id="bank_id" value="' . esc_attr((string)$bank_id) . '" />';
         echo '<div class="bank-search-wrapper" role="combobox" aria-expanded="false" aria-owns="bank_search_results" aria-haspopup="listbox">';
         // Используем ранее полученное название банка
         $current_bank_name = $bank_name;

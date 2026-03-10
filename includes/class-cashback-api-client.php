@@ -31,9 +31,6 @@ class Cashback_API_Client
     /** @var string Таблица сетей */
     private string $networks_table;
 
-    /** @var string Таблица параметров сетей */
-    private string $params_table;
-
     /** @var string Таблица чекпоинтов */
     private string $checkpoints_table;
 
@@ -45,9 +42,6 @@ class Cashback_API_Client
 
     /** @var string Таблица синк-логов */
     private string $sync_log_table;
-
-    /** @var string Таблица кликов */
-    private string $click_log_table;
 
     /** @var array<string, Cashback_Network_Adapter_Interface> Реестр адаптеров (slug => adapter) */
     private array $adapters = [];
@@ -67,12 +61,10 @@ class Cashback_API_Client
     {
         global $wpdb;
         $this->networks_table     = $wpdb->prefix . 'cashback_affiliate_networks';
-        $this->params_table       = $wpdb->prefix . 'cashback_affiliate_network_params';
         $this->checkpoints_table  = $wpdb->prefix . 'cashback_validation_checkpoints';
         $this->transactions_table = $wpdb->prefix . 'cashback_transactions';
         $this->unregistered_table = $wpdb->prefix . 'cashback_unregistered_transactions';
         $this->sync_log_table     = $wpdb->prefix . 'cashback_sync_log';
-        $this->click_log_table    = $wpdb->prefix . 'cashback_click_log';
 
         // Регистрация встроенных адаптеров CPA-сетей
         $this->register_adapter(new Cashback_Admitad_Adapter());
@@ -1735,9 +1727,9 @@ class Cashback_API_Client
         // 1. Определяем user_id
         $raw_user_id = (string) ($action[$user_field] ?? '');
 
-        $is_unregistered = !is_numeric($raw_user_id)
-            || (int) $raw_user_id === 0
-            || strtolower($raw_user_id) === 'unregistered';
+        $is_unregistered = strtolower($raw_user_id) === 'unregistered'
+            || !is_numeric($raw_user_id)
+            || (int) $raw_user_id === 0;
 
         // 2. Для зарегистрированных — проверяем существование WP-пользователя
         if (!$is_unregistered) {

@@ -159,7 +159,7 @@ class HistoryPayout
 
         // Кнопка «Назад»
         if ($current_page > 1) {
-            echo '<li><a href="#" class="page-numbers prev" data-page="' . esc_attr($current_page - 1) . '">&lsaquo;</a></li>';
+            echo '<li><a href="#" class="page-numbers prev" data-page="' . esc_attr((string)($current_page - 1)) . '">&lsaquo;</a></li>';
         }
 
         $prev = 0;
@@ -168,13 +168,13 @@ class HistoryPayout
                 echo '<li><span class="page-numbers dots">&hellip;</span></li>';
             }
             $class = ($page == $current_page) ? 'current' : '';
-            echo '<li><a href="#" class="page-numbers ' . esc_attr($class) . '" data-page="' . esc_attr($page) . '">' . esc_html($page) . '</a></li>';
+            echo '<li><a href="#" class="page-numbers ' . esc_attr($class) . '" data-page="' . esc_attr((string)$page) . '">' . esc_html((string)$page) . '</a></li>';
             $prev = $page;
         }
 
         // Кнопка «Вперёд»
         if ($current_page < $total_pages) {
-            echo '<li><a href="#" class="page-numbers next" data-page="' . esc_attr($current_page + 1) . '">&rsaquo;</a></li>';
+            echo '<li><a href="#" class="page-numbers next" data-page="' . esc_attr((string)($current_page + 1)) . '">&rsaquo;</a></li>';
         }
 
         echo '</ul>';

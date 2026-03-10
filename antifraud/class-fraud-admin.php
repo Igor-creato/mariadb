@@ -482,7 +482,7 @@ class Cashback_Fraud_Admin
         echo '<label for="hours"><strong>' . esc_html__('Период:', 'cashback-plugin') . '</strong> </label>';
         echo '<select name="hours" id="hours" onchange="this.form.submit()">';
         foreach ($period_labels as $val => $label) {
-            echo '<option value="' . esc_attr($val) . '"' . selected($hours, $val, false) . '>' . esc_html($label) . '</option>';
+            echo '<option value="' . esc_attr((string)$val) . '"' . selected($hours, $val, false) . '>' . esc_html($label) . '</option>';
         }
         echo '</select>';
         echo '</form>';
@@ -558,9 +558,9 @@ class Cashback_Fraud_Admin
                 echo '<td>' . esc_html(number_format($ip_spam)) . '</td>';
                 echo '<td>';
                 if ($row_class) {
-                    echo '<span class="' . esc_attr($row_class) . '">' . esc_html($ip_rate) . '%</span>';
+                    echo '<span class="' . esc_attr($row_class) . '">' . esc_html((string)$ip_rate) . '%</span>';
                 } else {
-                    echo esc_html($ip_rate) . '%';
+                    echo esc_html((string)$ip_rate) . '%';
                 }
                 echo '</td>';
                 echo '</tr>';
@@ -593,7 +593,7 @@ class Cashback_Fraud_Admin
                 }
 
                 echo '<tr>';
-                echo '<td>' . esc_html($pid) . '</td>';
+                echo '<td>' . esc_html((string)$pid) . '</td>';
                 echo '<td>';
                 $edit_link = get_edit_post_link($pid);
                 if ($edit_link) {

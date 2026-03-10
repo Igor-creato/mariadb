@@ -35,7 +35,9 @@ class Mariadb_Plugin
     private function __construct()
     {
         // Инициализация плагина
-        add_action('user_register', array($this, 'add_user_to_cashback_tables'));
+        add_action('user_register', function (int $user_id): void {
+            $this->add_user_to_cashback_tables($user_id);
+        });
     }
 
     /**

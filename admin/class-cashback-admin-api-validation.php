@@ -1086,7 +1086,7 @@ class Cashback_Admin_API_Validation
         $idempotency_key = hash('sha256', 'api_add_' . $action_id . '_' . $network);
 
         // Определение таблицы
-        $is_unregistered = !is_numeric($user_id) || (int) $user_id === 0 || strtolower($user_id) === 'unregistered';
+        $is_unregistered = $user_id === 'unregistered' || !is_numeric($user_id) || (int) $user_id === 0;
         $table = $wpdb->prefix . ($is_unregistered ? 'cashback_unregistered_transactions' : 'cashback_transactions');
 
         $data = [
@@ -1274,11 +1274,11 @@ class Cashback_Admin_API_Validation
     ?>
         <button type="button"
             class="button cashback-inline-validate-btn"
-            data-user-id="<?php echo esc_attr($user_id); ?>"
+            data-user-id="<?php echo esc_attr((string)$user_id); ?>"
             title="Проверить данные через API CPA-сети">
             🔍 Проверить
         </button>
-        <span class="cashback-inline-validate-status" data-user-id="<?php echo esc_attr($user_id); ?>"></span>
+        <span class="cashback-inline-validate-status" data-user-id="<?php echo esc_attr((string)$user_id); ?>"></span>
 <?php
     }
 

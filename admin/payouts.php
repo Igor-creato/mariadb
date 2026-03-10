@@ -674,7 +674,7 @@ class Cashback_Payouts_Admin
                                     </tr>
                                     <tr>
                                         <th><?php echo esc_html__('Номер счета / телефона', 'cashback-plugin'); ?></th>
-                                        <td class="payout-account-detail-cell" data-payout-id="<?php echo esc_attr($payout_id); ?>">
+                                        <td class="payout-account-detail-cell" data-payout-id="<?php echo esc_attr((string)$payout_id); ?>">
                                             <span class="masked-account"><?php echo esc_html($masked_account); ?></span>
                                             <span class="decrypted-account" style="display:none;"></span>
                                             <span class="decrypted-account-copy-btn" style="display:none;">
@@ -759,10 +759,10 @@ class Cashback_Payouts_Admin
 
                                     <p>
                                         <button type="button" id="save-detail-btn" class="button button-primary button-large widefat"
-                                                data-payout-id="<?php echo esc_attr($payout_id); ?>"
+                                                data-payout-id="<?php echo esc_attr((string)$payout_id); ?>"
                                                 data-original-status="<?php echo esc_attr($current_status); ?>"
                                                 data-original-provider-payout-id="<?php echo esc_attr($payout['provider_payout_id'] ?? ''); ?>"
-                                                data-original-attempts="<?php echo esc_attr($payout['attempts']); ?>"
+                                                data-original-attempts="<?php echo esc_attr((string)$payout['attempts']); ?>"
                                                 data-original-fail-reason="<?php echo esc_attr($payout['fail_reason'] ?? ''); ?>">
                                             <?php echo esc_html__('Сохранить изменения', 'cashback-plugin'); ?>
                                         </button>
