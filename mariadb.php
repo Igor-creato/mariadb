@@ -78,6 +78,7 @@ class Mariadb_Plugin
             $instance->migrate_backfill_webhook_payload_hash();
             $instance->migrate_add_stats_indexes();
             $instance->migrate_add_original_cpa_subid();
+            $instance->migrate_add_webhook_processing_status();
             $instance->create_events();
             $instance->initialize_existing_users();
 
@@ -305,10 +306,12 @@ class Mariadb_Plugin
             `payload` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
             `network_slug` varchar(64) DEFAULT NULL,
             `payload_hash` char(64) DEFAULT NULL COMMENT 'SHA-256 хеш payload для дедупликации',
+            `processing_status` enum('ok','click_not_found','user_mismatch','error') DEFAULT NULL COMMENT 'Результат проверки click_id webhook-receiver воркером',
             PRIMARY KEY (`id`),
             UNIQUE KEY `uk_payload_hash` (`payload_hash`),
             KEY `idx_received_at` (`received_at`),
-            KEY `idx_network_slug` (`network_slug`)
+            KEY `idx_network_slug` (`network_slug`),
+            KEY `idx_processing_status` (`processing_status`)
         ) ENGINE=InnoDB {$charset_collate} COMMENT='Сырые уникальные webhooks';";
 
         // Таблица cashback_user_profile (FK добавляются в Фазе 2)
@@ -1482,6 +1485,58 @@ END;",
             if ($wpdb->last_error) {
                 error_log('[Cashback] Failed to add original_cpa_subid column: ' . $wpdb->last_error);
             }
+        }
+    }
+
+    /**
+     * Добавляет колонку processing_status в cashback_webhooks.
+     *
+     * Используется webhook-receiver для маркировки результата проверки click_id.
+     * NULL   = вебхук ещё не обработан или пришёл до введения этого функционала.
+     * ok     = click_id найден, user_id совпадает.
+     * click_not_found = click_id отсутствует в постбэке или не найден в cashback_click_log.
+     * user_mismatch   = click_id найден, но user_id из постбэка ≠ user_id из click_log.
+     * error  = ошибка обработки на стороне воркера.
+     */
+    private function migrate_add_webhook_processing_status(): void
+    {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'cashback_webhooks';
+
+        $column_exists = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM information_schema.COLUMNS
+             WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s AND COLUMN_NAME = 'processing_status'",
+            DB_NAME,
+            $table
+        ));
+
+        if (!$column_exists) {
+            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+            $wpdb->query(
+                "ALTER TABLE `{$table}`
+                 ADD COLUMN `processing_status`
+                     ENUM('ok','click_not_found','user_mismatch','error')
+                     DEFAULT NULL
+                     AFTER `network_slug`"
+            );
+
+            if ($wpdb->last_error) {
+                error_log('[Cashback] Failed to add processing_status column to cashback_webhooks: ' . $wpdb->last_error);
+            }
+        }
+
+        $idx_exists = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM information_schema.STATISTICS
+             WHERE TABLE_SCHEMA = DATABASE()
+               AND TABLE_NAME = %s
+               AND INDEX_NAME = 'idx_processing_status'",
+            $table
+        ));
+
+        if (!$idx_exists) {
+            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+            $wpdb->query("ALTER TABLE `{$table}` ADD INDEX `idx_processing_status` (`processing_status`)");
         }
     }
 }
