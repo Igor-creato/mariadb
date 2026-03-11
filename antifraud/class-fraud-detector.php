@@ -64,6 +64,9 @@ class Cashback_Fraud_Detector
              FROM `{$fp_table}`
              WHERE created_at > DATE_SUB(NOW(), INTERVAL 30 DAY)
                AND ip_address NOT IN ('127.0.0.1', '::1', '0.0.0.0')
+               AND ip_address NOT LIKE '10.%'
+               AND ip_address NOT LIKE '192.168.%'
+               AND ip_address NOT BETWEEN '172.16.0.0' AND '172.31.255.255'
              GROUP BY ip_address
              HAVING user_count > %d",
             $threshold
@@ -469,8 +472,9 @@ class Cashback_Fraud_Detector
                  FROM `{$tx_table}`
                  WHERE order_status IN ('completed', 'balance', 'hold')
                    AND cashback > 0
+                   AND created_at > DATE_SUB(NOW(), INTERVAL 30 DAY)
                  GROUP BY user_id
-                 HAVING tx_count >= 3
+                 HAVING tx_count >= 3 AND avg_cashback > 0
              ) stats ON t.user_id = stats.user_id
              WHERE t.created_at > DATE_SUB(NOW(), INTERVAL 1 DAY)
                AND t.cashback > stats.avg_cashback * %f

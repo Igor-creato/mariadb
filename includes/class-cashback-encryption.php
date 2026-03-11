@@ -286,8 +286,10 @@ class Cashback_Encryption
     public static function hash_details(array $details): string
     {
         // Канонический формат: отсортированный JSON без пробелов, lowercase account
+        // bank включён чтобы разные банки с одним номером счёта не давали одинаковый хеш
         $canonical = [
             'account' => mb_strtolower(preg_replace('/\s+/', '', $details['account'] ?? '')),
+            'bank'     => mb_strtolower(trim($details['bank'] ?? '')),
             'full_name' => mb_strtolower(trim($details['full_name'] ?? '')),
         ];
         ksort($canonical);

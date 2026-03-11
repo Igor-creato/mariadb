@@ -867,7 +867,7 @@ class Cashback_Payouts_Admin
 
                 // Валидация допустимых переходов статусов
                 $allowed_transitions = [
-                    'waiting'     => ['processing', 'paid', 'failed', 'declined', 'needs_retry'],
+                    'waiting'     => ['processing', 'failed', 'declined', 'needs_retry'],
                     'processing'  => ['paid', 'failed', 'declined', 'needs_retry'],
                     'needs_retry' => ['processing', 'paid', 'failed', 'declined'],
                     'paid'        => [],

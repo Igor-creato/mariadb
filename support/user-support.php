@@ -380,14 +380,16 @@ class Cashback_User_Support
             return;
         }
 
-        // Защита от спама: максимум 5 тикетов в час
-        $rate_key = 'support_ticket_rate_' . $user_id;
-        $ticket_count = (int) get_transient($rate_key);
-        if ($ticket_count >= 5) {
+        // Защита от спама: максимум 5 тикетов в час (проверка через БД — атомарна)
+        $tickets_table_rl = $wpdb->prefix . 'cashback_support_tickets';
+        $recent_tickets = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM `{$tickets_table_rl}` WHERE user_id = %d AND created_at > DATE_SUB(NOW(), INTERVAL 1 HOUR)",
+            $user_id
+        ));
+        if ($recent_tickets >= 5) {
             wp_send_json_error(['message' => 'Слишком много тикетов. Попробуйте позже.']);
             return;
         }
-        set_transient($rate_key, $ticket_count + 1, HOUR_IN_SECONDS);
 
         if (!in_array($priority, ['urgent', 'normal', 'not_urgent'], true)) {
             wp_send_json_error(['message' => 'Выберите срочность.']);
@@ -545,14 +547,16 @@ class Cashback_User_Support
             return;
         }
 
-        // Защита от спама: максимум 20 ответов в час
-        $rate_key = 'support_reply_rate_' . $user_id;
-        $reply_count = (int) get_transient($rate_key);
-        if ($reply_count >= 20) {
+        // Защита от спама: максимум 20 ответов в час (проверка через БД — атомарна)
+        $messages_table_rl = $wpdb->prefix . 'cashback_support_messages';
+        $recent_replies = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM `{$messages_table_rl}` WHERE user_id = %d AND is_admin = 0 AND created_at > DATE_SUB(NOW(), INTERVAL 1 HOUR)",
+            $user_id
+        ));
+        if ($recent_replies >= 20) {
             wp_send_json_error(['message' => 'Слишком много сообщений. Попробуйте позже.']);
             return;
         }
-        set_transient($rate_key, $reply_count + 1, HOUR_IN_SECONDS);
 
         // 🔒 НАЧИНАЕМ ТРАНЗАКЦИЮ для атомарности операций
         $wpdb->query('START TRANSACTION');
