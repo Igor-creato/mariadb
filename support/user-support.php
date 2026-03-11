@@ -101,14 +101,14 @@ class Cashback_User_Support
 
         wp_enqueue_style(
             'cashback-user-support-css',
-            plugins_url('../assets/css/user-support.css', __FILE__),
+            plugins_url('assets/css/user-support.css', __FILE__),
             [],
             '1.1.0'
         );
 
         wp_enqueue_script(
             'dompurify',
-            plugins_url('../assets/js/purify.min.js', __FILE__),
+            plugins_url('assets/js/purify.min.js', __FILE__),
             [],
             '3.3.2',
             true
@@ -116,7 +116,7 @@ class Cashback_User_Support
 
         wp_enqueue_script(
             'cashback-safe-html',
-            plugins_url('../assets/js/safe-html.js', __FILE__),
+            plugins_url('assets/js/safe-html.js', __FILE__),
             ['dompurify'],
             '1.0.0',
             true
@@ -124,7 +124,7 @@ class Cashback_User_Support
 
         wp_enqueue_script(
             'cashback-user-support',
-            plugins_url('../assets/js/user-support.js', __FILE__),
+            plugins_url('assets/js/user-support.js', __FILE__),
             ['jquery', 'cashback-safe-html'],
             '1.1.0',
             true

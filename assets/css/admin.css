@@ -1,5 +1,23 @@
 /* Стили для админки */
 
+/* Модал переноса транзакции */
+#transfer-modal {
+    background: rgba(0, 0, 0, 0.55);
+}
+#transfer-modal-inner {
+    background: #fff;
+    padding: 24px;
+    border-radius: 4px;
+    max-width: 420px;
+    margin: 10% auto;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+#transfer-email {
+    width: 100%;
+    margin: 8px 0 0;
+    box-sizing: border-box;
+}
+
 /* Таблица параметров партнерской сети в метабоксе товара */
 .affiliate-network-params-table {
     border-collapse: collapse;

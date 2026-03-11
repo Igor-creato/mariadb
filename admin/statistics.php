@@ -11,6 +11,7 @@ class Cashback_Statistics_Admin
     private static ?self $instance = null;
 
     private string $transactions_table;
+    private string $unregistered_transactions_table;
     private string $payout_requests_table;
     private string $user_balance_table;
 
@@ -25,9 +26,10 @@ class Cashback_Statistics_Admin
     private function __construct()
     {
         global $wpdb;
-        $this->transactions_table    = $wpdb->prefix . 'cashback_transactions';
-        $this->payout_requests_table = $wpdb->prefix . 'cashback_payout_requests';
-        $this->user_balance_table    = $wpdb->prefix . 'cashback_user_balance';
+        $this->transactions_table             = $wpdb->prefix . 'cashback_transactions';
+        $this->unregistered_transactions_table = $wpdb->prefix . 'cashback_unregistered_transactions';
+        $this->payout_requests_table          = $wpdb->prefix . 'cashback_payout_requests';
+        $this->user_balance_table             = $wpdb->prefix . 'cashback_user_balance';
 
         add_action('admin_enqueue_scripts', [$this, 'enqueue_admin_scripts']);
     }
@@ -97,7 +99,14 @@ class Cashback_Statistics_Admin
             }
         }
 
-        $has_date_filter = !empty($filter_date_from) || !empty($filter_date_to);
+        // По умолчанию — текущий месяц (с 1-го числа до сегодня)
+        $is_default_period = empty($filter_date_from) && empty($filter_date_to);
+        if ($is_default_period) {
+            $filter_date_from = gmdate('Y-m-01');
+            $filter_date_to   = gmdate('Y-m-d');
+        }
+
+        $has_date_filter = true;
 
         // Получаем данные
         $tx_stats     = $this->get_transaction_stats($filter_date_from, $filter_date_to);
@@ -125,38 +134,34 @@ class Cashback_Statistics_Admin
                     <button type="button" id="stats-filter-submit" class="button action">
                         <?php echo esc_html__('Фильтровать', 'cashback-plugin'); ?>
                     </button>
-                    <?php if ($has_date_filter): ?>
-                        <button type="button" id="stats-filter-reset" class="button action">
-                            <?php echo esc_html__('Сбросить', 'cashback-plugin'); ?>
-                        </button>
-                    <?php endif; ?>
+                    <button type="button" id="stats-filter-reset" class="button action">
+                        <?php echo esc_html__('Текущий месяц', 'cashback-plugin'); ?>
+                    </button>
                 </div>
                 <br class="clear">
             </div>
 
-            <?php if ($has_date_filter): ?>
-                <p class="description">
-                    <?php
-                    if (!empty($filter_date_from) && !empty($filter_date_to)) {
-                        printf(
-                            esc_html__('Данные за период: %s — %s', 'cashback-plugin'),
-                            esc_html($filter_date_from),
-                            esc_html($filter_date_to)
-                        );
-                    } elseif (!empty($filter_date_from)) {
-                        printf(
-                            esc_html__('Данные с %s', 'cashback-plugin'),
-                            esc_html($filter_date_from)
-                        );
-                    } else {
-                        printf(
-                            esc_html__('Данные до %s', 'cashback-plugin'),
-                            esc_html($filter_date_to)
-                        );
-                    }
-                    ?>
-                </p>
-            <?php endif; ?>
+            <p class="description">
+                <?php
+                if (!empty($filter_date_from) && !empty($filter_date_to)) {
+                    printf(
+                        esc_html__('Данные за период: %s — %s', 'cashback-plugin'),
+                        esc_html($filter_date_from),
+                        esc_html($filter_date_to)
+                    );
+                } elseif (!empty($filter_date_from)) {
+                    printf(
+                        esc_html__('Данные с %s', 'cashback-plugin'),
+                        esc_html($filter_date_from)
+                    );
+                } else {
+                    printf(
+                        esc_html__('Данные до %s', 'cashback-plugin'),
+                        esc_html($filter_date_to)
+                    );
+                }
+                ?>
+            </p>
 
             <!-- Карточки KPI -->
             <div class="cashback-stats-cards">
@@ -320,16 +325,22 @@ class Cashback_Statistics_Admin
     {
         global $wpdb;
 
+        $cache_key = 'cb_stats_tx_' . md5($date_from . '|' . $date_to);
+        $cached    = get_transient($cache_key);
+        if ($cached !== false) {
+            return $cached;
+        }
+
         $where_conditions = [];
         $where_params     = [];
 
         if (!empty($date_from)) {
-            $where_conditions[] = 'DATE(created_at) >= %s';
-            $where_params[]     = $date_from;
+            $where_conditions[] = 'created_at >= %s';
+            $where_params[]     = $date_from . ' 00:00:00';
         }
         if (!empty($date_to)) {
-            $where_conditions[] = 'DATE(created_at) <= %s';
-            $where_params[]     = $date_to;
+            $where_conditions[] = 'created_at <= %s';
+            $where_params[]     = $date_to . ' 23:59:59';
         }
 
         $where_clause = '';
@@ -356,17 +367,23 @@ class Cashback_Statistics_Admin
             COALESCE(SUM(CASE WHEN order_status = 'hold' THEN cashback ELSE 0 END), 0) AS cashback_hold,
             COALESCE(SUM(CASE WHEN order_status = 'declined' THEN cashback ELSE 0 END), 0) AS cashback_declined,
             COALESCE(SUM(CASE WHEN order_status = 'balance' THEN cashback ELSE 0 END), 0) AS cashback_balance
-        FROM {$this->transactions_table}
-        {$where_clause}";
+        FROM (
+            SELECT order_status, comission, cashback FROM {$this->transactions_table} {$where_clause}
+            UNION ALL
+            SELECT order_status, comission, cashback FROM {$this->unregistered_transactions_table} {$where_clause}
+        ) AS combined";
 
-        if (!empty($where_params)) {
-            $result = $wpdb->get_row($wpdb->prepare($sql, $where_params), ARRAY_A);
+        // WHERE params передаются дважды — для каждой части UNION ALL
+        $merged_params = !empty($where_params) ? array_merge($where_params, $where_params) : [];
+
+        if (!empty($merged_params)) {
+            $result = $wpdb->get_row($wpdb->prepare($sql, $merged_params), ARRAY_A);
         } else {
             $result = $wpdb->get_row($sql, ARRAY_A);
         }
 
         if (!$result) {
-            return [
+            $result = [
                 'total_commission' => '0', 'total_cashback' => '0', 'total_count' => '0',
                 'count_waiting' => '0', 'count_completed' => '0', 'count_hold' => '0',
                 'count_declined' => '0', 'count_balance' => '0',
@@ -376,6 +393,8 @@ class Cashback_Statistics_Admin
                 'cashback_declined' => '0', 'cashback_balance' => '0',
             ];
         }
+
+        set_transient($cache_key, $result, HOUR_IN_SECONDS);
 
         return $result;
     }
@@ -391,16 +410,22 @@ class Cashback_Statistics_Admin
     {
         global $wpdb;
 
+        $cache_key = 'cb_stats_py_' . md5($date_from . '|' . $date_to);
+        $cached    = get_transient($cache_key);
+        if ($cached !== false) {
+            return $cached;
+        }
+
         $where_conditions = [];
         $where_params     = [];
 
         if (!empty($date_from)) {
-            $where_conditions[] = 'DATE(created_at) >= %s';
-            $where_params[]     = $date_from;
+            $where_conditions[] = 'created_at >= %s';
+            $where_params[]     = $date_from . ' 00:00:00';
         }
         if (!empty($date_to)) {
-            $where_conditions[] = 'DATE(created_at) <= %s';
-            $where_params[]     = $date_to;
+            $where_conditions[] = 'created_at <= %s';
+            $where_params[]     = $date_to . ' 23:59:59';
         }
 
         $where_clause = '';
@@ -433,7 +458,7 @@ class Cashback_Statistics_Admin
         }
 
         if (!$result) {
-            return [
+            $result = [
                 'total_requests' => '0', 'grand_total' => '0',
                 'waiting_total' => '0', 'processing_total' => '0', 'paid_total' => '0',
                 'failed_total' => '0', 'declined_total' => '0', 'needs_retry_total' => '0',
@@ -441,6 +466,8 @@ class Cashback_Statistics_Admin
                 'failed_count' => '0', 'declined_count' => '0', 'needs_retry_count' => '0',
             ];
         }
+
+        set_transient($cache_key, $result, HOUR_IN_SECONDS);
 
         return $result;
     }
@@ -454,6 +481,11 @@ class Cashback_Statistics_Admin
     {
         global $wpdb;
 
+        $cached = get_transient('cb_stats_bal');
+        if ($cached !== false) {
+            return $cached;
+        }
+
         $result = $wpdb->get_row(
             "SELECT
                 COALESCE(SUM(available_balance), 0) AS total_available,
@@ -466,7 +498,7 @@ class Cashback_Statistics_Admin
         );
 
         if (!$result) {
-            return [
+            $result = [
                 'total_available' => '0',
                 'total_pending'   => '0',
                 'total_paid'      => '0',
@@ -474,6 +506,8 @@ class Cashback_Statistics_Admin
                 'total_users'     => '0',
             ];
         }
+
+        set_transient('cb_stats_bal', $result, 15 * MINUTE_IN_SECONDS);
 
         return $result;
     }

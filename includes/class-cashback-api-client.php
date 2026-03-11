@@ -1517,6 +1517,28 @@ class Cashback_API_Client
                     continue;
                 }
 
+                // ─── Guard: cross-table UNIQUE KEY check ───
+                // Защита от дубликатов для перенесённых транзакций (click_id=NULL случай):
+                // если батч-карты пропустили строку, последний шанс найти её по UNIQUE KEY (uniq_id, partner).
+                $action_id_guard = (string) ($action['action_id'] ?? '');
+                if ($action_id_guard !== '') {
+                    $transferred = $wpdb->get_row($wpdb->prepare(
+                        "SELECT id, click_id, uniq_id, order_status, comission, sum_order, api_verified
+                         FROM {$this->transactions_table}
+                         WHERE uniq_id = %s
+                           AND (partner = LOWER(%s) OR partner = LOWER(%s))
+                         LIMIT 1",
+                        $action_id_guard,
+                        $slug,
+                        $network_name
+                    ), ARRAY_A);
+
+                    if ($transferred) {
+                        $this->sync_update_local($wpdb, $this->transactions_table, $transferred, $mapped_status, $api_payment, $api_cart, $slug, $api_click_id, $action, $updated, $skipped);
+                        continue;
+                    }
+                }
+
                 // ─── Не найдено нигде: INSERT новой транзакции ───
                 $insert_result = $this->insert_missing_transaction($action, $config, $slug, $wpdb, $existing_user_ids);
 
@@ -1735,6 +1757,23 @@ class Cashback_API_Client
         if (!$is_unregistered) {
             if (!isset($existing_user_ids[(int) $raw_user_id])) {
                 $is_unregistered = true;
+            }
+        }
+
+        // 2a. Фикс B: если всё ещё unregistered, но click_id известен —
+        //     проверяем, была ли предыдущая конверсия с тем же click_id уже перенесена
+        //     к реальному пользователю. Если да — новую покупку кладём туда же.
+        $click_id_early = (string) ($action[$click_field] ?? '');
+        if ($is_unregistered && $click_id_early !== '') {
+            $prior = $wpdb->get_row($wpdb->prepare(
+                "SELECT user_id FROM {$this->transactions_table}
+                 WHERE click_id = %s LIMIT 1",
+                $click_id_early
+            ), ARRAY_A);
+
+            if ($prior && (int) $prior['user_id'] > 0) {
+                $raw_user_id     = (string) (int) $prior['user_id'];
+                $is_unregistered = false;
             }
         }
 
@@ -2217,6 +2256,204 @@ class Cashback_API_Client
     // =========================================================================
     // Sync log
     // =========================================================================
+
+    // =========================================================================
+    // Auto-transfer unregistered
+    // =========================================================================
+
+    /**
+     * Автоматически переносит незарегистрированные транзакции к реальным пользователям.
+     *
+     * Ищет строки в cashback_unregistered_transactions, у которых click_id совпадает
+     * с уже перенесённой транзакцией в cashback_transactions (т.е. пользователь был
+     * идентифицирован ранее). Переносит их атомарно: INSERT + DELETE + audit_log.
+     *
+     * Запускается из крона каждые 2 часа после background_sync().
+     *
+     * @param int $limit Максимум строк за один вызов (default: 50)
+     * @return array ['transferred' => int, 'skipped_duplicate' => int, 'errors' => int, 'checked' => int]
+     */
+    public function auto_transfer_unregistered(int $limit = 50): array
+    {
+        global $wpdb;
+
+        $result = [
+            'transferred'       => 0,
+            'skipped_duplicate' => 0,
+            'errors'            => 0,
+            'checked'           => 0,
+        ];
+
+        // Одним JOIN находим кандидатов: unregistered строки, чей click_id уже есть
+        // в cashback_transactions с реальным user_id.
+        // Оба конца JOIN используют indexed click_id.
+        $candidates = $wpdb->get_results($wpdb->prepare(
+            "SELECT
+                u.id            AS unreg_id,
+                u.user_id       AS unreg_user_id,
+                u.uniq_id,
+                u.order_number,
+                u.offer_id,
+                u.offer_name,
+                u.order_status,
+                u.partner,
+                u.sum_order,
+                u.comission,
+                u.currency,
+                u.api_verified,
+                u.action_date,
+                u.click_time,
+                u.click_id,
+                u.website_id,
+                u.action_type,
+                u.processed_at,
+                u.processed_batch_id,
+                u.idempotency_key,
+                u.spam_click,
+                u.created_at,
+                t.user_id       AS real_user_id
+             FROM {$this->unregistered_table} u
+             INNER JOIN {$this->transactions_table} t
+                 ON t.click_id = u.click_id
+             LEFT JOIN {$wpdb->prefix}cashback_user_profile cup
+                 ON cup.user_id = t.user_id
+             WHERE u.click_id IS NOT NULL
+               AND u.click_id != ''
+               AND (u.user_id = '0' OR u.user_id = 'unregistered')
+               AND t.user_id > 0
+               AND (cup.status IS NULL OR cup.status NOT IN ('banned', 'deleted'))
+             GROUP BY u.id
+             ORDER BY u.id ASC
+             LIMIT %d",
+            $limit
+        ), ARRAY_A);
+
+        if (empty($candidates)) {
+            return $result;
+        }
+
+        $result['checked'] = count($candidates);
+
+        foreach ($candidates as $candidate) {
+            $wpdb->query('START TRANSACTION');
+            $success = false;
+
+            try {
+                // Блокируем исходную строку перед переносом
+                $tx = $wpdb->get_row($wpdb->prepare(
+                    "SELECT * FROM {$this->unregistered_table}
+                     WHERE id = %d FOR UPDATE",
+                    (int) $candidate['unreg_id']
+                ), ARRAY_A);
+
+                if (!$tx) {
+                    $wpdb->query('ROLLBACK');
+                    $result['skipped_duplicate']++;
+                    continue;
+                }
+
+                // Проверка дубликата по UNIQUE KEY (uniq_id, partner) — O(1)
+                if (!empty($tx['uniq_id']) && !empty($tx['partner'])) {
+                    $dup = (int) $wpdb->get_var($wpdb->prepare(
+                        "SELECT COUNT(*) FROM {$this->transactions_table}
+                         WHERE uniq_id = %s AND partner = %s",
+                        $tx['uniq_id'],
+                        $tx['partner']
+                    ));
+                    if ($dup > 0) {
+                        // Уже существует — удаляем дубликат из unregistered
+                        $wpdb->delete($this->unregistered_table, ['id' => (int) $candidate['unreg_id']], ['%d']);
+                        $wpdb->query('COMMIT');
+                        $result['skipped_duplicate']++;
+                        continue;
+                    }
+                }
+
+                // INSERT в cashback_transactions с реальным user_id
+                $insert_data = [
+                    'user_id'            => (int) $candidate['real_user_id'],
+                    'order_number'       => $tx['order_number'],
+                    'offer_id'           => $tx['offer_id'] !== null ? (int) $tx['offer_id'] : null,
+                    'offer_name'         => $tx['offer_name'],
+                    'order_status'       => $tx['order_status'],
+                    'partner'            => $tx['partner'],
+                    'sum_order'          => $tx['sum_order'],
+                    'comission'          => $tx['comission'],
+                    'currency'           => $tx['currency'],
+                    'uniq_id'            => $tx['uniq_id'],
+                    'api_verified'       => (int) $tx['api_verified'],
+                    'action_date'        => $tx['action_date'],
+                    'click_time'         => $tx['click_time'],
+                    'click_id'           => $tx['click_id'],
+                    'website_id'         => $tx['website_id'] !== null ? (int) $tx['website_id'] : null,
+                    'action_type'        => $tx['action_type'],
+                    'processed_at'       => $tx['processed_at'],
+                    'processed_batch_id' => $tx['processed_batch_id'],
+                    'idempotency_key'    => $tx['idempotency_key'],
+                    'spam_click'         => (int) $tx['spam_click'],
+                    'created_at'         => $tx['created_at'],
+                ];
+
+                // Убираем NULL-значения, чтобы не переписывать DEFAULT и триггеры
+                $insert_data = array_filter($insert_data, static function ($v) {
+                    return $v !== null;
+                });
+
+                $inserted = $wpdb->insert($this->transactions_table, $insert_data);
+
+                if ($inserted === false || $wpdb->last_error) {
+                    $err = $wpdb->last_error;
+                    $wpdb->query('ROLLBACK');
+                    $result['errors']++;
+                    error_log(sprintf(
+                        '[Cashback AutoTransfer] INSERT failed for unreg_id=%d: %s',
+                        (int) $candidate['unreg_id'],
+                        $err
+                    ));
+                    continue;
+                }
+
+                $new_id = (int) $wpdb->insert_id;
+
+                // Удаляем исходную строку
+                $wpdb->delete($this->unregistered_table, ['id' => (int) $candidate['unreg_id']], ['%d']);
+                $wpdb->query('COMMIT');
+                $success = true;
+
+                // Аудит-лог
+                if (class_exists('Cashback_Encryption')) {
+                    Cashback_Encryption::write_audit_log(
+                        'unregistered_transaction_auto_transferred',
+                        0, // системный актор
+                        'transaction',
+                        $new_id,
+                        [
+                            'source_id'   => (int) $candidate['unreg_id'],
+                            'target_user' => (int) $candidate['real_user_id'],
+                            'click_id'    => $tx['click_id'],
+                            'uniq_id'     => $tx['uniq_id'],
+                            'partner'     => $tx['partner'],
+                        ]
+                    );
+                }
+
+                $result['transferred']++;
+
+            } catch (\Throwable $e) {
+                if (!$success) {
+                    $wpdb->query('ROLLBACK');
+                }
+                $result['errors']++;
+                error_log(sprintf(
+                    '[Cashback AutoTransfer] Exception for unreg_id=%d: %s',
+                    (int) $candidate['unreg_id'],
+                    $e->getMessage()
+                ));
+            }
+        }
+
+        return $result;
+    }
 
     /**
      * Залогировать событие синхронизации

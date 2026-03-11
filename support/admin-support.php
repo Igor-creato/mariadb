@@ -61,7 +61,7 @@ class Cashback_Support_Admin
 
         wp_enqueue_script(
             'dompurify',
-            plugins_url('../assets/js/purify.min.js', __FILE__),
+            plugins_url('assets/js/purify.min.js', __FILE__),
             [],
             '3.3.2',
             false
@@ -69,7 +69,7 @@ class Cashback_Support_Admin
 
         wp_enqueue_script(
             'cashback-safe-html',
-            plugins_url('../assets/js/safe-html.js', __FILE__),
+            plugins_url('assets/js/safe-html.js', __FILE__),
             ['dompurify'],
             '1.0.0',
             false

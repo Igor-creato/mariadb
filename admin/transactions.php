@@ -23,6 +23,7 @@ class Cashback_Transactions_Admin
         add_action('admin_menu', [$this, 'add_admin_menu']);
         add_action('wp_ajax_update_transaction', [$this, 'handle_update_transaction']);
         add_action('wp_ajax_get_transaction', [$this, 'handle_get_transaction']);
+        add_action('wp_ajax_transfer_unregistered_transaction', [$this, 'handle_transfer_unregistered']);
         add_action('admin_enqueue_scripts', [$this, 'enqueue_admin_scripts']);
     }
 
@@ -69,8 +70,9 @@ class Cashback_Transactions_Admin
         );
 
         wp_localize_script('cashback-admin-transactions', 'cashbackTransactionsData', [
-            'updateNonce' => wp_create_nonce('update_transaction_nonce'),
-            'getNonce'    => wp_create_nonce('get_transaction_nonce'),
+            'updateNonce'   => wp_create_nonce('update_transaction_nonce'),
+            'getNonce'      => wp_create_nonce('get_transaction_nonce'),
+            'transferNonce' => wp_create_nonce('transfer_unregistered_nonce'),
         ]);
     }
 
@@ -282,6 +284,13 @@ class Cashback_Transactions_Admin
                                         <button class="button button-default cancel-btn" style="display:none;">Отмена</button>
                                     <?php else: ?>
                                         <span class="description">Финальный статус</span>
+                                    <?php endif; ?>
+                                    <?php if ($current_tab === 'unregistered'): ?>
+                                        <button class="button button-small transfer-btn"
+                                                style="margin-top:4px;"
+                                                data-transaction-id="<?php echo esc_attr($tx['id']); ?>">
+                                            Перенести
+                                        </button>
                                     <?php endif; ?>
                                 </td>
                             </tr>
@@ -505,6 +514,181 @@ class Cashback_Transactions_Admin
         }
 
         wp_send_json_success($data);
+    }
+
+    public function handle_transfer_unregistered(): void
+    {
+        if (!isset($_POST['nonce']) || !wp_verify_nonce(
+            sanitize_text_field(wp_unslash($_POST['nonce'])),
+            'transfer_unregistered_nonce'
+        )) {
+            wp_send_json_error(['message' => 'Неверный токен безопасности.']);
+            return;
+        }
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Недостаточно прав.']);
+            return;
+        }
+
+        $transaction_id = intval($_POST['transaction_id'] ?? 0);
+        if ($transaction_id <= 0) {
+            wp_send_json_error(['message' => 'Некорректный ID транзакции.']);
+            return;
+        }
+
+        $email = sanitize_email(wp_unslash($_POST['email'] ?? ''));
+        if (!is_email($email)) {
+            wp_send_json_error(['message' => 'Некорректный email.']);
+            return;
+        }
+
+        $wp_user = get_user_by('email', $email);
+        if (!$wp_user) {
+            wp_send_json_error(['message' => 'Пользователь с таким email не найден.']);
+            return;
+        }
+
+        global $wpdb;
+
+        $wpdb->query('START TRANSACTION');
+
+        try {
+            // Блокируем исходную строку
+            $tx = $wpdb->get_row($wpdb->prepare(
+                "SELECT * FROM {$this->unregistered_table} WHERE id = %d FOR UPDATE",
+                $transaction_id
+            ), ARRAY_A);
+
+            if (!$tx) {
+                $wpdb->query('ROLLBACK');
+                wp_send_json_error(['message' => 'Транзакция не найдена.']);
+                return;
+            }
+
+            // Проверяем дубль в целевой таблице
+            if (!empty($tx['uniq_id'])) {
+                $duplicate = (int) $wpdb->get_var($wpdb->prepare(
+                    "SELECT COUNT(*) FROM {$this->registered_table} WHERE uniq_id = %s AND partner = %s",
+                    $tx['uniq_id'],
+                    (string) ($tx['partner'] ?? '')
+                ));
+
+                if ($duplicate > 0) {
+                    // Запись уже есть в зарегистрированных — удаляем «висящую» строку из unregistered
+                    $wpdb->delete($this->unregistered_table, ['id' => $transaction_id], ['%d']);
+                    $wpdb->query('COMMIT');
+                    if (class_exists('Cashback_Encryption')) {
+                        Cashback_Encryption::write_audit_log(
+                            'unregistered_transaction_cleanup_duplicate',
+                            get_current_user_id(),
+                            'unregistered_transaction',
+                            $transaction_id,
+                            ['uniq_id' => $tx['uniq_id'], 'partner' => $tx['partner']]
+                        );
+                    }
+                    wp_send_json_success([
+                        'message'          => 'Транзакция уже существует в зарегистрированных; запись из незарегистрированных удалена.',
+                        'transferred_user' => $email,
+                    ]);
+                    return;
+                }
+            }
+
+            // INSERT в зарегистрированные (cashback и applied_cashback_rate рассчитает триггер)
+            $insert_result = $wpdb->insert(
+                $this->registered_table,
+                [
+                    'user_id'            => $wp_user->ID,
+                    'order_number'       => $tx['order_number'],
+                    'offer_id'           => $tx['offer_id'] !== null ? (int) $tx['offer_id'] : null,
+                    'offer_name'         => $tx['offer_name'],
+                    'order_status'       => $tx['order_status'],
+                    'partner'            => $tx['partner'],
+                    'sum_order'          => $tx['sum_order'],
+                    'comission'          => $tx['comission'],
+                    'currency'           => $tx['currency'],
+                    'uniq_id'            => $tx['uniq_id'],
+                    'api_verified'       => (int) $tx['api_verified'],
+                    'action_date'        => $tx['action_date'],
+                    'click_time'         => $tx['click_time'],
+                    'click_id'           => $tx['click_id'],
+                    'website_id'         => $tx['website_id'] !== null ? (int) $tx['website_id'] : null,
+                    'action_type'        => $tx['action_type'],
+                    'processed_at'       => $tx['processed_at'],
+                    'processed_batch_id' => $tx['processed_batch_id'],
+                    'idempotency_key'    => $tx['idempotency_key'],
+                    'spam_click'         => $tx['spam_click'],
+                    'created_at'         => $tx['created_at'],
+                ],
+                [
+                    '%d', '%s', '%d', '%s', '%s', '%s',
+                    '%f', '%f', '%s', '%s', '%d', '%s',
+                    '%s', '%s', '%d', '%s', '%s', '%s',
+                    '%s', '%d', '%s',
+                ]
+            );
+
+            if ($insert_result === false) {
+                $db_error = $wpdb->last_error;
+                $wpdb->query('ROLLBACK');
+                error_log(sprintf('[Cashback Transfer] Insert failed for unreg ID %d: %s', $transaction_id, $db_error));
+                wp_send_json_error(['message' => 'Ошибка при переносе транзакции. Подробности в журнале ошибок.']);
+                return;
+            }
+
+            // Сохраняем до DELETE/COMMIT — они сбрасывают insert_id в 0
+            $new_transaction_id = (int) $wpdb->insert_id;
+
+            // Удаляем из незарегистрированных
+            $delete_result = $wpdb->delete(
+                $this->unregistered_table,
+                ['id' => $transaction_id],
+                ['%d']
+            );
+
+            if ($delete_result === false) {
+                $wpdb->query('ROLLBACK');
+                wp_send_json_error(['message' => 'Ошибка при удалении исходной транзакции.']);
+                return;
+            }
+
+            $wpdb->query('COMMIT');
+
+            // Инвалидация кеша статистики
+            $wpdb->query(
+                "DELETE FROM {$wpdb->options}
+                 WHERE option_name LIKE '_transient_cb_stats_tx_%'
+                    OR option_name LIKE '_transient_timeout_cb_stats_tx_%'"
+            );
+            delete_transient('cb_stats_bal');
+
+            // Аудит-лог
+            if (class_exists('Cashback_Encryption')) {
+                Cashback_Encryption::write_audit_log(
+                    'unregistered_transaction_transferred',
+                    get_current_user_id(),
+                    'transaction',
+                    $new_transaction_id,
+                    [
+                        'source_id'    => $transaction_id,
+                        'target_user'  => $wp_user->ID,
+                        'target_email' => $email,
+                        'uniq_id'      => $tx['uniq_id'],
+                        'partner'      => $tx['partner'],
+                    ]
+                );
+            }
+
+            wp_send_json_success([
+                'message'          => sprintf('Транзакция перенесена пользователю %s.', $email),
+                'transferred_user' => $email,
+            ]);
+        } catch (\Throwable $e) {
+            $wpdb->query('ROLLBACK');
+            error_log(sprintf('[Cashback Transfer] Exception for unreg ID %d: %s', $transaction_id, $e->getMessage()));
+            wp_send_json_error(['message' => 'Внутренняя ошибка при переносе транзакции.']);
+        }
     }
 
     private function get_status_label(string $status): string

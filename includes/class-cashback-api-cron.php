@@ -95,11 +95,29 @@ class Cashback_API_Cron
                 }
             }
 
+            // Автоматический перенос незарегистрированных транзакций к реальным пользователям
+            $transfer_result = null;
+            try {
+                $transfer_result = $client->auto_transfer_unregistered(50);
+                if ($transfer_result['transferred'] > 0 || $transfer_result['errors'] > 0) {
+                    error_log(sprintf(
+                        'Cashback API Cron: auto_transfer: transferred=%d, skipped_duplicate=%d, errors=%d, checked=%d',
+                        $transfer_result['transferred'],
+                        $transfer_result['skipped_duplicate'],
+                        $transfer_result['errors'],
+                        $transfer_result['checked']
+                    ));
+                }
+            } catch (Exception $e) {
+                error_log('Cashback API Cron: auto_transfer exception — ' . $e->getMessage());
+            }
+
             // Сохраняем результат последней синхронизации для отображения в админке
             update_option('cashback_last_sync_result', [
-                'timestamp' => current_time('mysql'),
-                'elapsed'   => $elapsed,
-                'results'   => $results,
+                'timestamp'        => current_time('mysql'),
+                'elapsed'          => $elapsed,
+                'results'          => $results,
+                'auto_transferred' => $transfer_result,
             ]);
         } catch (Exception $e) {
             error_log('Cashback API Cron: Exception — ' . $e->getMessage());

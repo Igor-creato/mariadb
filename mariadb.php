@@ -76,6 +76,7 @@ class Mariadb_Plugin
             $instance->migrate_add_bank_required();
             $instance->create_triggers();
             $instance->migrate_backfill_webhook_payload_hash();
+            $instance->migrate_add_stats_indexes();
             $instance->create_events();
             $instance->initialize_existing_users();
 
@@ -1420,6 +1421,35 @@ END;",
         );
 
         error_log(sprintf('[Cashback] Webhook payload_hash backfill complete. Updated %d records.', $null_count));
+    }
+
+    /**
+     * Добавляет индексы на created_at для таблиц статистики.
+     * Индексы позволяют использовать range-сканирование вместо full table scan.
+     */
+    private function migrate_add_stats_indexes(): void
+    {
+        global $wpdb;
+
+        $tables = [
+            $wpdb->prefix . 'cashback_transactions',
+            $wpdb->prefix . 'cashback_unregistered_transactions',
+            $wpdb->prefix . 'cashback_payout_requests',
+        ];
+
+        foreach ($tables as $table) {
+            $idx_exists = (int) $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM information_schema.STATISTICS
+                 WHERE TABLE_SCHEMA = DATABASE()
+                   AND TABLE_NAME = %s
+                   AND INDEX_NAME = 'idx_stats_created_at'",
+                $table
+            ));
+
+            if (!$idx_exists) {
+                $wpdb->query("ALTER TABLE `{$table}` ADD INDEX `idx_stats_created_at` (`created_at`)");
+            }
+        }
     }
 }
 

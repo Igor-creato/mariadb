@@ -30,7 +30,27 @@
         row.find('.cashback-display').text(txData.cashback);
     }
 
+    var transferTransactionId = null;
+    var transferRow = null;
+
     $(document).ready(function () {
+
+        // Модальное окно переноса транзакции
+        $('body').append(
+            '<div id="transfer-modal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:99999;">' +
+                '<div id="transfer-modal-inner">' +
+                    '<h3 style="margin-top:0;">Перенести транзакцию</h3>' +
+                    '<p>Введите email пользователя, на которого переносится транзакция:</p>' +
+                    '<input type="email" id="transfer-email" placeholder="user@example.com" autocomplete="email" />' +
+                    '<div id="transfer-error" style="color:#d63638;margin:8px 0;display:none;"></div>' +
+                    '<div style="margin-top:12px;">' +
+                        '<button id="transfer-confirm" class="button button-primary">Перенести</button>' +
+                        '&nbsp;' +
+                        '<button id="transfer-cancel" class="button">Отмена</button>' +
+                    '</div>' +
+                '</div>' +
+            '</div>'
+        );
 
         // --- Filters ---
         $('#filter-submit').on('click', function () {
@@ -68,6 +88,81 @@
             url.searchParams.delete('search');
             url.searchParams.delete('paged');
             window.location.href = url.toString();
+        });
+
+        // --- Transfer (unregistered → registered) ---
+        $(document).on('click', '.transfer-btn', function () {
+            transferTransactionId = $(this).data('transaction-id');
+            transferRow = $(this).closest('tr');
+            $('#transfer-email').val('');
+            $('#transfer-error').hide().text('');
+            $('#transfer-modal').show();
+            setTimeout(function () { $('#transfer-email').focus(); }, 50);
+        });
+
+        $('#transfer-cancel').on('click', function () {
+            $('#transfer-modal').hide();
+        });
+
+        $(document).on('keydown', function (e) {
+            if (e.key === 'Escape' && $('#transfer-modal').is(':visible')) {
+                $('#transfer-modal').hide();
+            }
+        });
+
+        $('#transfer-modal').on('click', function (e) {
+            if ($(e.target).is('#transfer-modal')) {
+                $('#transfer-modal').hide();
+            }
+        });
+
+        $('#transfer-confirm').on('click', function () {
+            var email = $('#transfer-email').val().trim();
+            var emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            if (!emailRegex.test(email)) {
+                $('#transfer-error').text('Введите корректный email.').show();
+                return;
+            }
+
+            $('#transfer-error').hide();
+            var btn = $(this);
+            btn.prop('disabled', true).text('Загрузка...');
+
+            $.post(ajaxurl, {
+                action: 'transfer_unregistered_transaction',
+                transaction_id: transferTransactionId,
+                email: email,
+                nonce: cashbackTransactionsData.transferNonce
+            }, function (response) {
+                if (response.success) {
+                    $('#transfer-modal').hide();
+                    if (transferRow) {
+                        transferRow.remove();
+                    }
+                    showSuccessNotice(response.data.message || 'Транзакция успешно перенесена.');
+                } else {
+                    $('#transfer-error').text(response.data.message || 'Неизвестная ошибка.').show();
+                }
+            }).fail(function (jqXHR) {
+                var msg = 'Ошибка соединения';
+                if (jqXHR.status === 403) {
+                    msg = 'Доступ запрещён. Обновите страницу.';
+                } else if (jqXHR.status === 500) {
+                    msg = 'Ошибка сервера.';
+                } else if (jqXHR.status) {
+                    msg = 'Ошибка: HTTP ' + jqXHR.status;
+                }
+                $('#transfer-error').text(msg).show();
+            }).always(function () {
+                btn.prop('disabled', false).text('Перенести');
+            });
+        });
+
+        $('#transfer-email').on('keypress', function (e) {
+            if (e.which === 13) {
+                e.preventDefault();
+                $('#transfer-confirm').click();
+            }
         });
 
         // Allow Enter key in search field
