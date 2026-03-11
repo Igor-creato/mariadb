@@ -104,6 +104,7 @@ class Mariadb_Plugin
         ));
 
         if ($engine && strtolower($engine) !== 'innodb') {
+            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name from $wpdb->users, not user input
             $wpdb->query("ALTER TABLE `{$wpdb->users}` ENGINE=InnoDB");
             error_log("Mariadb Plugin: Converted {$wpdb->users} from {$engine} to InnoDB");
         }
@@ -519,7 +520,8 @@ class Mariadb_Plugin
         $table = $wpdb->prefix . 'cashback_payout_methods';
 
         // Проверяем, есть ли уже записи
-        $count = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM `{$table}` WHERE %d = %d", 1, 1));
+        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name from $wpdb->prefix, not user input
+        $count = $wpdb->get_var("SELECT COUNT(*) FROM `{$table}`");
         if ($count > 0) {
             error_log('Mariadb Plugin: Payout methods already exist, skipping initialization');
             return;
@@ -551,7 +553,8 @@ class Mariadb_Plugin
         $table = $wpdb->prefix . 'cashback_banks';
 
         // Проверяем, есть ли уже записи
-        $count = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM `{$table}` WHERE %d = %d", 1, 1));
+        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name from $wpdb->prefix, not user input
+        $count = $wpdb->get_var("SELECT COUNT(*) FROM `{$table}`");
         if ($count > 0) {
             error_log('Mariadb Plugin: Banks already exist, skipping initialization');
             return;
@@ -1271,6 +1274,7 @@ END;",
 
         if (!$column_exists) {
             // Шаг 2: Добавляем колонку
+            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $table is $wpdb->prefix . hardcoded name, not user input
             $wpdb->query("ALTER TABLE `{$table}` ADD COLUMN `reference_id` varchar(11) NOT NULL DEFAULT '' COMMENT 'Публичный ID заявки формата WD-XXXXXXXX' AFTER `id`");
 
             if ($wpdb->last_error) {
@@ -1335,6 +1339,7 @@ END;",
         ));
 
         if (!$index_exists) {
+            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $table is $wpdb->prefix . hardcoded name, not user input
             $wpdb->query("ALTER TABLE `{$table}` ADD UNIQUE KEY `uk_reference_id` (`reference_id`)");
 
             if ($wpdb->last_error) {

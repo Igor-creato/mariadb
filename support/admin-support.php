@@ -54,13 +54,14 @@ class Cashback_Support_Admin
      */
     public function enqueue_admin_scripts(string $hook): void
     {
-        if (!isset($_GET['page']) || $_GET['page'] !== 'cashback-support') {
+        $page = isset($_GET['page']) ? sanitize_text_field(wp_unslash($_GET['page'])) : '';
+        if ($page !== 'cashback-support') {
             return;
         }
 
         wp_enqueue_script(
             'dompurify',
-            plugins_url('assets/js/purify.min.js', __FILE__),
+            plugins_url('../assets/js/purify.min.js', __FILE__),
             [],
             '3.3.2',
             false
@@ -68,7 +69,7 @@ class Cashback_Support_Admin
 
         wp_enqueue_script(
             'cashback-safe-html',
-            plugins_url('assets/js/safe-html.js', __FILE__),
+            plugins_url('../assets/js/safe-html.js', __FILE__),
             ['dompurify'],
             '1.0.0',
             false
@@ -250,20 +251,16 @@ class Cashback_Support_Admin
         }
 
         // Подсчёт общего количества
-        if (!empty($where_params)) {
-            $count_sql = "SELECT COUNT(*) FROM `{$this->tickets_table}` t {$where_clause}";
-            $total_items = (int) $wpdb->get_var($wpdb->prepare($count_sql, $where_params));
-        } else {
-            $total_items = (int) $wpdb->get_var($wpdb->prepare(
-                "SELECT COUNT(*) FROM `{$this->tickets_table}` t WHERE %d = %d",
-                1,
-                1
-            ));
-        }
+        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name from $wpdb->prefix; where_clause built from whitelisted conditions only
+        $count_sql = "SELECT COUNT(*) FROM `{$this->tickets_table}` t {$where_clause}";
+        $total_items = !empty($where_params)
+            ? (int) $wpdb->get_var($wpdb->prepare($count_sql, $where_params))
+            : (int) $wpdb->get_var($count_sql);
 
         $total_pages = (int) ceil($total_items / $per_page);
 
         // Получение тикетов
+        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table names from $wpdb->prefix; where_clause built from whitelisted conditions only
         $select_sql = "SELECT t.*, u.user_login, u.user_email,
             (SELECT COUNT(*) FROM `{$this->messages_table}` m WHERE m.ticket_id = t.id AND m.is_admin = 0 AND m.is_read = 0) as unread_count
             FROM `{$this->tickets_table}` t
@@ -809,18 +806,47 @@ class Cashback_Support_Admin
             return;
         }
 
-        // Проверяем что тикет существует и не закрыт
+        // Ранняя проверка числа файлов — ДО любых изменений в БД
+        $upload_errors = [];
+        $files_to_process = [];
+        if (Cashback_Support_DB::is_attachments_enabled() && !empty($_FILES['support_files']['name'][0])) {
+            $files_count = count($_FILES['support_files']['name']);
+            $max_files = Cashback_Support_DB::get_max_files_per_message();
+
+            if ($files_count > $max_files) {
+                wp_send_json_error(['message' => sprintf('Максимум %d файлов.', $max_files)]);
+                return;
+            }
+
+            for ($i = 0; $i < $files_count; $i++) {
+                if ($_FILES['support_files']['error'][$i] !== UPLOAD_ERR_NO_FILE) {
+                    $files_to_process[] = [
+                        'name'     => $_FILES['support_files']['name'][$i],
+                        'type'     => $_FILES['support_files']['type'][$i],
+                        'tmp_name' => $_FILES['support_files']['tmp_name'][$i],
+                        'error'    => $_FILES['support_files']['error'][$i],
+                        'size'     => $_FILES['support_files']['size'][$i],
+                    ];
+                }
+            }
+        }
+
+        // Проверяем что тикет существует и не закрыт — внутри транзакции с блокировкой строки
+        $wpdb->query('START TRANSACTION');
+
         $ticket = $wpdb->get_row($wpdb->prepare(
-            "SELECT id, user_id, subject, status FROM `{$this->tickets_table}` WHERE id = %d",
+            "SELECT id, user_id, subject, status FROM `{$this->tickets_table}` WHERE id = %d FOR UPDATE",
             $ticket_id
         ));
 
         if (!$ticket) {
+            $wpdb->query('ROLLBACK');
             wp_send_json_error(['message' => 'Тикет не найден.']);
             return;
         }
 
         if ($ticket->status === 'closed') {
+            $wpdb->query('ROLLBACK');
             wp_send_json_error(['message' => 'Невозможно ответить на закрытый тикет.']);
             return;
         }
@@ -839,44 +865,15 @@ class Cashback_Support_Admin
         );
 
         if (!$inserted) {
+            $wpdb->query('ROLLBACK');
             wp_send_json_error(['message' => 'Ошибка при сохранении сообщения.']);
             return;
         }
 
         $message_id = (int) $wpdb->insert_id;
 
-        // Обработка вложений
-        if (Cashback_Support_DB::is_attachments_enabled() && !empty($_FILES['support_files']['name'][0])) {
-            $files_count = count($_FILES['support_files']['name']);
-            $max_files = Cashback_Support_DB::get_max_files_per_message();
-
-            if ($files_count > $max_files) {
-                wp_send_json_error(['message' => sprintf('Максимум %d файлов.', $max_files)]);
-                return;
-            }
-
-            for ($i = 0; $i < $files_count; $i++) {
-                if ($_FILES['support_files']['error'][$i] === UPLOAD_ERR_NO_FILE) {
-                    continue;
-                }
-
-                $single_file = [
-                    'name'     => $_FILES['support_files']['name'][$i],
-                    'type'     => $_FILES['support_files']['type'][$i],
-                    'tmp_name' => $_FILES['support_files']['tmp_name'][$i],
-                    'error'    => $_FILES['support_files']['error'][$i],
-                    'size'     => $_FILES['support_files']['size'][$i],
-                ];
-
-                $result = Cashback_Support_DB::handle_file_upload($single_file, $ticket_id, $message_id, get_current_user_id());
-                if (is_string($result)) {
-                    error_log('[Cashback Support] Admin file upload error: ' . $result);
-                }
-            }
-        }
-
         // Обновляем статус тикета
-        $wpdb->update(
+        $updated = $wpdb->update(
             $this->tickets_table,
             [
                 'status' => 'answered',
@@ -886,6 +883,23 @@ class Cashback_Support_Admin
             ['%s', '%s'],
             ['%d']
         );
+
+        if ($updated === false) {
+            $wpdb->query('ROLLBACK');
+            wp_send_json_error(['message' => 'Ошибка при обновлении статуса тикета.']);
+            return;
+        }
+
+        $wpdb->query('COMMIT');
+
+        // Обработка вложений — после коммита, ошибки не критичны для основной операции
+        foreach ($files_to_process as $single_file) {
+            $result = Cashback_Support_DB::handle_file_upload($single_file, $ticket_id, $message_id, get_current_user_id());
+            if (is_string($result)) {
+                error_log('[Cashback Support] Admin file upload error: ' . $result);
+                $upload_errors[] = $result;
+            }
+        }
 
         // Отправляем email пользователю
         $this->send_user_notification($ticket_id, $ticket->subject, (int) $ticket->user_id, $message);
@@ -902,7 +916,12 @@ class Cashback_Support_Admin
         $msg_attachments_map = Cashback_Support_DB::get_attachments_for_messages([$message_id]);
         $msg_attachments = $msg_attachments_map[$message_id] ?? [];
 
-        wp_send_json_success(['html' => $this->render_message_html($msg, $msg_attachments)]);
+        $response = ['html' => $this->render_message_html($msg, $msg_attachments)];
+        if (!empty($upload_errors)) {
+            $response['upload_warnings'] = $upload_errors;
+        }
+
+        wp_send_json_success($response);
     }
 
     /**
@@ -930,18 +949,22 @@ class Cashback_Support_Admin
             return;
         }
 
-        // Проверяем что тикет существует
+        // Читаем и обновляем статус атомарно, чтобы избежать гонки состояний
+        $wpdb->query('START TRANSACTION');
+
         $ticket = $wpdb->get_row($wpdb->prepare(
-            "SELECT id, status FROM `{$this->tickets_table}` WHERE id = %d",
+            "SELECT id, status FROM `{$this->tickets_table}` WHERE id = %d FOR UPDATE",
             $ticket_id
         ));
 
         if (!$ticket) {
+            $wpdb->query('ROLLBACK');
             wp_send_json_error(['message' => 'Тикет не найден.']);
             return;
         }
 
         if ($ticket->status === 'closed') {
+            $wpdb->query('ROLLBACK');
             wp_send_json_error(['message' => 'Невозможно изменить статус закрытого тикета.']);
             return;
         }
@@ -957,13 +980,21 @@ class Cashback_Support_Admin
             $update_format[] = '%s';
         }
 
-        $wpdb->update(
+        $updated = $wpdb->update(
             $this->tickets_table,
             $update_data,
             ['id' => $ticket_id],
             $update_format,
             ['%d']
         );
+
+        if ($updated === false) {
+            $wpdb->query('ROLLBACK');
+            wp_send_json_error(['message' => 'Ошибка при обновлении статуса.']);
+            return;
+        }
+
+        $wpdb->query('COMMIT');
 
         wp_send_json_success(['status' => $new_status]);
     }

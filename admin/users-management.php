@@ -329,7 +329,7 @@ class Cashback_Users_Management_Admin
             return;
         }
 
-        // Проверяем наличие user_id
+        // Проверяем наличие и корректность user_id
         if (!isset($_POST['user_id'])) {
             wp_send_json_error(['message' => 'Отсутствует ID пользователя.']);
             return;
@@ -338,6 +338,11 @@ class Cashback_Users_Management_Admin
         global $wpdb;
 
         $user_id = intval($_POST['user_id']);
+
+        if ($user_id <= 0) {
+            wp_send_json_error(['message' => 'Некорректный ID пользователя.']);
+            return;
+        }
 
         // Подготовим массив для обновления, включая только те поля, которые были переданы
         $update_data = array();

@@ -70,6 +70,9 @@ class Cashback_Fraud_Detector
         ));
 
         foreach ($results as $row) {
+            if (empty($row->user_ids)) {
+                continue;
+            }
             $user_ids = array_map('intval', explode(',', $row->user_ids));
 
             foreach ($user_ids as $user_id) {
@@ -138,6 +141,9 @@ class Cashback_Fraud_Detector
         ));
 
         foreach ($results as $row) {
+            if (empty($row->user_ids)) {
+                continue;
+            }
             $user_ids = array_map('intval', explode(',', $row->user_ids));
 
             foreach ($user_ids as $user_id) {
@@ -206,6 +212,9 @@ class Cashback_Fraud_Detector
         ));
 
         foreach ($results as $row) {
+            if (empty($row->user_ids)) {
+                continue;
+            }
             $user_ids = array_map('intval', explode(',', $row->user_ids));
 
             foreach ($user_ids as $user_id) {

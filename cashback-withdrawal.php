@@ -810,7 +810,7 @@ class CashbackWithdrawal
         $release_lock_fn = function () use ($wpdb, $lock_name, &$lock_released) {
             if (!$lock_released) {
                 $lock_released = true;
-                $lock_released = true; $wpdb->query($wpdb->prepare("DO RELEASE_LOCK(%s)", $lock_name));
+                $wpdb->query($wpdb->prepare("DO RELEASE_LOCK(%s)", $lock_name));
             }
         };
         register_shutdown_function($release_lock_fn);
