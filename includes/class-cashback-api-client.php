@@ -586,7 +586,7 @@ class Cashback_API_Client
         $local_transactions = $wpdb->get_results($wpdb->prepare(
             "SELECT t.id, t.click_id, t.uniq_id, t.order_number, t.offer_name,
                     t.comission, t.cashback, t.order_status, t.partner,
-                    t.sum_order, t.created_at, t.updated_at
+                    t.sum_order, t.created_at, t.updated_at, t.original_cpa_subid
              FROM {$this->transactions_table} t
              WHERE t.user_id = %d
                AND (LOWER(t.partner) = LOWER(%s) OR LOWER(t.partner) = LOWER(%s))
@@ -807,6 +807,65 @@ class Cashback_API_Client
                 'sum_order'    => (float) ($tx['sum_order'] ?? 0),
                 'created'      => $tx['created_at'],
             ];
+        }
+
+        // ─── Дополнительная проверка для перенесённых из unregistered транзакций ───
+        // Транзакции, перенесённые администратором из cashback_unregistered_transactions,
+        // хранятся в CPA с original_cpa_subid (например 'unregistered'), а не с реальным user_id.
+        // Поэтому основной запрос к API (subid2=user_id) их не возвращает.
+        // Делаем дополнительные запросы по уникальным значениям original_cpa_subid.
+        if (!empty($missing_api)) {
+            $transferred_missing = [];
+            foreach ($missing_api as $key => $m) {
+                $local_tx   = $local_by_click_id[$m['click_id']] ?? null;
+                $orig_subid = $local_tx['original_cpa_subid'] ?? null;
+
+                if ($orig_subid !== null && $orig_subid !== (string) $user_id) {
+                    $transferred_missing[$orig_subid][$key] = $m;
+                }
+            }
+
+            foreach ($transferred_missing as $orig_subid => $items) {
+                $extra_params = [
+                    $user_field  => $orig_subid,
+                    'date_start' => $date_start,
+                    'date_end'   => $date_end,
+                ];
+                if (!empty($network['api_website_id'])) {
+                    $extra_params['website'] = $network['api_website_id'];
+                }
+
+                $extra_result = $this->fetch_all_actions_for_network(
+                    $network_slug,
+                    $network['credentials'],
+                    $extra_params,
+                    20,
+                    $network
+                );
+
+                if (!$extra_result['success']) {
+                    continue;
+                }
+
+                foreach ($extra_result['actions'] as $extra_action) {
+                    $extra_click_id  = (string) ($extra_action[$click_field] ?? '');
+                    $extra_action_id = (string) ($extra_action['action_id'] ?? '');
+
+                    foreach ($items as $key => $m) {
+                        $click_match  = $extra_click_id !== '' && $extra_click_id === $m['click_id'];
+                        $action_match = $extra_action_id !== '' && $extra_action_id === ($m['uniq_id'] ?? '');
+
+                        if ($click_match || $action_match) {
+                            unset($missing_api[$key]);
+                            $matched[] = ['local_id' => $m['local_id']];
+                            unset($items[$key]); // избегаем повторного матчинга
+                            break;
+                        }
+                    }
+                }
+            }
+
+            $missing_api = array_values($missing_api);
         }
 
         // ─── Обновляем api_verified для всех сматченных транзакций ───

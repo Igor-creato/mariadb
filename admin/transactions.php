@@ -618,6 +618,9 @@ class Cashback_Transactions_Admin
                     'processed_at'       => $tx['processed_at'],
                     'processed_batch_id' => $tx['processed_batch_id'],
                     'idempotency_key'    => $tx['idempotency_key'],
+                    'original_cpa_subid' => (empty($tx['user_id']) || (int) $tx['user_id'] === 0)
+                        ? 'unregistered'
+                        : (string) $tx['user_id'],
                     'spam_click'         => $tx['spam_click'],
                     'created_at'         => $tx['created_at'],
                 ],
@@ -625,7 +628,7 @@ class Cashback_Transactions_Admin
                     '%d', '%s', '%d', '%s', '%s', '%s',
                     '%f', '%f', '%s', '%s', '%d', '%s',
                     '%s', '%s', '%d', '%s', '%s', '%s',
-                    '%s', '%d', '%s',
+                    '%s', '%s', '%d', '%s',
                 ]
             );
 

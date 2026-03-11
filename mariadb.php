@@ -77,6 +77,7 @@ class Mariadb_Plugin
             $instance->create_triggers();
             $instance->migrate_backfill_webhook_payload_hash();
             $instance->migrate_add_stats_indexes();
+            $instance->migrate_add_original_cpa_subid();
             $instance->create_events();
             $instance->initialize_existing_users();
 
@@ -237,6 +238,7 @@ class Mariadb_Plugin
             `processed_at` datetime DEFAULT NULL COMMENT 'Когда транзакция была учтена в балансе',
             `processed_batch_id` char(36) DEFAULT NULL COMMENT 'UUID батча начисления',
             `idempotency_key` varchar(64) DEFAULT NULL COMMENT 'Ключ идемпотентности для предотвращения дублирования транзакций',
+            `original_cpa_subid` varchar(255) DEFAULT NULL COMMENT 'Оригинальный subid2 переданный в CPA при клике. Для перенесённых из unregistered = значение user_id на момент клика (например: unregistered)',
             `spam_click` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = транзакция из подозрительного клика, кэшбэк только после ручной проверки',
             `created_at` timestamp NULL DEFAULT current_timestamp(),
             `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
@@ -1448,6 +1450,37 @@ END;",
 
             if (!$idx_exists) {
                 $wpdb->query("ALTER TABLE `{$table}` ADD INDEX `idx_stats_created_at` (`created_at`)");
+            }
+        }
+    }
+
+    /**
+     * Добавляет колонку original_cpa_subid в cashback_transactions.
+     *
+     * Хранит оригинальный subid2, переданный в CPA-сеть при клике пользователя.
+     * Для транзакций, перенесённых из незарегистрированных, содержит 'unregistered'
+     * (или иное значение user_id, которое было в CPA на момент клика).
+     * Используется в validate_user() для корректного поиска таких транзакций в API.
+     */
+    private function migrate_add_original_cpa_subid(): void
+    {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'cashback_transactions';
+
+        $column_exists = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM information_schema.COLUMNS
+             WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s AND COLUMN_NAME = 'original_cpa_subid'",
+            DB_NAME,
+            $table
+        ));
+
+        if (!$column_exists) {
+            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $table is $wpdb->prefix . hardcoded name
+            $wpdb->query("ALTER TABLE `{$table}` ADD COLUMN `original_cpa_subid` varchar(255) DEFAULT NULL COMMENT 'Оригинальный subid2 переданный в CPA при клике. Для перенесённых из unregistered = значение user_id на момент клика (например: unregistered)' AFTER `idempotency_key`");
+
+            if ($wpdb->last_error) {
+                error_log('[Cashback] Failed to add original_cpa_subid column: ' . $wpdb->last_error);
             }
         }
     }
