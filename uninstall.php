@@ -94,6 +94,8 @@ function cashback_plugin_uninstall(): void
 
     // Drop events
     $events = [
+        // cashback_ev_confirmed_cashback удалён в новой версии (заменён PHP cron)
+        // DROP на случай если остался от старых установок
         "{$prefix}cashback_ev_confirmed_cashback",
         "{$prefix}cashback_ev_cleanup_cashback_webhooks_old",
         "{$prefix}cashback_ev_cleanup_click_log",

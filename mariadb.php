@@ -79,6 +79,7 @@ class Mariadb_Plugin
             $instance->migrate_add_stats_indexes();
             $instance->migrate_add_original_cpa_subid();
             $instance->migrate_add_webhook_processing_status();
+            $instance->migrate_add_funds_ready();
             $instance->create_events();
             $instance->initialize_existing_users();
 
@@ -241,6 +242,7 @@ class Mariadb_Plugin
             `idempotency_key` varchar(64) DEFAULT NULL COMMENT 'Ключ идемпотентности для предотвращения дублирования транзакций',
             `original_cpa_subid` varchar(255) DEFAULT NULL COMMENT 'Оригинальный subid2 переданный в CPA при клике. Для перенесённых из unregistered = значение user_id на момент клика (например: unregistered)',
             `spam_click` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = транзакция из подозрительного клика, кэшбэк только после ручной проверки',
+            `funds_ready` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = CPA-сеть подтвердила готовность средств к снятию (Admitad: processed=1, EPN: status=approved)',
             `created_at` timestamp NULL DEFAULT current_timestamp(),
             `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
             PRIMARY KEY (`id`),
@@ -252,7 +254,7 @@ class Mariadb_Plugin
             KEY `idx_processed_batch_id` (`processed_batch_id`),
             KEY `idx_click_id` (`click_id`),
             KEY `idx_offer_id` (`offer_id`),
-            KEY `idx_balance_candidates` (`order_status`,`api_verified`,`processed_at`,`spam_click`,`cashback`)
+            KEY `idx_balance_candidates` (`order_status`,`api_verified`,`funds_ready`,`processed_at`,`spam_click`,`cashback`)
         ) ENGINE=InnoDB {$charset_collate};";
 
         // Таблица cashback_unregistered_transactions
@@ -280,6 +282,7 @@ class Mariadb_Plugin
             `processed_batch_id` char(36) DEFAULT NULL COMMENT 'UUID батча начисления',
             `idempotency_key` varchar(64) DEFAULT NULL COMMENT 'Ключ идемпотентности для предотвращения дублирования транзакций',
             `spam_click` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = транзакция из подозрительного клика, кэшбэк только после ручной проверки',
+            `funds_ready` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = CPA-сеть подтвердила готовность средств к снятию (Admitad: processed=1, EPN: status=approved)',
             `created_at` timestamp NULL DEFAULT current_timestamp(),
             `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
             PRIMARY KEY (`id`),
@@ -912,9 +915,13 @@ class Mariadb_Plugin
         // Валидация префикса таблицы для безопасности
         $safe_prefix = $this->validate_table_prefix($wpdb->prefix);
 
-        // Дропаем существующие события перед пересозданием (аналогично триггерам)
+        // Дропаем cashback_ev_confirmed_cashback если он остался от старых версий плагина.
+        // Начисление баланса теперь выполняется через PHP (process_ready_transactions),
+        // вызываемый после каждой синхронизации с CPA-сетями — событие больше не нужно.
+        $wpdb->query("DROP EVENT IF EXISTS `{$safe_prefix}cashback_ev_confirmed_cashback`");
+
+        // Дропаем остальные события перед пересозданием
         $drops = [
-            "DROP EVENT IF EXISTS `{$safe_prefix}cashback_ev_confirmed_cashback`",
             "DROP EVENT IF EXISTS `{$safe_prefix}cashback_ev_cleanup_cashback_webhooks_old`",
             "DROP EVENT IF EXISTS `{$safe_prefix}cashback_ev_cleanup_click_log`",
             "DROP EVENT IF EXISTS `{$safe_prefix}cashback_ev_mark_inactive_profiles`",
@@ -925,85 +932,6 @@ class Mariadb_Plugin
         }
 
         $events = [
-            // Событие ежедневно проверяет одобренный кэшбэк если старше n дней переводит в доступный баланс
-            // ПОЛНАЯ ЗАЩИТА ОТ ДУБЛИРОВАНИЯ: идемпотентность через processed_at и атомарные операции
-            "CREATE EVENT IF NOT EXISTS `{$safe_prefix}cashback_ev_confirmed_cashback`
-ON SCHEDULE EVERY 1 DAY
-STARTS CURRENT_TIMESTAMP
-ON COMPLETION PRESERVE
-ENABLE
-DO
-BEGIN
-    DECLARE v_batch_id CHAR(36);
-    DECLARE v_affected_rows INT DEFAULT 0;
-    DECLARE v_event_lock INT DEFAULT 0;
-
-    -- Выход при любой ошибке SQL с rollback
-    DECLARE EXIT HANDLER FOR SQLEXCEPTION
-    BEGIN
-        ROLLBACK;
-        DO RELEASE_LOCK('cashback_event_lock');
-    END;
-
-    -- Блокировка события на уровне СУБД
-    SET v_event_lock = GET_LOCK('cashback_event_lock', 0);
-
-    IF v_event_lock = 1 THEN
-        -- Генерируем UUID батча
-        SET v_batch_id = UUID();
-
-        START TRANSACTION;
-
-        -- ШАГ 1: Маркируем транзакции (источник истины для идемпотентности)
-        -- UPDATE берёт X-lock на строки, временная таблица не нужна
-        -- spam_click=1 пропускаем — только ручная проверка
-        UPDATE `{$safe_prefix}cashback_transactions`
-        SET
-            processed_at = NOW(),
-            processed_batch_id = v_batch_id
-        WHERE
-            order_status = 'completed'
-            AND api_verified = 1
-            AND processed_at IS NULL
-            AND cashback IS NOT NULL
-            AND cashback > 0
-            AND spam_click = 0
-            AND updated_at <= DATE_SUB(NOW(), INTERVAL 7 DAY);
-
-        SET v_affected_rows = ROW_COUNT();
-
-        IF v_affected_rows > 0 THEN
-            -- ШАГ 2: Начисляем баланс ТОЛЬКО для транзакций с processed_batch_id = v_batch_id
-            INSERT INTO `{$safe_prefix}cashback_user_balance`
-                (user_id, available_balance, version)
-            SELECT
-                user_id,
-                SUM(cashback),
-                0
-            FROM `{$safe_prefix}cashback_transactions`
-            WHERE processed_batch_id = v_batch_id
-              AND cashback > 0
-            GROUP BY user_id
-            ON DUPLICATE KEY UPDATE
-                available_balance = available_balance + VALUES(available_balance),
-                version = version + 1;
-
-            -- ШАГ 3: Финализируем статус (делаем транзакции неизменяемыми через триггер)
-            -- Только если processed_batch_id соответствует текущему батчу
-            UPDATE `{$safe_prefix}cashback_transactions`
-            SET order_status = 'balance'
-            WHERE
-                processed_batch_id = v_batch_id
-                AND order_status = 'completed';
-        END IF;
-
-        COMMIT;
-
-        -- Освобождаем блокировку
-        DO RELEASE_LOCK('cashback_event_lock');
-    END IF;
-END;",
-
             // Событие ежедневно проверяет и удаляет старые вебхуки если старше 6 месяцев
             "CREATE EVENT IF NOT EXISTS `{$safe_prefix}cashback_ev_cleanup_cashback_webhooks_old`
             ON SCHEDULE EVERY 1 DAY
@@ -1537,6 +1465,154 @@ END;",
         if (!$idx_exists) {
             // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
             $wpdb->query("ALTER TABLE `{$table}` ADD INDEX `idx_processing_status` (`processing_status`)");
+        }
+    }
+
+    /**
+     * Миграция: добавляет поле funds_ready в таблицы транзакций.
+     * funds_ready=1 означает что CPA-сеть подтвердила готовность средств к снятию.
+     * Admitad: поле processed=1. EPN: статус approved (нет отдельного флага).
+     */
+    private function migrate_add_funds_ready(): void
+    {
+        global $wpdb;
+
+        $tables = [
+            $wpdb->prefix . 'cashback_transactions',
+            $wpdb->prefix . 'cashback_unregistered_transactions',
+        ];
+
+        foreach ($tables as $table) {
+            $column_exists = (int) $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM information_schema.COLUMNS
+                 WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s AND COLUMN_NAME = 'funds_ready'",
+                DB_NAME,
+                $table
+            ));
+
+            if (!$column_exists) {
+                // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+                $wpdb->query(
+                    "ALTER TABLE `{$table}`
+                     ADD COLUMN `funds_ready` TINYINT(1) NOT NULL DEFAULT 0
+                     COMMENT '1 = CPA-сеть подтвердила готовность средств к снятию'
+                     AFTER `spam_click`"
+                );
+
+                if ($wpdb->last_error) {
+                    error_log('[Cashback] Failed to add funds_ready column to ' . $table . ': ' . $wpdb->last_error);
+                }
+            }
+        }
+
+        // Обновляем индекс idx_balance_candidates в cashback_transactions
+        $tx_table = $wpdb->prefix . 'cashback_transactions';
+        $idx_exists = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM information_schema.STATISTICS
+             WHERE TABLE_SCHEMA = DATABASE()
+               AND TABLE_NAME = %s
+               AND INDEX_NAME = 'idx_balance_candidates'
+               AND COLUMN_NAME = 'funds_ready'",
+            $tx_table
+        ));
+
+        if (!$idx_exists) {
+            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+            $wpdb->query("ALTER TABLE `{$tx_table}` DROP INDEX IF EXISTS `idx_balance_candidates`");
+            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+            $wpdb->query(
+                "ALTER TABLE `{$tx_table}`
+                 ADD KEY `idx_balance_candidates`
+                 (`order_status`,`api_verified`,`funds_ready`,`processed_at`,`spam_click`,`cashback`)"
+            );
+        }
+    }
+
+    /**
+     * Немедленно начисляет кешбэк по транзакциям с funds_ready=1.
+     * Вызывается после каждой синхронизации с API (каждые 2 часа через WP Cron).
+     * MySQL Event является fallback-механизмом (суточный запуск).
+     * Идемпотентность: processed_at IS NULL гарантирует однократное начисление.
+     */
+    public static function process_ready_transactions(): void
+    {
+        global $wpdb;
+        $prefix = $wpdb->prefix;
+
+        $lock = $wpdb->get_var("SELECT GET_LOCK('cashback_balance_php_lock', 0)");
+        if ($lock != 1) {
+            return;
+        }
+
+        try {
+            $batch_id = wp_generate_uuid4();
+
+            $wpdb->query('START TRANSACTION');
+
+            // ШАГ 1: Маркируем транзакции с funds_ready=1 для начисления
+            // Исключаем забаненных пользователей — их баланс заморожен триггером tr_freeze_balance_on_ban
+            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+            $step1 = $wpdb->query($wpdb->prepare(
+                "UPDATE `{$prefix}cashback_transactions` t
+                 INNER JOIN `{$prefix}cashback_user_profile` p
+                     ON p.user_id = t.user_id AND p.status != 'banned'
+                 SET t.processed_at = NOW(), t.processed_batch_id = %s
+                 WHERE t.order_status = 'completed'
+                   AND t.api_verified = 1
+                   AND t.funds_ready = 1
+                   AND t.processed_at IS NULL
+                   AND t.cashback IS NOT NULL
+                   AND t.cashback > 0
+                   AND t.spam_click = 0",
+                $batch_id
+            ));
+
+            if ($step1 === false) {
+                throw new \RuntimeException('Step 1 (mark transactions) failed: ' . $wpdb->last_error);
+            }
+
+            $affected = $wpdb->rows_affected;
+
+            if ($affected > 0) {
+                // ШАГ 2: Начисляем available_balance
+                // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+                $step2 = $wpdb->query($wpdb->prepare(
+                    "INSERT INTO `{$prefix}cashback_user_balance`
+                         (user_id, available_balance, version)
+                     SELECT user_id, SUM(cashback), 0
+                     FROM `{$prefix}cashback_transactions`
+                     WHERE processed_batch_id = %s AND cashback > 0
+                     GROUP BY user_id
+                     ON DUPLICATE KEY UPDATE
+                         available_balance = available_balance + VALUES(available_balance),
+                         version = version + 1",
+                    $batch_id
+                ));
+
+                if ($step2 === false) {
+                    throw new \RuntimeException('Step 2 (credit balance) failed: ' . $wpdb->last_error);
+                }
+
+                // ШАГ 3: Переводим в финальный статус balance
+                // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+                $step3 = $wpdb->query($wpdb->prepare(
+                    "UPDATE `{$prefix}cashback_transactions`
+                     SET order_status = 'balance'
+                     WHERE processed_batch_id = %s AND order_status = 'completed'",
+                    $batch_id
+                ));
+
+                if ($step3 === false) {
+                    throw new \RuntimeException('Step 3 (finalize status) failed: ' . $wpdb->last_error);
+                }
+            }
+
+            $wpdb->query('COMMIT');
+        } catch (\Throwable $e) {
+            $wpdb->query('ROLLBACK');
+            error_log('[Cashback] process_ready_transactions error: ' . $e->getMessage());
+        } finally {
+            $wpdb->query("SELECT RELEASE_LOCK('cashback_balance_php_lock')");
         }
     }
 }

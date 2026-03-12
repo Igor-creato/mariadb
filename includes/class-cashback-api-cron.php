@@ -112,6 +112,13 @@ class Cashback_API_Cron
                 error_log('Cashback API Cron: auto_transfer exception — ' . $e->getMessage());
             }
 
+            // Начисляем кешбэк по транзакциям с funds_ready=1 (не ждём суточного MySQL Event)
+            try {
+                Mariadb_Plugin::process_ready_transactions();
+            } catch (Exception $e) {
+                error_log('Cashback API Cron: process_ready_transactions exception — ' . $e->getMessage());
+            }
+
             // Сохраняем результат последней синхронизации для отображения в админке
             update_option('cashback_last_sync_result', [
                 'timestamp'        => current_time('mysql'),

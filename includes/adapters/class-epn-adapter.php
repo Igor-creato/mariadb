@@ -484,6 +484,8 @@ class Cashback_Epn_Adapter extends Cashback_Network_Adapter_Base
             'action_date'      => (string) ($attrs['order_time'] ?? ''),
             'click_time'       => (string) ($attrs['transaction_time'] ?? ''),
             'action_type'      => 'sale',
+            // EPN: статус approved означает готовность средств к снятию (отдельного флага нет)
+            'funds_ready'      => ($epn_status === 'approved') ? 1 : 0,
 
             // Поля для матчинга (click_id, user_id)
             'click_id'         => (string) ($attrs['click_id'] ?? ''),

@@ -765,6 +765,7 @@ class Cashback_API_Client
                 // Авто-обновляем расхождения — синхронизируем локальные данные с API
                 $dummy_updated = 0;
                 $dummy_skipped = 0;
+                $dummy_errors  = 0;
                 $this->sync_update_local(
                     $wpdb,
                     $this->transactions_table,
@@ -776,7 +777,8 @@ class Cashback_API_Client
                     $api_click_id,
                     $action,
                     $dummy_updated,
-                    $dummy_skipped
+                    $dummy_skipped,
+                    $dummy_errors
                 );
             }
         }
@@ -1203,6 +1205,7 @@ class Cashback_API_Client
                 // Авто-обновляем расхождения — синхронизируем локальные данные с API
                 $dummy_updated = 0;
                 $dummy_skipped = 0;
+                $dummy_errors  = 0;
                 $this->sync_update_local(
                     $wpdb,
                     $this->unregistered_table,
@@ -1214,7 +1217,8 @@ class Cashback_API_Client
                     $api_click_id,
                     $action,
                     $dummy_updated,
-                    $dummy_skipped
+                    $dummy_skipped,
+                    $dummy_errors
                 );
             }
         }
@@ -1521,6 +1525,7 @@ class Cashback_API_Client
             $status_map     = $config['status_map'];
             $updated        = 0;
             $skipped        = 0;
+            $update_errors  = 0;
             $not_found      = 0;
             $inserted       = 0;
             $insert_errors  = 0;
@@ -1550,7 +1555,7 @@ class Cashback_API_Client
 
                 // ─── Если найдено в cashback_transactions — обновляем ───
                 if ($local) {
-                    $this->sync_update_local($wpdb, $this->transactions_table, $local, $mapped_status, $api_payment, $api_cart, $slug, $api_click_id, $action, $updated, $skipped);
+                    $this->sync_update_local($wpdb, $this->transactions_table, $local, $mapped_status, $api_payment, $api_cart, $slug, $api_click_id, $action, $updated, $skipped, $update_errors);
                     continue;
                 }
 
@@ -1572,7 +1577,7 @@ class Cashback_API_Client
 
                 // ─── Если найдено в unregistered — обновляем ───
                 if ($unreg) {
-                    $this->sync_update_local($wpdb, $this->unregistered_table, $unreg, $mapped_status, $api_payment, $api_cart, $slug, $api_click_id, $action, $updated, $skipped);
+                    $this->sync_update_local($wpdb, $this->unregistered_table, $unreg, $mapped_status, $api_payment, $api_cart, $slug, $api_click_id, $action, $updated, $skipped, $update_errors);
                     continue;
                 }
 
@@ -1593,7 +1598,7 @@ class Cashback_API_Client
                     ), ARRAY_A);
 
                     if ($transferred) {
-                        $this->sync_update_local($wpdb, $this->transactions_table, $transferred, $mapped_status, $api_payment, $api_cart, $slug, $api_click_id, $action, $updated, $skipped);
+                        $this->sync_update_local($wpdb, $this->transactions_table, $transferred, $mapped_status, $api_payment, $api_cart, $slug, $api_click_id, $action, $updated, $skipped, $update_errors);
                         continue;
                     }
                 }
@@ -1640,6 +1645,7 @@ class Cashback_API_Client
                 'total'                 => count($api_actions),
                 'updated'               => $updated,
                 'skipped'               => $skipped,
+                'update_errors'         => $update_errors,
                 'not_found'             => $not_found,
                 'inserted'              => $inserted,
                 'insert_errors'         => $insert_errors,
@@ -1670,8 +1676,9 @@ class Cashback_API_Client
      * @param string $slug         Slug сети
      * @param string $api_click_id Click ID из API
      * @param array  $action       Полный action из API
-     * @param int    &$updated     Счётчик обновлённых (по ссылке)
-     * @param int    &$skipped     Счётчик пропущенных (по ссылке)
+     * @param int    &$updated       Счётчик обновлённых (по ссылке)
+     * @param int    &$skipped       Счётчик пропущенных (по ссылке)
+     * @param int    &$update_errors Счётчик ошибок UPDATE (по ссылке)
      */
     private function sync_update_local(
         \wpdb $wpdb,
@@ -1684,7 +1691,8 @@ class Cashback_API_Client
         string $api_click_id,
         array $action,
         int &$updated,
-        int &$skipped
+        int &$skipped,
+        int &$update_errors
     ): void {
         $local_status = $local['order_status'];
 
@@ -1709,7 +1717,16 @@ class Cashback_API_Client
 
         $needs_verify = empty($local['api_verified']);
 
-        if (!$status_changed && !$commission_changed && !$cart_changed && !$needs_verify) {
+        // funds_ready: EPN передаёт как 'funds_ready', Admitad — как 'processed' (1/0)
+        $api_funds_ready = 0;
+        if (isset($action['funds_ready'])) {
+            $api_funds_ready = (int) $action['funds_ready'];
+        } elseif (isset($action['processed'])) {
+            $api_funds_ready = empty($action['processed']) ? 0 : 1;
+        }
+        $needs_funds_ready = ($api_funds_ready === 1 && empty($local['funds_ready']));
+
+        if (!$status_changed && !$commission_changed && !$cart_changed && !$needs_verify && !$needs_funds_ready) {
             $skipped++;
             return;
         }
@@ -1736,6 +1753,13 @@ class Cashback_API_Client
         if ($needs_verify) {
             $update_data['api_verified'] = 1;
             $update_formats[]            = '%d';
+        }
+
+        // CPA-сеть подтвердила готовность средств к снятию — обновляем funds_ready
+        // Только нарастающее: 0→1, обратно не сбрасываем
+        if ($needs_funds_ready) {
+            $update_data['funds_ready'] = 1;
+            $update_formats[]           = '%d';
         }
 
         // PHP-фолбэк: валидация перехода статуса
@@ -1765,18 +1789,27 @@ class Cashback_API_Client
             ['%d']
         );
 
-        if (!$wpdb->last_error) {
-            $updated++;
-
-            $this->log_sync_event(
-                $slug,
-                (int) $local['id'],
-                $api_click_id ?: ($action['action_id'] ?? ''),
-                $local_status,
-                $mapped_status,
-                $api_payment
-            );
+        if ($wpdb->last_error) {
+            $update_errors++;
+            error_log(sprintf(
+                '[Cashback Sync] UPDATE error for %s id=%d: %s',
+                $table,
+                $local['id'],
+                $wpdb->last_error
+            ));
+            return;
         }
+
+        $updated++;
+
+        $this->log_sync_event(
+            $slug,
+            (int) $local['id'],
+            $api_click_id ?: ($action['action_id'] ?? ''),
+            $local_status,
+            $mapped_status,
+            $api_payment
+        );
     }
 
     /**
