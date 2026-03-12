@@ -433,7 +433,13 @@ class Cashback_Support_DB
         finfo_close($finfo);
 
         $allowed_mimes = self::get_allowed_mimes();
-        if (isset($allowed_mimes[$ext]) && !in_array($detected_mime, $allowed_mimes[$ext], true)) {
+        if (!isset($allowed_mimes[$ext])) {
+            return sprintf(
+                'Расширение "%s" не поддерживается системой загрузки.',
+                esc_html($ext)
+            );
+        }
+        if (!in_array($detected_mime, $allowed_mimes[$ext], true)) {
             return sprintf('Тип файла "%s" не соответствует расширению.', esc_html($file['name']));
         }
 
@@ -546,6 +552,11 @@ class Cashback_Support_DB
             if ((int) $owner !== $requesting_user_id) {
                 wp_die('У вас нет доступа к этому файлу.', 'Доступ запрещён', ['response' => 403]);
             }
+        }
+
+        // Defence-in-depth: stored_name должен быть hex-строкой из 32 символов (bin2hex(random_bytes(16)))
+        if (!preg_match('/^[a-f0-9]{32}$/', $attachment->stored_name)) {
+            wp_die('Некорректное имя файла.', 'Ошибка', ['response' => 400]);
         }
 
         $file_path = self::get_upload_dir((int) $attachment->ticket_id) . '/' . $attachment->stored_name;

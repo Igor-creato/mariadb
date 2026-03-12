@@ -530,6 +530,12 @@ class CashbackPlugin
         // Генерируем криптографически стойкий ключ
         $key = bin2hex(random_bytes(32));
 
+        // Defence-in-depth: проверяем длину ключа
+        if (strlen($key) !== 64) {
+            error_log('Cashback Plugin: Generated encryption key has unexpected length: ' . strlen($key));
+            return false;
+        }
+
         $content = "<?php\n"
             . "/**\n"
             . " * Cashback Plugin — Encryption Key (auto-generated)\n"

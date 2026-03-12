@@ -1008,8 +1008,10 @@ class CashbackWithdrawal
                     throw new Exception('Duplicate payout request detected');
                 }
 
-                // Иная ошибка БД
-                throw new Exception('Failed to insert payout request: ' . $wpdb->last_error);
+                // Иная ошибка БД — логируем детали отдельно, не включаем в Exception
+                // чтобы $wpdb->last_error (содержит SQL) не попал в catch-обработчик
+                error_log(sprintf('[CashbackWithdrawal] Insert failed for user %d: %s', $user_id, $wpdb->last_error));
+                throw new Exception('Failed to insert payout request');
             }
 
             if (!$inserted) {

@@ -26,6 +26,11 @@ class Cashback_Fraud_Detector
 
         $new_alert_ids = [];
 
+        // GROUP_CONCAT по умолчанию ограничен 1024 байтами — увеличиваем для корректного
+        // формирования списков user_id при большом количестве пользователей на одном IP/fingerprint
+        global $wpdb;
+        $wpdb->query("SET SESSION group_concat_max_len = 65535");
+
         $new_alert_ids = array_merge($new_alert_ids, self::check_shared_ip());
         $new_alert_ids = array_merge($new_alert_ids, self::check_shared_fingerprint());
         $new_alert_ids = array_merge($new_alert_ids, self::check_shared_payment_details());
