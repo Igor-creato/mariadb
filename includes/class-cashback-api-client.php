@@ -277,14 +277,55 @@ class Cashback_API_Client
         $endpoint = $network_config[$endpoint_key] ?? '';
 
         if ($endpoint !== '' && preg_match('#^https?://#i', $endpoint)) {
+            if (!$this->is_safe_api_url($endpoint)) {
+                error_log('[Cashback API] Blocked unsafe API endpoint URL: ' . $endpoint);
+                return $fallback_url;
+            }
             return $endpoint;
         }
 
         if ($base !== '' && $endpoint !== '') {
-            return $base . '/' . ltrim($endpoint, '/');
+            $full_url = $base . '/' . ltrim($endpoint, '/');
+            if (!$this->is_safe_api_url($full_url)) {
+                error_log('[Cashback API] Blocked unsafe API base URL: ' . $full_url);
+                return $fallback_url;
+            }
+            return $full_url;
         }
 
         return $fallback_url;
+    }
+
+    /**
+     * Проверяет безопасность URL для API-запросов (защита от SSRF).
+     *
+     * Разрешает только HTTPS и блокирует приватные/зарезервированные IP-адреса.
+     */
+    private function is_safe_api_url(string $url): bool
+    {
+        $parsed = parse_url($url);
+
+        if (!$parsed || !isset($parsed['scheme'], $parsed['host'])) {
+            return false;
+        }
+
+        // Только HTTPS
+        if (strtolower($parsed['scheme']) !== 'https') {
+            return false;
+        }
+
+        // Резолвим домен и проверяем что IP не приватный/зарезервированный
+        $ip = gethostbyname($parsed['host']);
+        if ($ip === $parsed['host']) {
+            // gethostbyname вернул сам хост — не удалось зарезолвить
+            return false;
+        }
+
+        if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+            return false;
+        }
+
+        return true;
     }
 
     // =========================================================================
@@ -637,10 +678,10 @@ class Cashback_API_Client
         // Используется в обратной проверке missing_api, чтобы не дублировать mismatched
         $api_matched_local_click_ids = [];
 
-        // Debug: логируем ключи первого action из API для диагностики маппинга
+        // Debug: логируем только ключи первого action из API для диагностики маппинга
+        // Данные не логируем — могут содержать PII (email, имя, телефон)
         if (defined('WP_DEBUG') && WP_DEBUG && !empty($api_actions)) {
             error_log('[Cashback API Validate] First action keys: ' . implode(', ', array_keys($api_actions[0])));
-            error_log('[Cashback API Validate] First action data: ' . wp_json_encode($api_actions[0]));
         }
 
         foreach ($api_actions as $action) {
@@ -1327,6 +1368,27 @@ class Cashback_API_Client
      * @return array Результаты синхронизации
      */
     public function background_sync(): array
+    {
+        global $wpdb;
+
+        // Защита от параллельного запуска (двойной cron, ручной + автоматический)
+        $lock_acquired = $wpdb->get_var("SELECT GET_LOCK('cashback_sync_global_lock', 30)");
+        if (!$lock_acquired) {
+            error_log('Cashback background_sync: could not acquire lock, another sync is running');
+            return [];
+        }
+
+        try {
+            return $this->do_background_sync();
+        } finally {
+            $wpdb->get_var("SELECT RELEASE_LOCK('cashback_sync_global_lock')");
+        }
+    }
+
+    /**
+     * Внутренняя логика фоновой синхронизации (вызывается под GET_LOCK).
+     */
+    private function do_background_sync(): array
     {
         global $wpdb;
 

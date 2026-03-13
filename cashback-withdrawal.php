@@ -783,15 +783,6 @@ class CashbackWithdrawal
             }
         }
 
-        // === 1.9. Rate limiting: max 3 withdrawal requests per 24 hours ===
-        // Проверяем лимит здесь, инкрементируем только после успешного COMMIT
-        $rate_key = 'cb_withdrawal_rate_' . $user_id;
-        $rate_count = (int) get_transient($rate_key);
-        if ($rate_count >= 3) {
-            wp_send_json_error(__('Слишком много заявок на вывод. Попробуйте через 24 часа.', 'cashback-plugin'));
-            return;
-        }
-
         // === 2. Защита от повторных запросов через GET_LOCK ===
         global $wpdb;
         $lock_name = "user_withdrawal_{$user_id}";
@@ -815,6 +806,17 @@ class CashbackWithdrawal
         };
         register_shutdown_function($release_lock_fn);
 
+        // === 2.0.1. Rate limiting: max 3 withdrawal requests per 24 hours ===
+        // Проверяем ВНУТРИ GET_LOCK для атомарности (два параллельных запроса
+        // не смогут оба прочитать count=0 до инкремента)
+        $rate_key = 'cb_withdrawal_rate_' . $user_id;
+        $rate_count = (int) get_transient($rate_key);
+        if ($rate_count >= 3) {
+            $lock_released = true; $wpdb->query($wpdb->prepare("DO RELEASE_LOCK(%s)", $lock_name));
+            wp_send_json_error(__('Слишком много заявок на вывод. Попробуйте через 24 часа.', 'cashback-plugin'));
+            return;
+        }
+
         // === 2.1. Antifraud: record withdrawal event (ПОСЛЕ lock, чтобы избежать inflate при race condition) ===
         if (class_exists('Cashback_Fraud_Collector')) {
             Cashback_Fraud_Collector::record_withdrawal_event($user_id);
@@ -831,8 +833,6 @@ class CashbackWithdrawal
 
         // === 2.2. Server-generated idempotency key ===
         // Ключ генерируется на сервере для исключения манипуляции клиентом.
-        // Клиентский UUID (если передан) используется только для логирования.
-        $client_request_id = sanitize_text_field(wp_unslash($_POST['idempotency_key'] ?? ''));
         $idempotency_key = wp_generate_uuid4();
 
         // === 3. Check if payout method and account are filled ===
@@ -1024,14 +1024,16 @@ class CashbackWithdrawal
             // Делаем это ПОСЛЕ создания заявки для корректного rollback
             $result = $wpdb->query($wpdb->prepare(
                 "UPDATE {$table_balance}
-                SET available_balance = available_balance - %s,
-                    pending_balance = pending_balance + %s,
+                SET available_balance = available_balance - CAST(%s AS DECIMAL(18,2)),
+                    pending_balance = pending_balance + CAST(%s AS DECIMAL(18,2)),
                     version = version + 1
-                WHERE user_id = %d AND version = %d",
+                WHERE user_id = %d AND version = %d
+                  AND available_balance >= CAST(%s AS DECIMAL(18,2))",
                 $withdrawal_amount,
                 $withdrawal_amount,
                 $user_id,
-                $user_balance->version
+                $user_balance->version,
+                $withdrawal_amount
             ));
 
             if ($result === false || $result === 0) {

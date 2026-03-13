@@ -142,12 +142,27 @@ class Cashback_Encryption
     }
 
     /**
-     * Проверяет, зашифрована ли строка устаревшим форматом v1 (CBC без auth tag)
+     * Проверяет, зашифрована ли строка устаревшим форматом v1 (CBC без auth tag).
+     *
+     * Для строк без префикса версии дополнительно проверяется валидность base64
+     * и минимальная длина (IV 16 байт + минимум 1 байт ciphertext = 17 байт raw).
      */
     public static function is_legacy_encrypted(string $encrypted): bool
     {
-        return strpos($encrypted, self::LEGACY_KEY_VERSION) === 0
-            || (strpos($encrypted, self::KEY_VERSION) !== 0 && !empty($encrypted));
+        // Явный префикс v1:
+        if (strpos($encrypted, self::LEGACY_KEY_VERSION) === 0) {
+            return true;
+        }
+
+        // Это v2 или пустая строка — точно не legacy
+        if (strpos($encrypted, self::KEY_VERSION) === 0 || empty($encrypted)) {
+            return false;
+        }
+
+        // Без префикса: проверяем что это валидный base64 достаточной длины
+        // (IV 16 байт + хотя бы 1 байт ciphertext = 17 байт → base64 ≥ 24 символа)
+        $decoded = base64_decode($encrypted, true);
+        return $decoded !== false && strlen($decoded) >= (self::CBC_IV_LENGTH + 1);
     }
 
     /**

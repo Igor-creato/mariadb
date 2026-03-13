@@ -794,7 +794,7 @@ class WC_Affiliate_URL_Params
             exit;
         } catch (\Throwable $e) {
             // Лучше потерять лог клика, чем потерять пользователя
-            error_log('[wc-affiliate-url-params] Redirect error: ' . $e->getMessage());
+            error_log('[wc-affiliate-url-params] Redirect error: ' . get_class($e) . ' in ' . basename($e->getFile()) . ':' . $e->getLine());
 
             try {
                 $product = wc_get_product($product_id);
@@ -830,6 +830,12 @@ class WC_Affiliate_URL_Params
 
         $base_url = $product->get_product_url();
         if (empty($base_url)) {
+            return null;
+        }
+
+        // Защита от open redirect: разрешаем только http/https схемы
+        $scheme = parse_url($base_url, PHP_URL_SCHEME);
+        if (!in_array($scheme, ['http', 'https'], true)) {
             return null;
         }
 

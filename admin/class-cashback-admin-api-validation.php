@@ -1603,7 +1603,7 @@ class Cashback_Admin_API_Validation
 
                 $.post(ajaxurl, {
                     action: 'cashback_check_campaigns_now',
-                    nonce: '<?php echo wp_create_nonce('cashback_api_validation_nonce'); ?>',
+                    nonce: '<?php echo wp_create_nonce('cashback_api_validation'); ?>',
                     network: network
                 }, function(response) {
                     $btn.prop('disabled', false);
@@ -1639,7 +1639,7 @@ class Cashback_Admin_API_Validation
 
                 $.post(ajaxurl, {
                     action: 'cashback_reactivate_product',
-                    nonce: '<?php echo wp_create_nonce('cashback_api_validation_nonce'); ?>',
+                    nonce: '<?php echo wp_create_nonce('cashback_api_validation'); ?>',
                     product_id: productId
                 }, function(response) {
                     if (response.success) {
@@ -1668,7 +1668,7 @@ class Cashback_Admin_API_Validation
      */
     public function ajax_check_campaigns_now(): void
     {
-        check_ajax_referer('cashback_api_validation_nonce', 'nonce');
+        check_ajax_referer('cashback_api_validation', 'nonce');
 
         if (!current_user_can('manage_options')) {
             wp_send_json_error('Доступ запрещён');
@@ -1691,7 +1691,7 @@ class Cashback_Admin_API_Validation
      */
     public function ajax_reactivate_product(): void
     {
-        check_ajax_referer('cashback_api_validation_nonce', 'nonce');
+        check_ajax_referer('cashback_api_validation', 'nonce');
 
         if (!current_user_can('manage_options')) {
             wp_send_json_error('Доступ запрещён');

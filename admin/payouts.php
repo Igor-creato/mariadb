@@ -1072,13 +1072,13 @@ class Cashback_Payouts_Admin
                 throw new Exception("Не найден запрос на выплату с ID {$payout_id}");
             }
 
-            // Защита от повторного выполнения: если статус уже 'paid', баланс уже был обновлён
+            // Идемпотентность: если статус уже 'paid', баланс уже был обновлён — это не ошибка
             if ($payout_request['status'] === 'paid') {
-                $this->log_error("Баланс для выплаты {$payout_id} уже был обновлён (статус: paid)");
+                $this->log_info("Идемпотентный вызов: баланс для выплаты {$payout_id} уже был обновлён (статус: paid)");
                 if (!$in_transaction) {
-                    $wpdb->query('ROLLBACK');
+                    $wpdb->query('COMMIT');
                 }
-                return false;
+                return true;
             }
 
             $user_id = (int) $payout_request['user_id'];
@@ -1106,7 +1106,7 @@ class Cashback_Payouts_Admin
 
             // Обновляем баланс: вычитаем из pending_balance и добавляем к paid_balance
             $new_pending_balance = bcsub($pending_balance, $amount, 2);
-            $new_paid_balance = bcadd($current_balance['paid_balance'], $amount, 2);
+            $new_paid_balance = bcadd($current_balance['paid_balance'] ?? '0', $amount, 2);
             $old_version = intval($current_balance['version']);
 
             // Используем оптимистичную блокировку через version
@@ -1142,6 +1142,13 @@ class Cashback_Payouts_Admin
                 $wpdb->query('ROLLBACK');
             }
             $this->log_error($e->getMessage());
+            Cashback_Encryption::write_audit_log(
+                'balance_update_failed_paid',
+                get_current_user_id(),
+                'payout_request',
+                $payout_id,
+                ['error' => $e->getMessage()]
+            );
             return false;
         }
     }
@@ -1177,13 +1184,13 @@ class Cashback_Payouts_Admin
                 throw new Exception("Не найден запрос на выплату с ID {$payout_id}");
             }
 
-            // Защита от повторного выполнения: если статус уже 'declined', баланс уже был обновлён
+            // Идемпотентность: если статус уже 'declined', баланс уже был обновлён — это не ошибка
             if ($payout_request['status'] === 'declined') {
-                $this->log_error("Баланс для выплаты {$payout_id} уже был обновлён (статус: declined)");
+                $this->log_info("Идемпотентный вызов: баланс для выплаты {$payout_id} уже был обновлён (статус: declined)");
                 if (!$in_transaction) {
-                    $wpdb->query('ROLLBACK');
+                    $wpdb->query('COMMIT');
                 }
-                return false;
+                return true;
             }
 
             $user_id = (int) $payout_request['user_id'];
@@ -1211,7 +1218,7 @@ class Cashback_Payouts_Admin
 
             // Обновляем баланс: вычитаем из pending_balance и добавляем к frozen_balance
             $new_pending_balance = bcsub($pending_balance, $amount, 2);
-            $new_frozen_balance = bcadd($current_balance['frozen_balance'], $amount, 2);
+            $new_frozen_balance = bcadd($current_balance['frozen_balance'] ?? '0', $amount, 2);
             $old_version = intval($current_balance['version']);
 
             // Используем оптимистичную блокировку через version
@@ -1247,6 +1254,13 @@ class Cashback_Payouts_Admin
                 $wpdb->query('ROLLBACK');
             }
             $this->log_error($e->getMessage());
+            Cashback_Encryption::write_audit_log(
+                'balance_update_failed_declined',
+                get_current_user_id(),
+                'payout_request',
+                $payout_id,
+                ['error' => $e->getMessage()]
+            );
             return false;
         }
     }
@@ -1322,7 +1336,7 @@ class Cashback_Payouts_Admin
 
             // Обновляем баланс: вычитаем из pending_balance и добавляем к available_balance
             $new_pending_balance = bcsub($pending_balance, $amount, 2);
-            $new_available_balance = bcadd($current_balance['available_balance'], $amount, 2);
+            $new_available_balance = bcadd($current_balance['available_balance'] ?? '0', $amount, 2);
             $old_version = intval($current_balance['version']);
 
             // Используем оптимистичную блокировку через version
@@ -1375,6 +1389,13 @@ class Cashback_Payouts_Admin
                 $wpdb->query('ROLLBACK');
             }
             $this->log_error($e->getMessage());
+            Cashback_Encryption::write_audit_log(
+                'balance_update_failed_refund',
+                get_current_user_id(),
+                'payout_request',
+                $payout_id,
+                ['error' => $e->getMessage()]
+            );
             return false;
         }
     }

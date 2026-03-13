@@ -365,8 +365,8 @@ class Cashback_Users_Management_Admin
         if (isset($_POST['min_payout_amount'])) {
             $min_payout_amount = sanitize_text_field(wp_unslash($_POST['min_payout_amount']));
 
-            if (!preg_match('/^\d+(\.\d{1,2})?$/', $min_payout_amount) || bccomp($min_payout_amount, '0', 2) < 0) {
-                wp_send_json_error(['message' => 'Минимальная сумма выплаты должна быть положительным числом.']);
+            if (!preg_match('/^\d+(\.\d{1,2})?$/', $min_payout_amount) || bccomp($min_payout_amount, '0', 2) <= 0) {
+                wp_send_json_error(['message' => 'Минимальная сумма выплаты должна быть положительным числом больше нуля.']);
                 return;
             }
 

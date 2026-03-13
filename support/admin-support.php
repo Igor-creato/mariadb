@@ -1095,6 +1095,16 @@ class Cashback_Support_Admin
             wp_die('Не указан файл.', 'Ошибка', ['response' => 400]);
         }
 
+        // Аудит-лог: фиксируем скачивание вложения администратором
+        if (class_exists('Cashback_Encryption')) {
+            Cashback_Encryption::write_audit_log(
+                'admin_file_download',
+                get_current_user_id(),
+                'attachment',
+                $attachment_id
+            );
+        }
+
         Cashback_Support_DB::serve_file($attachment_id, get_current_user_id(), true);
     }
 
