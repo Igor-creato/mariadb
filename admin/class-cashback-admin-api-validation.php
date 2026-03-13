@@ -1499,67 +1499,53 @@ class Cashback_Admin_API_Validation
                 </div>
             <?php endif; ?>
 
-            <?php // Статус кампаний по сетям ?>
-            <?php foreach ($networks as $network): ?>
-                <?php
-                $slug = $network['slug'];
+            <?php
+            // Собираем все кампании со всех сетей в единый массив
+            $all_campaigns  = [];
+            $network_stats  = [];
+            foreach ($networks as $network) {
+                $slug          = $network['slug'];
                 $campaign_data = get_option("cashback_campaign_status_{$slug}", []);
                 if (empty($campaign_data['campaigns'])) {
                     continue;
                 }
-                ?>
-                <div class="cashback-network-block" data-network-slug="<?php echo esc_attr($slug); ?>">
-                <h3><?php echo esc_html($network['name']); ?> (<?php echo esc_html($slug); ?>)</h3>
-                <p class="description">
-                    Обновлено: <?php echo esc_html($campaign_data['timestamp'] ?? '—'); ?> |
-                    Всего: <?php echo (int) ($campaign_data['total'] ?? 0); ?> |
-                    Активных: <?php echo (int) ($campaign_data['active'] ?? 0); ?> |
-                    Неактивных: <?php echo (int) ($campaign_data['inactive'] ?? 0); ?>
-                </p>
-                <div class="cashback-campaign-paginated" data-per-page="50">
-                    <table class="widefat striped" style="margin-bottom: 0;">
-                        <thead>
-                            <tr>
-                                <th>ID</th>
-                                <th>Название</th>
-                                <th>Статус</th>
-                                <th>Подключение</th>
-                                <th>Активна</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($campaign_data['campaigns'] as $campaign): ?>
-                                <tr>
-                                    <td><?php echo esc_html($campaign['id']); ?></td>
-                                    <td><?php echo esc_html($campaign['name']); ?></td>
-                                    <td><?php echo esc_html($campaign['status']); ?></td>
-                                    <td><?php echo esc_html($campaign['connection_status']); ?></td>
-                                    <td>
-                                        <?php if ($campaign['is_active']): ?>
-                                            <span style="color: #00a32a; font-weight: bold;">&#10003; Да</span>
-                                        <?php else: ?>
-                                            <span style="color: #d63638; font-weight: bold;">&#10007; Нет</span>
-                                        <?php endif; ?>
-                                    </td>
-                                </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
-                    <div class="tablenav bottom" style="margin-bottom: 20px;">
-                        <div class="tablenav-pages">
-                            <span class="displaying-num"></span>
-                            <span class="pagination-links">
-                                <button type="button" class="button btn-prev" disabled>&lsaquo;</button>
-                                <span class="paging-input">
-                                    <span class="current-page"></span> / <span class="total-pages"></span>
-                                </span>
-                                <button type="button" class="button btn-next">&rsaquo;</button>
-                            </span>
-                        </div>
-                    </div>
+                foreach ($campaign_data['campaigns'] as $c) {
+                    $c['network_name'] = $network['name'];
+                    $c['network_slug'] = $slug;
+                    $all_campaigns[]   = $c;
+                }
+                $network_stats[$slug] = [
+                    'name'      => $network['name'],
+                    'timestamp' => $campaign_data['timestamp'] ?? '',
+                    'total'     => (int) ($campaign_data['total'] ?? 0),
+                    'active'    => (int) ($campaign_data['active'] ?? 0),
+                    'inactive'  => (int) ($campaign_data['inactive'] ?? 0),
+                ];
+            }
+            ?>
+            <script>
+            window.cashbackCampaignsData       = <?php echo wp_json_encode($all_campaigns); ?>;
+            window.cashbackCampaignsNetworkStats = <?php echo wp_json_encode($network_stats); ?>;
+            </script>
+
+            <div id="cashback-campaigns-search-row">
+                <input type="text" id="cashback-campaigns-search" placeholder="Поиск по названию кампании...">
+                <button type="button" id="cashback-campaigns-search-btn" class="button">Найти</button>
+                <button type="button" id="cashback-campaigns-reset-btn" class="button">Сбросить</button>
+            </div>
+
+            <div id="cashback-campaigns-net-stats"></div>
+
+            <div id="cashback-campaigns-columns">
+                <div id="cashback-campaigns-active-col">
+                    <h3>Активные кампании <span id="cashback-active-count"></span></h3>
+                    <div id="cashback-campaigns-active-table"></div>
                 </div>
-                </div><?php // .cashback-network-block ?>
-            <?php endforeach; ?>
+                <div id="cashback-campaigns-inactive-col">
+                    <h3>Неактивные кампании <span id="cashback-inactive-count"></span></h3>
+                    <div id="cashback-campaigns-inactive-table"></div>
+                </div>
+            </div>
 
             <?php // Деактивированные товары ?>
             <h3>Деактивированные магазины</h3>
@@ -1607,53 +1593,6 @@ class Cashback_Admin_API_Validation
 
         <script>
         jQuery(function($) {
-            // ─── Фильтрация таблиц по выбранной сети ───
-            $('#cashback-check-network-select').on('change', function() {
-                var slug = $(this).val();
-                if (slug === '') {
-                    $('.cashback-network-block').show();
-                } else {
-                    $('.cashback-network-block').hide();
-                    $('.cashback-network-block[data-network-slug="' + slug + '"]').show();
-                }
-            });
-
-            // ─── Пагинация таблиц кампаний ───
-            $('.cashback-campaign-paginated').each(function() {
-                var $wrap    = $(this);
-                var $rows    = $wrap.find('tbody tr');
-                var perPage  = parseInt($wrap.data('per-page'), 10) || 50;
-                var total    = $rows.length;
-                var pages    = Math.ceil(total / perPage);
-                var current  = 1;
-
-                var $num     = $wrap.find('.displaying-num');
-                var $cur     = $wrap.find('.current-page');
-                var $tot     = $wrap.find('.total-pages');
-                var $prev    = $wrap.find('.btn-prev');
-                var $next    = $wrap.find('.btn-next');
-
-                function render() {
-                    var start = (current - 1) * perPage;
-                    var end   = start + perPage;
-                    $rows.hide().slice(start, end).show();
-                    $cur.text(current);
-                    $tot.text(pages);
-                    $num.text(total + ' записей');
-                    $prev.prop('disabled', current <= 1);
-                    $next.prop('disabled', current >= pages);
-                }
-
-                if (pages <= 1) {
-                    $wrap.find('.tablenav').hide();
-                }
-
-                $prev.on('click', function() { if (current > 1) { current--; render(); } });
-                $next.on('click', function() { if (current < pages) { current++; render(); } });
-
-                render();
-            });
-
             // ─── Проверить кампании сейчас (с выбором сети) ───
             $('#cashback-check-campaigns-btn').on('click', function() {
                 var $btn = $(this);
@@ -1714,6 +1653,11 @@ class Cashback_Admin_API_Validation
                     $btn.prop('disabled', false).text('Реактивировать');
                 });
             });
+
+            // ─── Инициализация вкладки кампаний ───
+            if (typeof window.initCampaignsTab === 'function') {
+                window.initCampaignsTab();
+            }
         });
         </script>
     <?php

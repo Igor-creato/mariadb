@@ -947,4 +947,173 @@
         return parseFloat(value).toFixed(2) + ' ₽';
     }
 
+    // =========================================================================
+    // Вкладка «Кампании» — две колонки, поиск, пагинация
+    // =========================================================================
+
+    const CAMPAIGNS_PER_PAGE = 50;
+    const campaignPagination = {};
+
+    function filterCampaigns(allCampaigns, networkSlug, searchTerm) {
+        let filtered = allCampaigns;
+        if (networkSlug) {
+            filtered = filtered.filter(function (c) { return c.network_slug === networkSlug; });
+        }
+        if (searchTerm) {
+            const term = searchTerm.toLowerCase();
+            filtered = filtered.filter(function (c) { return (c.name || '').toLowerCase().indexOf(term) !== -1; });
+        }
+        const active = [];
+        const inactive = [];
+        for (let i = 0; i < filtered.length; i++) {
+            if (filtered[i].is_active) {
+                active.push(filtered[i]);
+            } else {
+                inactive.push(filtered[i]);
+            }
+        }
+        return { active: active, inactive: inactive };
+    }
+
+    function renderCampaignRow(c, showNetCol) {
+        let row = '<tr>';
+        if (showNetCol) {
+            row += '<td>' + escHtml(c.network_name) + '</td>';
+        }
+        row += '<td>' + escHtml(c.id) + '</td>';
+        row += '<td>' + escHtml(c.name) + '</td>';
+        row += '<td>' + escHtml(c.status) + '</td>';
+        row += '<td>' + escHtml(c.connection_status) + '</td>';
+        row += '</tr>';
+        return row;
+    }
+
+    function buildCampaignTable(tabId, items, showNetCol, emptyMsg) {
+        const totalPages = Math.ceil(items.length / CAMPAIGNS_PER_PAGE);
+        campaignPagination[tabId] = { items: items, showNetCol: showNetCol, totalPages: totalPages };
+
+        if (items.length === 0) {
+            return '<p class="validation-empty">' + escHtml(emptyMsg) + '</p>';
+        }
+
+        let theadHtml = '<tr>';
+        if (showNetCol) theadHtml += '<th>Сеть</th>';
+        theadHtml += '<th>ID</th><th>Название</th><th>Статус</th><th>Подключение</th></tr>';
+
+        let html = '<div class="campaigns-paginated-table" data-tab-id="' + tabId + '" data-page="1">';
+        html += '<table class="widefat striped"><thead>' + theadHtml + '</thead>';
+        html += '<tbody>' + renderCampaignPageRows(tabId, 1) + '</tbody></table>';
+        if (totalPages > 1) {
+            html += renderCampaignPaginationNav(tabId, 1, items.length);
+        }
+        html += '</div>';
+        return html;
+    }
+
+    function renderCampaignPageRows(tabId, page) {
+        const store = campaignPagination[tabId];
+        const start = (page - 1) * CAMPAIGNS_PER_PAGE;
+        const end = Math.min(start + CAMPAIGNS_PER_PAGE, store.items.length);
+        let html = '';
+        for (let i = start; i < end; i++) {
+            html += renderCampaignRow(store.items[i], store.showNetCol);
+        }
+        return html;
+    }
+
+    function renderCampaignPaginationNav(tabId, page, totalItems) {
+        const totalPages = campaignPagination[tabId].totalPages;
+        const start = (page - 1) * CAMPAIGNS_PER_PAGE + 1;
+        const end = Math.min(page * CAMPAIGNS_PER_PAGE, totalItems);
+
+        return '<div class="validation-pagination">'
+            + '<span class="pagination-info">Показано ' + start + '\u2013' + end + ' из ' + totalItems + '</span>'
+            + '<span class="pagination-buttons">'
+            + '<button type="button" class="button button-small campaign-pg-prev"' + (page <= 1 ? ' disabled' : '') + '>&larr; Пред</button>'
+            + '<span class="pagination-current">Страница ' + page + ' из ' + totalPages + '</span>'
+            + '<button type="button" class="button button-small campaign-pg-next"' + (page >= totalPages ? ' disabled' : '') + '>След &rarr;</button>'
+            + '</span></div>';
+    }
+
+    // Обработчик пагинации кампаний (делегирование)
+    $(document).on('click', '.campaign-pg-prev, .campaign-pg-next', function () {
+        const $btn = $(this);
+        const $wrap = $btn.closest('.campaigns-paginated-table');
+        const tabId = $wrap.data('tab-id');
+        const store = campaignPagination[tabId];
+        if (!store) return;
+
+        const current = parseInt($wrap.data('page'), 10);
+        const newPage = $btn.hasClass('campaign-pg-prev') ? current - 1 : current + 1;
+        if (newPage < 1 || newPage > store.totalPages) return;
+
+        $wrap.data('page', newPage);
+        $wrap.find('tbody').html(renderCampaignPageRows(tabId, newPage));
+        $wrap.find('.validation-pagination').replaceWith(renderCampaignPaginationNav(tabId, newPage, store.items.length));
+    });
+
+    function renderNetworkStats(networkSlug, stats) {
+        if (!stats || Object.keys(stats).length === 0) return '';
+        let html = '';
+        const slugs = networkSlug ? [networkSlug] : Object.keys(stats);
+        for (let i = 0; i < slugs.length; i++) {
+            const s = stats[slugs[i]];
+            if (!s) continue;
+            html += '<p><strong>' + escHtml(s.name) + ':</strong> '
+                + 'обновлено ' + escHtml(s.timestamp || '\u2014') + ' | '
+                + 'всего: ' + s.total + ' | '
+                + 'активных: ' + s.active + ' | '
+                + 'неактивных: ' + s.inactive + '</p>';
+        }
+        return html;
+    }
+
+    function renderCampaignsView() {
+        const allCampaigns = window.cashbackCampaignsData || [];
+        const networkStats = window.cashbackCampaignsNetworkStats || {};
+        const networkSlug  = $('#cashback-check-network-select').val() || '';
+        const searchTerm   = ($('#cashback-campaigns-search').val() || '').trim();
+        const showNetCol   = networkSlug === '';
+
+        const result = filterCampaigns(allCampaigns, networkSlug, searchTerm);
+
+        $('#cashback-campaigns-active-table').html(
+            buildCampaignTable('campaigns-active', result.active, showNetCol, 'Нет активных кампаний')
+        );
+        $('#cashback-campaigns-inactive-table').html(
+            buildCampaignTable('campaigns-inactive', result.inactive, showNetCol, 'Нет неактивных кампаний')
+        );
+
+        $('#cashback-active-count').text(result.active.length);
+        $('#cashback-inactive-count').text(result.inactive.length);
+
+        $('#cashback-campaigns-net-stats').html(renderNetworkStats(networkSlug, networkStats));
+    }
+
+    window.initCampaignsTab = function () {
+        if (!window.cashbackCampaignsData) return;
+
+        renderCampaignsView();
+
+        $('#cashback-check-network-select').on('change', function () {
+            renderCampaignsView();
+        });
+
+        $('#cashback-campaigns-search-btn').on('click', function () {
+            renderCampaignsView();
+        });
+
+        $('#cashback-campaigns-reset-btn').on('click', function () {
+            $('#cashback-campaigns-search').val('');
+            renderCampaignsView();
+        });
+
+        $('#cashback-campaigns-search').on('keypress', function (e) {
+            if (e.which === 13) {
+                e.preventDefault();
+                renderCampaignsView();
+            }
+        });
+    };
+
 })(jQuery);

@@ -300,6 +300,81 @@
     cursor: not-allowed;
 }
 
+/* =========================================================================
+   Campaigns Tab: Two-Column Layout
+   ========================================================================= */
+
+#cashback-campaigns-search-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+#cashback-campaigns-search {
+    min-width: 250px;
+    padding: 4px 8px;
+}
+
+#cashback-campaigns-net-stats {
+    margin: 10px 0 5px;
+    color: #666;
+    font-size: 13px;
+}
+
+#cashback-campaigns-net-stats p {
+    margin: 2px 0;
+}
+
+#cashback-campaigns-columns {
+    display: flex;
+    gap: 20px;
+    margin-top: 15px;
+}
+
+#cashback-campaigns-active-col,
+#cashback-campaigns-inactive-col {
+    flex: 1;
+    min-width: 0;
+}
+
+#cashback-campaigns-active-col h3,
+#cashback-campaigns-inactive-col h3 {
+    margin-top: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+#cashback-active-count,
+#cashback-inactive-count {
+    display: inline-block;
+    min-width: 18px;
+    height: 18px;
+    line-height: 18px;
+    padding: 0 6px;
+    border-radius: 9px;
+    font-size: 12px;
+    font-weight: 600;
+    text-align: center;
+}
+
+#cashback-active-count {
+    background: #dff0d8;
+    color: #3c763d;
+}
+
+#cashback-inactive-count {
+    background: #f2dede;
+    color: #a94442;
+}
+
+@media screen and (max-width: 1200px) {
+    #cashback-campaigns-columns {
+        flex-direction: column;
+    }
+}
+
 /* Validation table pagination */
 .validation-pagination {
     display: flex;
