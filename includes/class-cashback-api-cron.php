@@ -119,12 +119,42 @@ class Cashback_API_Cron
                 error_log('Cashback API Cron: process_ready_transactions exception — ' . $e->getMessage());
             }
 
+            // Проверка статусов кампаний и авто-деактивация/реактивация магазинов
+            $campaign_results = null;
+            try {
+                $campaign_results = $client->check_campaign_statuses();
+
+                foreach ($campaign_results as $network => $cresult) {
+                    if ($cresult['success'] ?? false) {
+                        if (($cresult['deactivated'] ?? 0) > 0 || ($cresult['reactivated'] ?? 0) > 0) {
+                            error_log(sprintf(
+                                'Cashback API Cron [%s] campaigns: total=%d, deactivated=%d, reactivated=%d, skipped=%d',
+                                $network,
+                                $cresult['total_campaigns'],
+                                $cresult['deactivated'],
+                                $cresult['reactivated'],
+                                $cresult['skipped']
+                            ));
+                        }
+                    } else {
+                        error_log(sprintf(
+                            'Cashback API Cron [%s] campaign check FAILED: %s',
+                            $network,
+                            $cresult['error'] ?? 'Unknown'
+                        ));
+                    }
+                }
+            } catch (Exception $e) {
+                error_log('Cashback API Cron: campaign check exception — ' . $e->getMessage());
+            }
+
             // Сохраняем результат последней синхронизации для отображения в админке
             update_option('cashback_last_sync_result', [
                 'timestamp'        => current_time('mysql'),
                 'elapsed'          => $elapsed,
                 'results'          => $results,
                 'auto_transferred' => $transfer_result,
+                'campaign_check'   => $campaign_results,
             ]);
         } catch (Exception $e) {
             error_log('Cashback API Cron: Exception — ' . $e->getMessage());

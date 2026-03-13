@@ -58,6 +58,10 @@ class Cashback_Admin_API_Validation
         add_action('wp_ajax_cashback_add_transaction', [$this, 'ajax_add_transaction']);
         add_action('wp_ajax_cashback_overwrite_transaction', [$this, 'ajax_overwrite_transaction']);
 
+        // Кампании: ручная проверка и реактивация
+        add_action('wp_ajax_cashback_check_campaigns_now', [$this, 'ajax_check_campaigns_now']);
+        add_action('wp_ajax_cashback_reactivate_product', [$this, 'ajax_reactivate_product']);
+
         // Подключение JS/CSS только на наших страницах
         add_action('admin_enqueue_scripts', [$this, 'enqueue_assets']);
     }
@@ -159,7 +163,7 @@ class Cashback_Admin_API_Validation
         }
 
         $active_tab = sanitize_text_field(wp_unslash($_GET['tab'] ?? 'settings'));
-        if (!in_array($active_tab, ['settings', 'validation', 'sync'], true)) {
+        if (!in_array($active_tab, ['settings', 'validation', 'sync', 'campaigns'], true)) {
             $active_tab = 'settings';
         }
 ?>
@@ -179,6 +183,10 @@ class Cashback_Admin_API_Validation
                     class="nav-tab <?php echo $active_tab === 'sync' ? 'nav-tab-active' : ''; ?>">
                     Синхронизация
                 </a>
+                <a href="?page=<?php echo self::PAGE_SLUG; ?>&tab=campaigns"
+                    class="nav-tab <?php echo $active_tab === 'campaigns' ? 'nav-tab-active' : ''; ?>">
+                    Статус кампаний
+                </a>
             </nav>
 
             <div class="tab-content" style="margin-top: 20px;">
@@ -189,6 +197,9 @@ class Cashback_Admin_API_Validation
                         break;
                     case 'sync':
                         $this->render_sync_tab();
+                        break;
+                    case 'campaigns':
+                        $this->render_campaigns_tab();
                         break;
                     default:
                         $this->render_settings_tab();
@@ -225,7 +236,10 @@ class Cashback_Admin_API_Validation
                 </select>
             <?php endif; ?>
 
-            <?php foreach ($networks as $network): ?>
+            <?php foreach ($networks as $network):
+                $saved_credentials = Cashback_API_Client::get_instance()->get_credentials((int) $network['id']) ?: [];
+                $saved_scope = $saved_credentials['scope'] ?? '';
+            ?>
                 <div class="cashback-network-card" data-network-id="<?php echo esc_attr($network['id']); ?>" style="display:none">
                     <h2><?php echo esc_html($network['name']); ?>
                         <span class="slug">(<?php echo esc_html($network['slug']); ?>)</span>
@@ -295,6 +309,16 @@ class Cashback_Admin_API_Validation
                                     value=""
                                     placeholder="<?php echo !empty($network['api_credentials']) ? '••••••• (сохранён)' : 'Введите Client Secret'; ?>"
                                     autocomplete="off">
+                            </td>
+                        </tr>
+                        <tr class="auth-field auth-oauth2" <?php if ($auth_type === 'api_key') echo 'style="display:none"'; ?>>
+                            <th>OAuth2 Scope</th>
+                            <td>
+                                <input type="text" class="regular-text api-credential"
+                                    name="scope"
+                                    value="<?php echo esc_attr($saved_scope); ?>"
+                                    placeholder="statistics advcampaigns_for_website">
+                                <p class="description">Admitad: <code>statistics advcampaigns_for_website</code>. Через пробел.</p>
                             </td>
                         </tr>
                         <tr class="auth-field auth-api-key" <?php if ($auth_type !== 'api_key') echo 'style="display:none"'; ?>>
@@ -1382,5 +1406,372 @@ class Cashback_Admin_API_Validation
             }
         }
         return '0.0.0.0';
+    }
+
+    // =========================================================================
+    // Вкладка «Статус кампаний»
+    // =========================================================================
+
+    /**
+     * Рендер вкладки «Статус кампаний»
+     */
+    private function render_campaigns_tab(): void
+    {
+        global $wpdb;
+
+        $networks = $wpdb->get_results(
+            "SELECT id, name, slug, is_active FROM {$wpdb->prefix}cashback_affiliate_networks WHERE is_active = 1 ORDER BY sort_order, name",
+            ARRAY_A
+        ) ?: [];
+
+        // Деактивированные товары
+        $deactivated_products = $wpdb->get_results(
+            "SELECT p.ID, p.post_title,
+                    pm_reason.meta_value AS reason,
+                    pm_at.meta_value AS deactivated_at,
+                    pm_net.meta_value AS network_slug,
+                    pm_offer.meta_value AS offer_id
+             FROM {$wpdb->posts} p
+             INNER JOIN {$wpdb->postmeta} pm_deact ON p.ID = pm_deact.post_id AND pm_deact.meta_key = '_cashback_auto_deactivated' AND pm_deact.meta_value = '1'
+             LEFT JOIN {$wpdb->postmeta} pm_reason ON p.ID = pm_reason.post_id AND pm_reason.meta_key = '_cashback_deactivation_reason'
+             LEFT JOIN {$wpdb->postmeta} pm_at ON p.ID = pm_at.post_id AND pm_at.meta_key = '_cashback_deactivated_at'
+             LEFT JOIN {$wpdb->postmeta} pm_net ON p.ID = pm_net.post_id AND pm_net.meta_key = '_cashback_deactivated_network'
+             LEFT JOIN {$wpdb->postmeta} pm_offer ON p.ID = pm_offer.post_id AND pm_offer.meta_key = '_offer_id'
+             WHERE p.post_type = 'product'
+             ORDER BY pm_at.meta_value DESC
+             LIMIT 100",
+            ARRAY_A
+        ) ?: [];
+        ?>
+
+        <div id="cashback-campaigns-tab">
+            <h2>Проверка статусов кампаний</h2>
+            <p class="description">
+                Автоматическая проверка выполняется каждые 2 часа вместе с синхронизацией транзакций.
+                При деактивации кампании в CPA-сети соответствующий товар переводится в черновик.
+            </p>
+
+            <p>
+                <select id="cashback-check-network-select" style="vertical-align: middle;">
+                    <option value="">Все сети</option>
+                    <?php foreach ($networks as $net): ?>
+                        <option value="<?php echo esc_attr($net['slug']); ?>">
+                            <?php echo esc_html($net['name']); ?> (<?php echo esc_html($net['slug']); ?>)
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+                <button type="button" id="cashback-check-campaigns-btn" class="button button-primary" style="vertical-align: middle;">
+                    Проверить сейчас
+                </button>
+                <span id="cashback-check-campaigns-status" style="margin-left: 10px;"></span>
+            </p>
+
+            <?php // Последняя проверка ?>
+            <?php $last_sync = get_option('cashback_last_sync_result', []); ?>
+            <?php if (!empty($last_sync['campaign_check'])): ?>
+                <div class="notice notice-info inline" style="margin: 10px 0;">
+                    <p><strong>Последняя проверка:</strong> <?php echo esc_html($last_sync['timestamp'] ?? '—'); ?></p>
+                    <?php foreach ($last_sync['campaign_check'] as $net => $cr): ?>
+                        <p>
+                            <strong><?php echo esc_html(strtoupper($net)); ?>:</strong>
+                            <?php if ($cr['success'] ?? false): ?>
+                                кампаний: <?php echo (int) $cr['total_campaigns']; ?>,
+                                деактивировано: <?php echo (int) ($cr['deactivated'] ?? 0); ?>,
+                                реактивировано: <?php echo (int) ($cr['reactivated'] ?? 0); ?>,
+                                пропущено: <?php echo (int) ($cr['skipped'] ?? 0); ?>
+                            <?php else: ?>
+                                <span style="color: #d63638;">Ошибка: <?php echo esc_html($cr['error'] ?? ''); ?></span>
+                            <?php endif; ?>
+                        </p>
+                    <?php endforeach; ?>
+                </div>
+            <?php endif; ?>
+
+            <?php // Статус кампаний по сетям ?>
+            <?php foreach ($networks as $network): ?>
+                <?php
+                $slug = $network['slug'];
+                $campaign_data = get_option("cashback_campaign_status_{$slug}", []);
+                if (empty($campaign_data['campaigns'])) {
+                    continue;
+                }
+                ?>
+                <div class="cashback-network-block" data-network-slug="<?php echo esc_attr($slug); ?>">
+                <h3><?php echo esc_html($network['name']); ?> (<?php echo esc_html($slug); ?>)</h3>
+                <p class="description">
+                    Обновлено: <?php echo esc_html($campaign_data['timestamp'] ?? '—'); ?> |
+                    Всего: <?php echo (int) ($campaign_data['total'] ?? 0); ?> |
+                    Активных: <?php echo (int) ($campaign_data['active'] ?? 0); ?> |
+                    Неактивных: <?php echo (int) ($campaign_data['inactive'] ?? 0); ?>
+                </p>
+                <div class="cashback-campaign-paginated" data-per-page="50">
+                    <table class="widefat striped" style="margin-bottom: 0;">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Название</th>
+                                <th>Статус</th>
+                                <th>Подключение</th>
+                                <th>Активна</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($campaign_data['campaigns'] as $campaign): ?>
+                                <tr>
+                                    <td><?php echo esc_html($campaign['id']); ?></td>
+                                    <td><?php echo esc_html($campaign['name']); ?></td>
+                                    <td><?php echo esc_html($campaign['status']); ?></td>
+                                    <td><?php echo esc_html($campaign['connection_status']); ?></td>
+                                    <td>
+                                        <?php if ($campaign['is_active']): ?>
+                                            <span style="color: #00a32a; font-weight: bold;">&#10003; Да</span>
+                                        <?php else: ?>
+                                            <span style="color: #d63638; font-weight: bold;">&#10007; Нет</span>
+                                        <?php endif; ?>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                    <div class="tablenav bottom" style="margin-bottom: 20px;">
+                        <div class="tablenav-pages">
+                            <span class="displaying-num"></span>
+                            <span class="pagination-links">
+                                <button type="button" class="button btn-prev" disabled>&lsaquo;</button>
+                                <span class="paging-input">
+                                    <span class="current-page"></span> / <span class="total-pages"></span>
+                                </span>
+                                <button type="button" class="button btn-next">&rsaquo;</button>
+                            </span>
+                        </div>
+                    </div>
+                </div>
+                </div><?php // .cashback-network-block ?>
+            <?php endforeach; ?>
+
+            <?php // Деактивированные товары ?>
+            <h3>Деактивированные магазины</h3>
+            <?php if (empty($deactivated_products)): ?>
+                <p class="description">Нет автоматически деактивированных магазинов.</p>
+            <?php else: ?>
+                <table class="widefat striped">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Магазин</th>
+                            <th>Offer ID</th>
+                            <th>Сеть</th>
+                            <th>Дата</th>
+                            <th>Причина</th>
+                            <th>Действие</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($deactivated_products as $product): ?>
+                            <tr id="deact-row-<?php echo (int) $product['ID']; ?>">
+                                <td><?php echo (int) $product['ID']; ?></td>
+                                <td>
+                                    <a href="<?php echo esc_url(get_edit_post_link((int) $product['ID'])); ?>">
+                                        <?php echo esc_html($product['post_title']); ?>
+                                    </a>
+                                </td>
+                                <td><?php echo esc_html($product['offer_id'] ?? '—'); ?></td>
+                                <td><?php echo esc_html(strtoupper($product['network_slug'] ?? '')); ?></td>
+                                <td><?php echo esc_html($product['deactivated_at'] ?? '—'); ?></td>
+                                <td><?php echo esc_html($product['reason'] ?? '—'); ?></td>
+                                <td>
+                                    <button type="button"
+                                            class="button button-small cashback-reactivate-btn"
+                                            data-product-id="<?php echo (int) $product['ID']; ?>">
+                                        Реактивировать
+                                    </button>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            <?php endif; ?>
+        </div>
+
+        <script>
+        jQuery(function($) {
+            // ─── Фильтрация таблиц по выбранной сети ───
+            $('#cashback-check-network-select').on('change', function() {
+                var slug = $(this).val();
+                if (slug === '') {
+                    $('.cashback-network-block').show();
+                } else {
+                    $('.cashback-network-block').hide();
+                    $('.cashback-network-block[data-network-slug="' + slug + '"]').show();
+                }
+            });
+
+            // ─── Пагинация таблиц кампаний ───
+            $('.cashback-campaign-paginated').each(function() {
+                var $wrap    = $(this);
+                var $rows    = $wrap.find('tbody tr');
+                var perPage  = parseInt($wrap.data('per-page'), 10) || 50;
+                var total    = $rows.length;
+                var pages    = Math.ceil(total / perPage);
+                var current  = 1;
+
+                var $num     = $wrap.find('.displaying-num');
+                var $cur     = $wrap.find('.current-page');
+                var $tot     = $wrap.find('.total-pages');
+                var $prev    = $wrap.find('.btn-prev');
+                var $next    = $wrap.find('.btn-next');
+
+                function render() {
+                    var start = (current - 1) * perPage;
+                    var end   = start + perPage;
+                    $rows.hide().slice(start, end).show();
+                    $cur.text(current);
+                    $tot.text(pages);
+                    $num.text(total + ' записей');
+                    $prev.prop('disabled', current <= 1);
+                    $next.prop('disabled', current >= pages);
+                }
+
+                if (pages <= 1) {
+                    $wrap.find('.tablenav').hide();
+                }
+
+                $prev.on('click', function() { if (current > 1) { current--; render(); } });
+                $next.on('click', function() { if (current < pages) { current++; render(); } });
+
+                render();
+            });
+
+            // ─── Проверить кампании сейчас (с выбором сети) ───
+            $('#cashback-check-campaigns-btn').on('click', function() {
+                var $btn = $(this);
+                var $status = $('#cashback-check-campaigns-status');
+                var network = $('#cashback-check-network-select').val();
+                $btn.prop('disabled', true);
+                $status.text('Проверка...');
+
+                $.post(ajaxurl, {
+                    action: 'cashback_check_campaigns_now',
+                    nonce: '<?php echo wp_create_nonce('cashback_api_validation_nonce'); ?>',
+                    network: network
+                }, function(response) {
+                    $btn.prop('disabled', false);
+                    if (response.success) {
+                        var msg = 'Готово.';
+                        var data = response.data;
+                        for (var net in data) {
+                            if (data[net].success) {
+                                msg += ' ' + net.toUpperCase() + ': деакт=' + (data[net].deactivated || 0)
+                                     + ', реакт=' + (data[net].reactivated || 0);
+                            } else {
+                                msg += ' ' + net.toUpperCase() + ': ошибка';
+                            }
+                        }
+                        $status.text(msg);
+                        setTimeout(function() { location.reload(); }, 2000);
+                    } else {
+                        $status.text('Ошибка: ' + (response.data || 'Unknown'));
+                    }
+                }).fail(function() {
+                    $btn.prop('disabled', false);
+                    $status.text('Ошибка сети');
+                });
+            });
+
+            // ─── Реактивация товара ───
+            $('.cashback-reactivate-btn').on('click', function() {
+                var $btn = $(this);
+                var productId = $btn.data('product-id');
+                if (!confirm('Реактивировать товар #' + productId + '?')) return;
+
+                $btn.prop('disabled', true).text('...');
+
+                $.post(ajaxurl, {
+                    action: 'cashback_reactivate_product',
+                    nonce: '<?php echo wp_create_nonce('cashback_api_validation_nonce'); ?>',
+                    product_id: productId
+                }, function(response) {
+                    if (response.success) {
+                        $('#deact-row-' + productId).fadeOut();
+                    } else {
+                        alert('Ошибка: ' + (response.data || ''));
+                        $btn.prop('disabled', false).text('Реактивировать');
+                    }
+                }).fail(function() {
+                    alert('Ошибка сети');
+                    $btn.prop('disabled', false).text('Реактивировать');
+                });
+            });
+        });
+        </script>
+    <?php
+    }
+
+    /**
+     * AJAX: Проверить статусы кампаний сейчас
+     */
+    public function ajax_check_campaigns_now(): void
+    {
+        check_ajax_referer('cashback_api_validation_nonce', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Доступ запрещён');
+        }
+
+        $network_slug = isset($_POST['network']) ? sanitize_text_field(wp_unslash($_POST['network'])) : '';
+        $only_slug    = $network_slug !== '' ? $network_slug : null;
+
+        try {
+            $client  = Cashback_API_Client::get_instance();
+            $results = $client->check_campaign_statuses($only_slug);
+            wp_send_json_success($results);
+        } catch (Exception $e) {
+            wp_send_json_error($e->getMessage());
+        }
+    }
+
+    /**
+     * AJAX: Ручная реактивация товара администратором
+     */
+    public function ajax_reactivate_product(): void
+    {
+        check_ajax_referer('cashback_api_validation_nonce', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Доступ запрещён');
+        }
+
+        $product_id = (int) ($_POST['product_id'] ?? 0);
+        if ($product_id <= 0) {
+            wp_send_json_error('Неверный ID товара');
+        }
+
+        $post = get_post($product_id);
+        if (!$post || $post->post_type !== 'product') {
+            wp_send_json_error('Товар не найден');
+        }
+
+        wp_update_post([
+            'ID'          => $product_id,
+            'post_status' => 'publish',
+        ]);
+
+        update_post_meta($product_id, '_cashback_admin_override', '1');
+        delete_post_meta($product_id, '_cashback_auto_deactivated');
+        delete_post_meta($product_id, '_cashback_deactivation_reason');
+        delete_post_meta($product_id, '_cashback_deactivated_at');
+        delete_post_meta($product_id, '_cashback_deactivated_network');
+
+        if (class_exists('Cashback_Encryption')) {
+            Cashback_Encryption::write_audit_log(
+                'store_manual_reactivated',
+                get_current_user_id(),
+                'product',
+                $product_id,
+                ['source' => 'admin_override']
+            );
+        }
+
+        wp_send_json_success(['message' => 'Товар реактивирован']);
     }
 }

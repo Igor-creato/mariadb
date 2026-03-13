@@ -41,6 +41,21 @@ abstract class Cashback_Network_Adapter_Base implements Cashback_Network_Adapter
     }
 
     /**
+     * {@inheritdoc}
+     *
+     * Дефолтная реализация — возвращает ошибку.
+     * Адаптеры, поддерживающие проверку кампаний, переопределяют этот метод.
+     */
+    public function fetch_campaigns(array $credentials, array $network_config): array
+    {
+        return [
+            'success'   => false,
+            'campaigns' => [],
+            'error'     => 'fetch_campaigns not implemented for adapter: ' . $this->get_slug(),
+        ];
+    }
+
+    /**
      * Собрать URL из конфига сети (api_base_url + endpoint) или вернуть fallback
      *
      * @param array  $network_config Конфигурация сети

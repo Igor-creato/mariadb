@@ -276,8 +276,21 @@ class Cashback_Epn_Adapter extends Cashback_Network_Adapter_Base
             $query_params['tsTo'] = self::convert_date($params['date_end']);
         }
 
-        // EPN API не поддерживает statusUpdatedStart/statusUpdatedEnd —
-        // фильтрация по дате обновления статуса не доступна, используем только tsFrom/tsTo.
+        // EPN поддерживает statusUpdatedStart/statusUpdatedEnd —
+        // фильтрация по дате обновления статуса для инкрементальной синхронизации.
+        // background_sync() передаёт status_updated_start/end в формате Admitad (dd.mm.yyyy HH:MM:SS),
+        // конвертируем в EPN формат (yyyy-mm-dd).
+        if (!empty($params['statusUpdatedStart'])) {
+            $query_params['statusUpdatedStart'] = $params['statusUpdatedStart'];
+        } elseif (!empty($params['status_updated_start'])) {
+            $query_params['statusUpdatedStart'] = self::convert_datetime($params['status_updated_start']);
+        }
+
+        if (!empty($params['statusUpdatedEnd'])) {
+            $query_params['statusUpdatedEnd'] = $params['statusUpdatedEnd'];
+        } elseif (!empty($params['status_updated_end'])) {
+            $query_params['statusUpdatedEnd'] = self::convert_datetime($params['status_updated_end']);
+        }
 
         // Дополнительные EPN-фильтры
         if (!empty($params['offerIds'])) {
@@ -307,9 +320,10 @@ class Cashback_Epn_Adapter extends Cashback_Network_Adapter_Base
         // запросы без Accept/Content-Type или со стандартным WordPress User-Agent
         // (возвращает 403 Forbidden).
         $headers = array_merge([
-            'Accept'       => 'application/json',
-            'Content-Type' => 'application/json',
-            'User-Agent'   => 'CashbackPlugin/1.0',
+            'Accept'        => 'application/json',
+            'Content-Type'  => 'application/json',
+            'User-Agent'    => 'CashbackPlugin/1.0',
+            'X-API-VERSION' => '2',
         ], $auth_headers);
 
         $response = $this->http_get($url, $headers);
@@ -447,6 +461,130 @@ class Cashback_Epn_Adapter extends Cashback_Network_Adapter_Base
 
     /**
      * {@inheritdoc}
+     *
+     * EPN: GET /offers/list — список офферов с фильтрацией по статусам.
+     * Допустимые статусы EPN: active, disabled, waiting, stopped.
+     * Оффер активен только при status = 'active'.
+     *
+     * Пагинация: limit + offset (не page/perPage).
+     * Обязательные параметры: lang, viewRules.
+     */
+    public function fetch_campaigns(array $credentials, array $network_config): array
+    {
+        $auth_headers = $this->build_auth_headers($credentials, $network_config);
+        if (!$auth_headers) {
+            return ['success' => false, 'campaigns' => [], 'error' => 'Failed to authenticate with EPN'];
+        }
+
+        // EPN: OAuth на oauth2.epn.bz, data API на app.epn.bz — api_base_url = OAuth
+        $url = 'https://app.epn.bz/offers/list';
+
+        $headers = array_merge([
+            'Accept'        => 'application/json',
+            'Content-Type'  => 'application/json',
+            'User-Agent'    => 'CashbackPlugin/1.0',
+            'X-API-VERSION' => '2',
+        ], $auth_headers);
+
+        $all_campaigns = [];
+        $limit         = 500;
+        $offset        = 0;
+        $max_pages     = 20;
+        $page          = 0;
+        $retried       = false;
+
+        do {
+            $query = [
+                'lang'      => 'ru',
+                'viewRules' => 'role_user',
+                'statuses'  => 'active,disabled,waiting,stopped',
+                'fields'    => 'id,name,title,status',
+                'limit'     => $limit,
+                'offset'    => $offset,
+            ];
+
+            $full_url = $url . '?' . http_build_query($query);
+
+            $response = $this->http_get($full_url, $headers);
+
+            if (is_wp_error($response)) {
+                return [
+                    'success'   => false,
+                    'campaigns' => $all_campaigns,
+                    'error'     => 'HTTP error: ' . $response->get_error_message(),
+                ];
+            }
+
+            $code = wp_remote_retrieve_response_code($response);
+
+            // 401/403 — сбрасываем токен и повторяем один раз
+            if (($code === 401 || $code === 403) && $page === 0 && !$retried) {
+                $client_id = $credentials['client_id'] ?? '';
+                $cache_key = 'cashback_epn_token_' . md5($client_id);
+                delete_transient($cache_key);
+                unset($this->token_cache[$cache_key]);
+
+                $auth_headers = $this->build_auth_headers($credentials, $network_config);
+                if (!$auth_headers) {
+                    return ['success' => false, 'campaigns' => [], 'error' => 'EPN token refresh failed'];
+                }
+
+                $headers = array_merge([
+                    'Accept'       => 'application/json',
+                    'Content-Type' => 'application/json',
+                    'User-Agent'   => 'CashbackPlugin/1.0',
+                ], $auth_headers);
+
+                $retried = true;
+                continue;
+            }
+
+            if ($code !== 200) {
+                $raw_body = wp_remote_retrieve_body($response);
+                return [
+                    'success'   => false,
+                    'campaigns' => $all_campaigns,
+                    'error'     => "EPN offers HTTP {$code}: " . mb_substr($raw_body, 0, 300),
+                ];
+            }
+
+            $body     = json_decode(wp_remote_retrieve_body($response), true);
+            $raw_data = $body['data'] ?? [];
+            $total    = (int) ($body['meta']['count'] ?? 0);
+
+            foreach ($raw_data as $item) {
+                $attrs  = $item['attributes'] ?? [];
+                $status = strtolower((string) ($attrs['status'] ?? ''));
+
+                $all_campaigns[] = [
+                    'id'                => (string) ($item['id'] ?? ''),
+                    'name'              => (string) ($attrs['name'] ?? $attrs['title'] ?? ''),
+                    'is_active'         => ($status === 'active'),
+                    'status'            => $status,
+                    'connection_status' => $status,
+                ];
+            }
+
+            $offset += $limit;
+            $page++;
+
+            // Если получили меньше limit записей или достигли total — больше страниц нет
+            if (count($raw_data) < $limit || $offset >= $total || $page >= $max_pages) {
+                break;
+            }
+
+            usleep(100000);
+        } while (true);
+
+        return [
+            'success'   => true,
+            'campaigns' => $all_campaigns,
+            'error'     => null,
+        ];
+    }
+
+    /**
+     * {@inheritdoc}
      */
     public function get_default_status_map(): array
     {
@@ -534,6 +672,18 @@ class Cashback_Epn_Adapter extends Cashback_Network_Adapter_Base
             return $parts[2] . '-' . $parts[1] . '-' . $parts[0];
         }
         return $date;
+    }
+
+    /**
+     * Конвертация даты+времени из формата Admitad (dd.mm.yyyy HH:MM:SS) в EPN (yyyy-mm-dd)
+     *
+     * EPN statusUpdatedStart/statusUpdatedEnd принимают только дату без времени.
+     */
+    private static function convert_datetime(string $datetime): string
+    {
+        // "01.01.2020 00:00:00" → "2020-01-01"
+        $date_part = explode(' ', $datetime)[0];
+        return self::convert_date($date_part);
     }
 
 }

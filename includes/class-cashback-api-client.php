@@ -2570,4 +2570,354 @@ class Cashback_API_Client
             'synced_at'      => current_time('mysql'),
         ]);
     }
+
+    // =========================================================================
+    // Campaign Status Check — автоматическая деактивация магазинов
+    // =========================================================================
+
+    /**
+     * Проверить статусы кампаний во всех активных сетях и деактивировать/реактивировать товары
+     *
+     * Логика:
+     * 1. Для каждой активной сети получаем список кампаний через adapter->fetch_campaigns()
+     * 2. Сопоставляем кампании с товарами WooCommerce через _offer_id post_meta
+     * 3. Если кампания неактивна или отсутствует — товар переводится в draft
+     * 4. Если ранее деактивированный товар — кампания снова активна — реактивируем
+     * 5. Email-уведомление админу при деактивации
+     *
+     * Защита от ложных деактиваций:
+     * - Если API вернул ошибку — ни один товар не трогается
+     * - Товары без _offer_id пропускаются
+     * - Реактивируются только автоматически деактивированные (_cashback_auto_deactivated = '1')
+     *
+     * @return array Результаты по каждой сети
+     */
+    public function check_campaign_statuses(?string $only_slug = null): array
+    {
+        global $wpdb;
+
+        $results  = [];
+        $networks = $this->get_all_active_networks();
+
+        foreach ($networks as $network) {
+            $slug       = $network['slug'] ?? '';
+            $network_id = (int) ($network['id'] ?? 0);
+
+            if ($only_slug !== null && $slug !== $only_slug) {
+                continue;
+            }
+
+            if (empty($slug) || $network_id <= 0) {
+                continue;
+            }
+
+            $config = $this->get_network_config($slug);
+            if (!$config || empty($config['credentials'])) {
+                $results[$slug] = [
+                    'success' => false,
+                    'error'   => 'No credentials configured',
+                ];
+                continue;
+            }
+
+            $adapter = $this->get_adapter($slug);
+            if (!$adapter) {
+                $results[$slug] = [
+                    'success' => false,
+                    'error'   => 'No adapter found for: ' . $slug,
+                ];
+                continue;
+            }
+
+            // Получаем список кампаний из CPA-сети
+            $campaign_result = $adapter->fetch_campaigns($config['credentials'], $config);
+
+            if (!$campaign_result['success']) {
+                $results[$slug] = [
+                    'success' => false,
+                    'error'   => $campaign_result['error'],
+                ];
+                error_log(sprintf(
+                    'Cashback Campaign Check [%s]: API error — %s',
+                    $slug,
+                    $campaign_result['error']
+                ));
+                continue;
+            }
+
+            // Строим карту: campaign_id => campaign_data
+            $campaign_map = [];
+            foreach ($campaign_result['campaigns'] as $campaign) {
+                $cid = (string) $campaign['id'];
+                if ($cid !== '') {
+                    $campaign_map[$cid] = $campaign;
+                }
+            }
+
+            // Защита: если API вернул 0 кампаний — возможна ошибка API, не деактивируем
+            if (empty($campaign_map)) {
+                $results[$slug] = [
+                    'success' => false,
+                    'error'   => 'API вернул 0 кампаний — возможна проблема с API (неверный scope, token или website_id)',
+                ];
+                error_log('Cashback Campaign Check [' . $slug . ']: ' . $results[$slug]['error']);
+                continue;
+            }
+
+            // Находим все опубликованные товары привязанные к этой сети
+            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+            $published_products = $wpdb->get_results($wpdb->prepare(
+                "SELECT p.ID, pm_offer.meta_value AS offer_id
+                 FROM {$wpdb->posts} p
+                 INNER JOIN {$wpdb->postmeta} pm_net ON p.ID = pm_net.post_id AND pm_net.meta_key = '_affiliate_network_id'
+                 LEFT JOIN {$wpdb->postmeta} pm_offer ON p.ID = pm_offer.post_id AND pm_offer.meta_key = '_offer_id'
+                 WHERE pm_net.meta_value = %d
+                   AND p.post_status = 'publish'
+                   AND p.post_type = 'product'",
+                $network_id
+            ), ARRAY_A) ?: [];
+
+            $deactivated = 0;
+            $reactivated = 0;
+            $skipped     = 0;
+
+            foreach ($published_products as $row) {
+                $product_id       = (int) $row['ID'];
+                $product_offer_id = trim((string) ($row['offer_id'] ?? ''));
+
+                if ($product_offer_id === '') {
+                    $skipped++;
+                    continue;
+                }
+
+                $campaign = $campaign_map[$product_offer_id] ?? null;
+
+                if ($campaign === null) {
+                    // Кампания не найдена в API — возможно удалена
+                    $this->deactivate_product(
+                        $product_id,
+                        $slug,
+                        $product_offer_id,
+                        'Кампания не найдена в API CPA-сети'
+                    );
+                    $deactivated++;
+                    continue;
+                }
+
+                if (!$campaign['is_active']) {
+                    $reason = sprintf(
+                        'Кампания «%s» деактивирована в %s (status: %s, connection: %s)',
+                        $campaign['name'],
+                        strtoupper($slug),
+                        $campaign['status'],
+                        $campaign['connection_status']
+                    );
+                    $this->deactivate_product($product_id, $slug, $product_offer_id, $reason);
+                    $deactivated++;
+                }
+            }
+
+            // Проверяем ранее деактивированные товары на реактивацию
+            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+            $draft_products = $wpdb->get_results($wpdb->prepare(
+                "SELECT p.ID, pm_offer.meta_value AS offer_id
+                 FROM {$wpdb->posts} p
+                 INNER JOIN {$wpdb->postmeta} pm_net ON p.ID = pm_net.post_id AND pm_net.meta_key = '_affiliate_network_id'
+                 INNER JOIN {$wpdb->postmeta} pm_deact ON p.ID = pm_deact.post_id AND pm_deact.meta_key = '_cashback_auto_deactivated'
+                 LEFT JOIN {$wpdb->postmeta} pm_offer ON p.ID = pm_offer.post_id AND pm_offer.meta_key = '_offer_id'
+                 WHERE pm_net.meta_value = %d
+                   AND p.post_status = 'draft'
+                   AND p.post_type = 'product'
+                   AND pm_deact.meta_value = '1'",
+                $network_id
+            ), ARRAY_A) ?: [];
+
+            foreach ($draft_products as $row) {
+                $product_id       = (int) $row['ID'];
+                $product_offer_id = trim((string) ($row['offer_id'] ?? ''));
+
+                if ($product_offer_id === '') {
+                    continue;
+                }
+
+                $campaign = $campaign_map[$product_offer_id] ?? null;
+
+                if ($campaign !== null && $campaign['is_active']) {
+                    $this->reactivate_product($product_id, $slug, $product_offer_id, $campaign['name']);
+                    $reactivated++;
+                }
+            }
+
+            // Сохраняем снимок статусов кампаний для админки
+            update_option("cashback_campaign_status_{$slug}", [
+                'timestamp'  => current_time('mysql'),
+                'total'      => count($campaign_result['campaigns']),
+                'active'     => count(array_filter($campaign_result['campaigns'], fn($c) => $c['is_active'])),
+                'inactive'   => count(array_filter($campaign_result['campaigns'], fn($c) => !$c['is_active'])),
+                'campaigns'  => array_map(function ($c) {
+                    return [
+                        'id'                => $c['id'],
+                        'name'              => $c['name'],
+                        'is_active'         => $c['is_active'],
+                        'status'            => $c['status'],
+                        'connection_status' => $c['connection_status'],
+                    ];
+                }, $campaign_result['campaigns']),
+            ], false);
+
+            $results[$slug] = [
+                'success'         => true,
+                'total_campaigns' => count($campaign_result['campaigns']),
+                'deactivated'     => $deactivated,
+                'reactivated'     => $reactivated,
+                'skipped'         => $skipped,
+            ];
+        }
+
+        // Email-уведомление при деактивации
+        $total_deactivated = 0;
+        foreach ($results as $r) {
+            if ($r['success'] ?? false) {
+                $total_deactivated += ($r['deactivated'] ?? 0);
+            }
+        }
+        if ($total_deactivated > 0) {
+            $this->send_campaign_deactivation_notification($results);
+        }
+
+        return $results;
+    }
+
+    /**
+     * Деактивировать товар WooCommerce (перевести в draft) из-за отключения кампании
+     *
+     * @param int    $product_id  ID товара
+     * @param string $network_slug Slug CPA-сети
+     * @param string $offer_id    ID кампании/оффера
+     * @param string $reason      Причина деактивации
+     */
+    private function deactivate_product(int $product_id, string $network_slug, string $offer_id, string $reason): void
+    {
+        // Проверяем: не деактивирован ли уже
+        if (get_post_meta($product_id, '_cashback_auto_deactivated', true) === '1') {
+            return;
+        }
+
+        wp_update_post([
+            'ID'          => $product_id,
+            'post_status' => 'draft',
+        ]);
+
+        update_post_meta($product_id, '_cashback_auto_deactivated', '1');
+        update_post_meta($product_id, '_cashback_deactivation_reason', $reason);
+        update_post_meta($product_id, '_cashback_deactivated_at', current_time('mysql'));
+        update_post_meta($product_id, '_cashback_deactivated_network', $network_slug);
+
+        // Аудит-лог
+        if (class_exists('Cashback_Encryption')) {
+            Cashback_Encryption::write_audit_log(
+                'store_auto_deactivated',
+                0,
+                'product',
+                $product_id,
+                [
+                    'network_slug' => $network_slug,
+                    'offer_id'     => $offer_id,
+                    'reason'       => $reason,
+                ]
+            );
+        }
+
+        error_log(sprintf(
+            'Cashback Campaign Check: Product #%d deactivated (network: %s, offer: %s) — %s',
+            $product_id,
+            $network_slug,
+            $offer_id,
+            $reason
+        ));
+    }
+
+    /**
+     * Реактивировать ранее автоматически деактивированный товар
+     *
+     * @param int    $product_id    ID товара
+     * @param string $network_slug  Slug CPA-сети
+     * @param string $offer_id      ID кампании/оффера
+     * @param string $campaign_name Название кампании
+     */
+    private function reactivate_product(int $product_id, string $network_slug, string $offer_id, string $campaign_name): void
+    {
+        wp_update_post([
+            'ID'          => $product_id,
+            'post_status' => 'publish',
+        ]);
+
+        delete_post_meta($product_id, '_cashback_auto_deactivated');
+        delete_post_meta($product_id, '_cashback_deactivation_reason');
+        delete_post_meta($product_id, '_cashback_deactivated_at');
+        delete_post_meta($product_id, '_cashback_deactivated_network');
+
+        // Аудит-лог
+        if (class_exists('Cashback_Encryption')) {
+            Cashback_Encryption::write_audit_log(
+                'store_auto_reactivated',
+                0,
+                'product',
+                $product_id,
+                [
+                    'network_slug'  => $network_slug,
+                    'offer_id'      => $offer_id,
+                    'campaign_name' => $campaign_name,
+                ]
+            );
+        }
+
+        error_log(sprintf(
+            'Cashback Campaign Check: Product #%d reactivated (network: %s, campaign: %s)',
+            $product_id,
+            $network_slug,
+            $campaign_name
+        ));
+    }
+
+    /**
+     * Отправить email-уведомление администратору о деактивированных магазинах
+     *
+     * @param array $results Результаты check_campaign_statuses()
+     */
+    private function send_campaign_deactivation_notification(array $results): void
+    {
+        $admin_email = get_option('admin_email');
+        if (empty($admin_email)) {
+            return;
+        }
+
+        $site_name = get_bloginfo('name');
+        $subject   = sprintf('[Cashback] %s: Магазины деактивированы из-за отключения кампаний', $site_name);
+
+        $body  = "Отчёт о статусах кампаний CPA-сетей\n";
+        $body .= str_repeat('=', 50) . "\n";
+        $body .= sprintf("Дата: %s\n\n", current_time('mysql'));
+
+        foreach ($results as $network => $result) {
+            if (!($result['success'] ?? false)) {
+                continue;
+            }
+            if (($result['deactivated'] ?? 0) === 0 && ($result['reactivated'] ?? 0) === 0) {
+                continue;
+            }
+
+            $body .= sprintf("[%s]\n", strtoupper($network));
+            $body .= sprintf("  Кампаний всего: %d\n", $result['total_campaigns']);
+            $body .= sprintf("  Деактивировано товаров: %d\n", $result['deactivated']);
+            $body .= sprintf("  Реактивировано товаров: %d\n", $result['reactivated']);
+            $body .= sprintf("  Пропущено (без offer_id): %d\n", $result['skipped']);
+            $body .= "\n";
+        }
+
+        $body .= str_repeat('-', 50) . "\n";
+        $body .= "Просмотр: " . admin_url('admin.php?page=cashback-api-validation&tab=campaigns') . "\n";
+
+        wp_mail($admin_email, $subject, $body);
+    }
 }

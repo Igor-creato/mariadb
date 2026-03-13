@@ -190,6 +190,36 @@ class WC_Affiliate_URL_Params
             echo '</div>';
         }
 
+        // Offer ID (ID кампании в CPA-сети)
+        $current_offer_id = get_post_meta($post->ID, '_offer_id', true);
+        echo '<p class="form-field _offer_id_field" style="padding: 5px 12px;">';
+        echo '<label for="_offer_id">' . esc_html__('Offer ID (ID кампании)', 'wc-affiliate-url-params') . '</label>';
+        printf(
+            '<input type="text" id="_offer_id" name="_offer_id" value="%s" class="short" placeholder="%s" />',
+            esc_attr($current_offer_id),
+            esc_attr__('advcampaign_id / offer_id в CPA-сети', 'wc-affiliate-url-params')
+        );
+        echo '<span class="description" style="display:block; margin-top:4px; color:#666;">'
+            . esc_html__('ID кампании/оффера в CPA-сети. Используется для автоматической деактивации при отключении кампании.', 'wc-affiliate-url-params')
+            . '</span>';
+        echo '</p>';
+
+        // Индикатор автоматической деактивации
+        $auto_deactivated = get_post_meta($post->ID, '_cashback_auto_deactivated', true);
+        if ($auto_deactivated === '1') {
+            $deactivation_reason = get_post_meta($post->ID, '_cashback_deactivation_reason', true);
+            $deactivated_at = get_post_meta($post->ID, '_cashback_deactivated_at', true);
+            echo '<div class="affiliate-network-warning" style="padding: 8px 12px; margin: 5px 12px; background: #fce4ec; border-left: 4px solid #d63638; color: #c62828;">';
+            echo '<strong>' . esc_html__('Магазин автоматически деактивирован', 'wc-affiliate-url-params') . '</strong><br>';
+            if ($deactivated_at) {
+                echo esc_html(sprintf(__('Дата: %s', 'wc-affiliate-url-params'), $deactivated_at)) . '<br>';
+            }
+            if ($deactivation_reason) {
+                echo esc_html(sprintf(__('Причина: %s', 'wc-affiliate-url-params'), $deactivation_reason));
+            }
+            echo '</div>';
+        }
+
         // Контейнер для параметров сети
         echo '<div id="affiliate-network-params-container">';
         if (!empty($network_params)) {
@@ -385,6 +415,12 @@ class WC_Affiliate_URL_Params
 
         // Сохраняем ID сети
         update_post_meta($post_id, '_affiliate_network_id', $network_id);
+
+        // Сохраняем Offer ID (ID кампании в CPA-сети)
+        $offer_id = isset($_POST['_offer_id'])
+            ? sanitize_text_field(wp_unslash($_POST['_offer_id']))
+            : '';
+        update_post_meta($post_id, '_offer_id', $offer_id);
 
         // Очищаем кэш
         wp_cache_delete('affiliate_params_' . $post_id, self::CACHE_GROUP);
@@ -653,6 +689,16 @@ class WC_Affiliate_URL_Params
             $product = wc_get_product($product_id);
             if (!$product || $product->get_type() !== 'external') {
                 wp_redirect(home_url(), 302);
+                exit;
+            }
+
+            // Блокировка кликов для автоматически деактивированных магазинов
+            if (get_post_meta($product_id, '_cashback_auto_deactivated', true) === '1') {
+                error_log(sprintf(
+                    '[wc-affiliate-url-params] Click blocked for auto-deactivated product #%d',
+                    $product_id
+                ));
+                wp_redirect(get_permalink($product_id) ?: home_url(), 302);
                 exit;
             }
 

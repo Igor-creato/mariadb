@@ -65,6 +65,23 @@ interface Cashback_Network_Adapter_Interface
     public function fetch_all_actions(array $credentials, array $params, int $max_pages, array $network_config): array;
 
     /**
+     * Получить список кампаний/офферов с их статусами из API CPA-сети
+     *
+     * Возвращает список кампаний для определения активности магазинов.
+     * Каждая кампания содержит:
+     *   - 'id' (string) — ID кампании/оффера (advcampaign_id в Admitad, offer_id в EPN)
+     *   - 'name' (string) — название кампании
+     *   - 'is_active' (bool) — активна ли кампания
+     *   - 'status' (string) — статус из API
+     *   - 'connection_status' (string) — статус подключения (если есть)
+     *
+     * @param array $credentials    Расшифрованные credentials
+     * @param array $network_config Строка из cashback_affiliate_networks
+     * @return array ['success' => bool, 'campaigns' => array, 'error' => ?string]
+     */
+    public function fetch_campaigns(array $credentials, array $network_config): array;
+
+    /**
      * Маппинг статусов API → локальные по умолчанию
      *
      * @return array<string, string> API status => local status (waiting/completed/declined)

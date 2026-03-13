@@ -46,7 +46,7 @@ class Cashback_Admitad_Adapter extends Cashback_Network_Adapter_Base
     {
         $client_id     = $credentials['client_id'] ?? '';
         $client_secret = $credentials['client_secret'] ?? '';
-        $scope         = $credentials['scope'] ?? 'statistics';
+        $scope         = $credentials['scope'] ?? 'statistics advcampaigns advcampaigns_for_website';
 
         if (empty($client_id) || empty($client_secret)) {
             $this->last_token_error = 'Admitad credentials incomplete (client_id или client_secret пустые)';
@@ -243,6 +243,127 @@ class Cashback_Admitad_Adapter extends Cashback_Network_Adapter_Base
             'actions' => $all_actions,
             'total'   => $total,
             'error'   => null,
+        ];
+    }
+
+    /**
+     * {@inheritdoc}
+     *
+     * Admitad: GET /advcampaigns/website/{w_id}/?limit=500
+     * Используется endpoint для конкретной площадки, т.к. только он возвращает connection_status.
+     * Кампания активна при status=active AND connection_status IN (active, pending).
+     * pending = заявка на модерации, не является основанием для деактивации товара.
+     *
+     * Требует scope 'advcampaigns_for_website' в OAuth2 credentials.
+     */
+    public function fetch_campaigns(array $credentials, array $network_config): array
+    {
+        $auth_headers = $this->build_auth_headers($credentials, $network_config);
+        if (!$auth_headers) {
+            return ['success' => false, 'campaigns' => [], 'error' => 'Failed to authenticate with Admitad'];
+        }
+
+        $base_url   = rtrim($network_config['api_base_url'] ?? 'https://api.admitad.com', '/');
+        $website_id = $network_config['api_website_id'] ?? '';
+
+        if ($website_id === '') {
+            // Fallback: общий endpoint без connection_status
+            $url = $base_url . '/advcampaigns/';
+            $has_connection_status = false;
+        } else {
+            $url = $base_url . '/advcampaigns/website/' . rawurlencode($website_id) . '/';
+            $has_connection_status = true;
+        }
+
+        $query = ['limit' => 500, 'offset' => 0];
+
+        $all_campaigns = [];
+        $page          = 0;
+        $max_pages     = 20;
+        $retried_401   = false;
+
+        do {
+            $query['offset'] = $page * 500;
+            $full_url = $url . '?' . http_build_query($query);
+
+            $response = $this->http_get($full_url, $auth_headers);
+
+            if (is_wp_error($response)) {
+                return [
+                    'success'   => false,
+                    'campaigns' => $all_campaigns,
+                    'error'     => 'HTTP error: ' . $response->get_error_message(),
+                ];
+            }
+
+            $code = wp_remote_retrieve_response_code($response);
+
+            // 401 → сбрасываем токен и повторяем один раз
+            if ($code === 401 && !$retried_401) {
+                $retried_401 = true;
+                $client_id = $credentials['client_id'] ?? '';
+                $cache_key = 'cashback_admitad_token_' . md5($client_id);
+                delete_transient($cache_key);
+                unset($this->token_cache[$cache_key]);
+
+                $auth_headers = $this->build_auth_headers($credentials, $network_config);
+                if (!$auth_headers) {
+                    return ['success' => false, 'campaigns' => $all_campaigns, 'error' => 'Token refresh failed'];
+                }
+                continue; // повторяем ту же страницу
+            }
+
+            // 403 insufficient_scope на /advcampaigns/website/{id}/ → fallback на /advcampaigns/
+            if ($code === 403 && $has_connection_status && $page === 0) {
+                $raw = wp_remote_retrieve_body($response);
+                if (str_contains($raw, 'insufficient_scope')) {
+                    error_log('Cashback Admitad: insufficient_scope for /advcampaigns/website/, falling back to /advcampaigns/');
+                    $url = $base_url . '/advcampaigns/';
+                    $has_connection_status = false;
+                    continue;
+                }
+            }
+
+            if ($code !== 200) {
+                $body = json_decode(wp_remote_retrieve_body($response), true);
+                return [
+                    'success'   => false,
+                    'campaigns' => $all_campaigns,
+                    'error'     => "Admitad advcampaigns HTTP {$code}: " . wp_json_encode($body),
+                ];
+            }
+
+            $body    = json_decode(wp_remote_retrieve_body($response), true);
+            $results = $body['results'] ?? [];
+
+            foreach ($results as $campaign) {
+                $status     = strtolower((string) ($campaign['status'] ?? ''));
+                $connection = strtolower((string) ($campaign['connection_status'] ?? ''));
+
+                $all_campaigns[] = [
+                    'id'                => (string) ($campaign['id'] ?? ''),
+                    'name'              => (string) ($campaign['name'] ?? ''),
+                    'is_active'         => $has_connection_status
+                        ? ($status === 'active' && in_array($connection, ['active', 'pending'], true))
+                        : ($status === 'active'),
+                    'status'            => $status,
+                    'connection_status' => $connection,
+                ];
+            }
+
+            $page++;
+            if (count($results) < 500 || $page >= $max_pages) {
+                break;
+            }
+
+            // Rate limit пауза между страницами
+            usleep(100000);
+        } while (true);
+
+        return [
+            'success'   => true,
+            'campaigns' => $all_campaigns,
+            'error'     => null,
         ];
     }
 

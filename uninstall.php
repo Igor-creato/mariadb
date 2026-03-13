@@ -166,6 +166,8 @@ function cashback_plugin_uninstall(): void
         // Trigger/event status flags
         'cashback_triggers_active',
         'cashback_events_active',
+        // API sync results
+        'cashback_last_sync_result',
     ];
 
     foreach ($options as $option) {
@@ -175,6 +177,14 @@ function cashback_plugin_uninstall(): void
     // Delete affiliate network and product params post_meta from all products
     $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->postmeta} WHERE meta_key = %s", '_affiliate_network_id'));
     $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->postmeta} WHERE meta_key = %s", '_affiliate_product_params'));
+    $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->postmeta} WHERE meta_key = %s", '_offer_id'));
+
+    // Delete campaign auto-deactivation post_meta
+    $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->postmeta} WHERE meta_key = %s", '_cashback_auto_deactivated'));
+    $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->postmeta} WHERE meta_key = %s", '_cashback_deactivation_reason'));
+    $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->postmeta} WHERE meta_key = %s", '_cashback_deactivated_at'));
+    $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->postmeta} WHERE meta_key = %s", '_cashback_deactivated_network'));
+    $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->postmeta} WHERE meta_key = %s", '_cashback_admin_override'));
     // Clean up old affiliate param meta (if any remain from pre-2.0)
     $like_key = $wpdb->esc_like('_affiliate_param_') . '%' . $wpdb->esc_like('_key');
     $like_val = $wpdb->esc_like('_affiliate_param_') . '%' . $wpdb->esc_like('_value');
@@ -206,6 +216,12 @@ function cashback_plugin_uninstall(): void
     $wpdb->query($wpdb->prepare(
         "DELETE FROM {$wpdb->options} WHERE " . implode(' OR ', $where_parts),
         ...$values
+    ));
+
+    // Delete campaign status options (cashback_campaign_status_*)
+    $wpdb->query($wpdb->prepare(
+        "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s",
+        $wpdb->esc_like('cashback_campaign_status_') . '%'
     ));
 
     // Delete encryption key file
