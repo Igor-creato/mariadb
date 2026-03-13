@@ -42,6 +42,14 @@ abstract class Cashback_Network_Adapter_Base implements Cashback_Network_Adapter
 
     /**
      * {@inheritdoc}
+     */
+    public function invalidate_token(array $credentials): void
+    {
+        $this->token_cache = [];
+    }
+
+    /**
+     * {@inheritdoc}
      *
      * Дефолтная реализация — возвращает ошибку.
      * Адаптеры, поддерживающие проверку кампаний, переопределяют этот метод.

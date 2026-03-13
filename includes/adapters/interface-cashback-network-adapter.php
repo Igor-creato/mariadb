@@ -89,6 +89,16 @@ interface Cashback_Network_Adapter_Interface
     public function get_default_status_map(): array;
 
     /**
+     * Инвалидировать закешированный OAuth2/API токен
+     *
+     * Вызывается при обновлении credentials/scope, чтобы следующий запрос
+     * получил новый токен с актуальными параметрами.
+     *
+     * @param array $credentials Расшифрованные credentials (для вычисления cache key)
+     */
+    public function invalidate_token(array $credentials): void;
+
+    /**
      * Последняя ошибка получения токена (для UI)
      */
     public function get_last_token_error(): string;

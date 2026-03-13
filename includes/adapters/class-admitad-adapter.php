@@ -41,12 +41,15 @@ class Cashback_Admitad_Adapter extends Cashback_Network_Adapter_Base
      *
      * Admitad OAuth2: Basic Auth header + client_credentials grant.
      * Кеширование в transient + runtime cache.
+     *
+     * Один токен с полным набором scope (например "statistics advcampaigns")
+     * работает для всех endpoint'ов.
      */
     public function get_token(array $credentials, array $network_config): ?string
     {
         $client_id     = $credentials['client_id'] ?? '';
         $client_secret = $credentials['client_secret'] ?? '';
-        $scope         = $credentials['scope'] ?? 'statistics advcampaigns advcampaigns_for_website';
+        $scope         = $credentials['scope'] ?? 'statistics advcampaigns';
 
         if (empty($client_id) || empty($client_secret)) {
             $this->last_token_error = 'Admitad credentials incomplete (client_id или client_secret пустые)';
@@ -88,7 +91,6 @@ class Cashback_Admitad_Adapter extends Cashback_Network_Adapter_Base
         $body = json_decode(wp_remote_retrieve_body($response), true);
 
         if ($code !== 200 || empty($body['access_token'])) {
-            // Санитизация: удаляем чувствительные данные перед логированием
             $safe_body = $body;
             if (is_array($safe_body)) {
                 unset($safe_body['access_token'], $safe_body['refresh_token'], $safe_body['client_secret']);
@@ -106,6 +108,19 @@ class Cashback_Admitad_Adapter extends Cashback_Network_Adapter_Base
         $this->token_cache[$cache_key] = $token;
 
         return $token;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function invalidate_token(array $credentials): void
+    {
+        $client_id = $credentials['client_id'] ?? '';
+        if ($client_id !== '') {
+            $cache_key = 'cashback_admitad_token_' . md5($client_id);
+            delete_transient($cache_key);
+            unset($this->token_cache[$cache_key]);
+        }
     }
 
     /**
@@ -174,15 +189,24 @@ class Cashback_Admitad_Adapter extends Cashback_Network_Adapter_Base
 
         // На 401 — сбрасываем кеш токена и повторяем один раз
         if ($code === 401 && empty($params['_retry_after_401'])) {
-            $client_id = $credentials['client_id'] ?? '';
-            $cache_key = 'cashback_admitad_token_' . md5($client_id);
-            delete_transient($cache_key);
-            unset($this->token_cache[$cache_key]);
+            $this->invalidate_token($credentials);
 
             error_log('Cashback Admitad: 401 on actions endpoint, invalidating token and retrying');
 
             $params['_retry_after_401'] = true;
             return $this->fetch_actions($credentials, $params, $network_config);
+        }
+
+        // 403 insufficient_scope — токен не имеет нужного scope, обновляем
+        if ($code === 403 && empty($params['_retry_after_403'])) {
+            if (str_contains(wp_remote_retrieve_body($response), 'insufficient_scope')) {
+                $this->invalidate_token($credentials);
+
+                error_log('Cashback Admitad: 403 insufficient_scope on actions, invalidating token and retrying');
+
+                $params['_retry_after_403'] = true;
+                return $this->fetch_actions($credentials, $params, $network_config);
+            }
         }
 
         if ($code !== 200) {
@@ -249,38 +273,26 @@ class Cashback_Admitad_Adapter extends Cashback_Network_Adapter_Base
     /**
      * {@inheritdoc}
      *
-     * Admitad: GET /advcampaigns/website/{w_id}/?limit=500
-     * Используется endpoint для конкретной площадки, т.к. только он возвращает connection_status.
-     * Кампания активна при status=active AND connection_status IN (active, pending).
-     * pending = заявка на модерации, не является основанием для деактивации товара.
-     *
-     * Требует scope 'advcampaigns_for_website' в OAuth2 credentials.
+     * Admitad: GET /advcampaigns/?limit=500
+     * Требует scope 'advcampaigns' в OAuth2 credentials (через пробел с другими scope).
+     * Кампания активна при status=active.
      */
     public function fetch_campaigns(array $credentials, array $network_config): array
     {
         $auth_headers = $this->build_auth_headers($credentials, $network_config);
         if (!$auth_headers) {
-            return ['success' => false, 'campaigns' => [], 'error' => 'Failed to authenticate with Admitad'];
+            return ['success' => false, 'campaigns' => [], 'error' => 'Не удалось получить токен Admitad'];
         }
 
-        $base_url   = rtrim($network_config['api_base_url'] ?? 'https://api.admitad.com', '/');
-        $website_id = $network_config['api_website_id'] ?? '';
-
-        if ($website_id === '') {
-            // Fallback: общий endpoint без connection_status
-            $url = $base_url . '/advcampaigns/';
-            $has_connection_status = false;
-        } else {
-            $url = $base_url . '/advcampaigns/website/' . rawurlencode($website_id) . '/';
-            $has_connection_status = true;
-        }
+        $base_url = rtrim($network_config['api_base_url'] ?? 'https://api.admitad.com', '/');
+        $url      = $base_url . '/advcampaigns/';
 
         $query = ['limit' => 500, 'offset' => 0];
 
         $all_campaigns = [];
         $page          = 0;
         $max_pages     = 20;
-        $retried_401   = false;
+        $retried       = false;
 
         do {
             $query['offset'] = $page * 500;
@@ -299,27 +311,29 @@ class Cashback_Admitad_Adapter extends Cashback_Network_Adapter_Base
             $code = wp_remote_retrieve_response_code($response);
 
             // 401 → сбрасываем токен и повторяем один раз
-            if ($code === 401 && !$retried_401) {
-                $retried_401 = true;
-                $client_id = $credentials['client_id'] ?? '';
-                $cache_key = 'cashback_admitad_token_' . md5($client_id);
-                delete_transient($cache_key);
-                unset($this->token_cache[$cache_key]);
+            if ($code === 401 && !$retried) {
+                $retried = true;
+                $this->invalidate_token($credentials);
 
                 $auth_headers = $this->build_auth_headers($credentials, $network_config);
                 if (!$auth_headers) {
                     return ['success' => false, 'campaigns' => $all_campaigns, 'error' => 'Token refresh failed'];
                 }
-                continue; // повторяем ту же страницу
+                continue;
             }
 
-            // 403 insufficient_scope на /advcampaigns/website/{id}/ → fallback на /advcampaigns/
-            if ($code === 403 && $has_connection_status && $page === 0) {
-                $raw = wp_remote_retrieve_body($response);
-                if (str_contains($raw, 'insufficient_scope')) {
-                    error_log('Cashback Admitad: insufficient_scope for /advcampaigns/website/, falling back to /advcampaigns/');
-                    $url = $base_url . '/advcampaigns/';
-                    $has_connection_status = false;
+            // 403 insufficient_scope → токен не имеет нужного scope, обновляем
+            if ($code === 403 && !$retried) {
+                if (str_contains(wp_remote_retrieve_body($response), 'insufficient_scope')) {
+                    $retried = true;
+                    $this->invalidate_token($credentials);
+
+                    error_log('Cashback Admitad: 403 insufficient_scope on advcampaigns, invalidating token and retrying');
+
+                    $auth_headers = $this->build_auth_headers($credentials, $network_config);
+                    if (!$auth_headers) {
+                        return ['success' => false, 'campaigns' => $all_campaigns, 'error' => 'Token refresh failed after 403 insufficient_scope'];
+                    }
                     continue;
                 }
             }
@@ -337,17 +351,14 @@ class Cashback_Admitad_Adapter extends Cashback_Network_Adapter_Base
             $results = $body['results'] ?? [];
 
             foreach ($results as $campaign) {
-                $status     = strtolower((string) ($campaign['status'] ?? ''));
-                $connection = strtolower((string) ($campaign['connection_status'] ?? ''));
+                $status = strtolower((string) ($campaign['status'] ?? ''));
 
                 $all_campaigns[] = [
                     'id'                => (string) ($campaign['id'] ?? ''),
                     'name'              => (string) ($campaign['name'] ?? ''),
-                    'is_active'         => $has_connection_status
-                        ? ($status === 'active' && in_array($connection, ['active', 'pending'], true))
-                        : ($status === 'active'),
+                    'is_active'         => ($status === 'active'),
                     'status'            => $status,
-                    'connection_status' => $connection,
+                    'connection_status' => '',
                 ];
             }
 

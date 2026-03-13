@@ -317,8 +317,8 @@ class Cashback_Admin_API_Validation
                                 <input type="text" class="regular-text api-credential"
                                     name="scope"
                                     value="<?php echo esc_attr($saved_scope); ?>"
-                                    placeholder="statistics advcampaigns_for_website">
-                                <p class="description">Admitad: <code>statistics advcampaigns_for_website</code>. Через пробел.</p>
+                                    placeholder="statistics advcampaigns">
+                                <p class="description">Admitad: <code>statistics advcampaigns</code>. Все scope через пробел в одном токене.</p>
                             </td>
                         </tr>
                         <tr class="auth-field auth-api-key" <?php if ($auth_type !== 'api_key') echo 'style="display:none"'; ?>>
@@ -840,6 +840,18 @@ class Cashback_Admin_API_Validation
 
             if (!$saved) {
                 wp_send_json_error(['message' => 'Настройки сохранены, но credentials не удалось зашифровать. Проверьте CB_ENCRYPTION_KEY.']);
+            }
+
+            // Инвалидируем кеш токена, чтобы новый scope/credentials вступили в силу
+            $slug = $wpdb->get_var($wpdb->prepare(
+                "SELECT slug FROM {$wpdb->prefix}cashback_affiliate_networks WHERE id = %d",
+                $network_id
+            ));
+            if ($slug) {
+                $adapter = $client->get_adapter($slug);
+                if ($adapter) {
+                    $adapter->invalidate_token($existing);
+                }
             }
         }
 
