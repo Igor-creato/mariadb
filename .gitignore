@@ -50,3 +50,6 @@ Desktop.ini
 # WordPress
 wp-config.php
 .htaccess
+
+# Test directory (development only, not for production)
+/development/test/

@@ -101,7 +101,8 @@ class Cashback_Encryption
     private static function decrypt_gcm(string $encoded, string $key): string
     {
         $data = base64_decode($encoded, true);
-        $min_length = self::GCM_IV_LENGTH + self::GCM_TAG_LENGTH + 1;
+        // Минимум: 12 байт IV + 16 байт auth tag. Ciphertext может быть пустым (пустая строка).
+        $min_length = self::GCM_IV_LENGTH + self::GCM_TAG_LENGTH;
 
         if ($data === false || strlen($data) < $min_length) {
             throw new \RuntimeException('Decryption failed: invalid data.');

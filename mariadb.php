@@ -1171,9 +1171,9 @@ class Mariadb_Plugin
      */
     public static function generate_reference_id(): string
     {
-        // 30 символов: цифры 2-9, буквы A-Z без O, I, L
+        // 31 символ: цифры 2-9 (8) + буквы A-Z без O, I, L (23) = 31
         $charset = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
-        $charset_len = 30;
+        $charset_len = 31;
         $id_length = 8;
 
         $random_bytes = random_bytes($id_length);
