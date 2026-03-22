@@ -53,3 +53,5 @@ wp-config.php
 
 # Test directory (development only, not for production)
 /development/test/
+/.scannerwork/
+sonar-project.properties

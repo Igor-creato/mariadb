@@ -5,15 +5,14 @@
  * Использует crypto.randomUUID() если доступен, иначе fallback на Math.random().
  */
 function generateIdempotencyKey() {
+  // crypto.randomUUID() поддерживается во всех современных браузерах
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
   }
-  // Fallback: manual UUID v4
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
-    var r = (Math.random() * 16) | 0;
-    var v = c === 'x' ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
+  // Безопасный fallback через getRandomValues
+  return ([1e7] + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, (c) =>
+    (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16),
+  );
 }
 
 jQuery(document).ready(function ($) {
@@ -110,9 +109,7 @@ jQuery(document).ready(function ($) {
 
           // Если сервер указал показать форму настроек (платёжная система или банк неактивны)
           var isFormError =
-            typeof response.data === 'object' &&
-            response.data !== null &&
-            response.data.show_form;
+            typeof response.data === 'object' && response.data !== null && response.data.show_form;
 
           if (isFormError) {
             // Подсвечиваем вкладку настроек красным
@@ -342,7 +339,9 @@ jQuery(document).ready(function ($) {
       $(this).val(formatted);
 
       var spacesBeforeOld = (oldVal.substring(0, cursorPos).match(/ /g) || []).length;
-      var spacesBeforeNew = (formatted.substring(0, cursorPos + (formatted.length - oldVal.length)).match(/ /g) || []).length;
+      var spacesBeforeNew = (
+        formatted.substring(0, cursorPos + (formatted.length - oldVal.length)).match(/ /g) || []
+      ).length;
       var newPos = cursorPos + (spacesBeforeNew - spacesBeforeOld);
       this.setSelectionRange(newPos, newPos);
     }
@@ -727,20 +726,14 @@ jQuery(document).ready(function ($) {
       var phoneError = validatePhoneNumber(payoutAccount);
       if (phoneError) {
         $('#payout_account').addClass('input--error');
-        $('#payout_settings_message')
-          .removeClass('success')
-          .addClass('error')
-          .text(phoneError);
+        $('#payout_settings_message').removeClass('success').addClass('error').text(phoneError);
         return;
       }
     } else if (methodSlug === 'mir') {
       var cardError = validateMirCard(payoutAccount);
       if (cardError) {
         $('#payout_account').addClass('input--error');
-        $('#payout_settings_message')
-          .removeClass('success')
-          .addClass('error')
-          .text(cardError);
+        $('#payout_settings_message').removeClass('success').addClass('error').text(cardError);
         return;
       }
     }
