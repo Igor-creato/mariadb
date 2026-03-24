@@ -351,6 +351,9 @@ class CashbackPlugin
         // --- REST API для браузерного расширения ---
         $this->require_file('includes/class-cashback-rest-api.php');
 
+        // Шорткоды (доступны на фронтенде и в превью редактора)
+        $this->require_file('includes/class-cashback-shortcodes.php');
+
         // Admin-only файлы (is_admin() = true для admin pages, admin-ajax.php, REST через admin)
         if (is_admin()) {
             $this->require_file('admin/traits/AdminPaginationTrait.php');
@@ -475,6 +478,11 @@ class CashbackPlugin
         // --- REST API для браузерного расширения ---
         if (class_exists('Cashback_REST_API')) {
             Cashback_REST_API::get_instance();
+        }
+
+        // Шорткоды
+        if (class_exists('Cashback_Shortcodes')) {
+            Cashback_Shortcodes::get_instance();
         }
     }
 

@@ -29,6 +29,7 @@
 - ✅ Система поддержки с тикетами и вложениями файлов
 - ✅ Мониторинг целостности данных
 - ✅ Аудит-лог критических операций с защитой от IP spoofing
+- ✅ Шорткод `[cashback_balance]` для вывода баланса в любом месте сайта
 
 ### Совместимость WooCommerce
 
@@ -81,8 +82,10 @@ CashbackPlugin (загрузчик)
 │   │   └── API-клиент CPA-сетей (Admitad, EPN), OAuth2, шифрованные credentials
 │   ├── class-cashback-api-migration.php (Cashback_API_Migration)
 │   │   └── Миграции для таблиц validation_checkpoints и sync_log
-│   └── class-cashback-api-cron.php (Cashback_API_Cron)
-│       └── Фоновая синхронизация статусов каждые 2 часа
+│   ├── class-cashback-api-cron.php (Cashback_API_Cron)
+│   │   └── Фоновая синхронизация статусов каждые 2 часа
+│   └── class-cashback-shortcodes.php (Cashback_Shortcodes)
+│       └── Шорткод [cashback_balance] для вывода баланса пользователя
 │
 ├── admin/
 │   ├── payout-methods.php (Cashback_Payout_Methods_Admin)
@@ -231,6 +234,7 @@ uninstall.php → cashback_plugin_uninstall()
 | [class-cashback-api-client.php](includes/class-cashback-api-client.php) | `Cashback_API_Client` | API-клиент CPA-сетей (Admitad, EPN), OAuth2 |
 | [class-cashback-api-migration.php](includes/class-cashback-api-migration.php) | `Cashback_API_Migration` | Миграции БД для API валидации |
 | [class-cashback-api-cron.php](includes/class-cashback-api-cron.php) | `Cashback_API_Cron` | Фоновая синхронизация (каждые 2 часа) |
+| [class-cashback-shortcodes.php](includes/class-cashback-shortcodes.php) | `Cashback_Shortcodes` | Шорткод `[cashback_balance]` |
 
 ### Папка partner/
 
@@ -824,10 +828,11 @@ antifraud/class-fraud-db.php, class-fraud-settings.php
 antifraud/class-fraud-collector.php, class-fraud-detector.php, class-fraud-admin.php
 includes/class-cashback-api-client.php, class-cashback-api-migration.php
 includes/class-cashback-api-cron.php
+includes/class-cashback-shortcodes.php
 admin/class-cashback-admin-api-validation.php
 ```
 
-#### initialize_components() — 10 экземпляров
+#### initialize_components() — 11 экземпляров
 
 ```php
 Mariadb_Plugin::get_instance()
@@ -840,6 +845,7 @@ Cashback_Fraud_Collector::get_instance()
 new Cashback_Fraud_Admin()              // только is_admin()
 Cashback_Admin_API_Validation::get_instance()  // только is_admin()
 Cashback_API_Cron::init()
+Cashback_Shortcodes::get_instance()
 ```
 
 ---
@@ -1403,6 +1409,12 @@ declined ───→ (финальный)
 | `woocommerce_loop_add_to_cart_link` | wc-affiliate-url-params.php | Добавление data-атрибутов к ссылкам |
 | `cron_schedules` | class-cashback-api-cron.php | Регистрация 2-часового интервала |
 
+#### Shortcodes
+
+| Шорткод | Файл | Назначение |
+|---------|------|-----------|
+| `cashback_balance` | class-cashback-shortcodes.php | Баланс авторизованного пользователя |
+
 ### WooCommerce endpoints
 
 | Endpoint | Класс | URL |
@@ -1473,6 +1485,82 @@ declined ───→ (финальный)
 | `cashback_fraud_detection_cron` | hourly | class-fraud-detector.php | 7 антифрод-проверок |
 | `cashback_fraud_cleanup_cron` | daily | class-fraud-db.php | Очистка старых fingerprints |
 | `cashback_api_sync_statuses` | every 2h | class-cashback-api-cron.php | Синхронизация с CPA-сетями |
+
+---
+
+## Шорткод баланса
+
+### Cashback_Shortcodes
+
+**Файл:** [includes/class-cashback-shortcodes.php](includes/class-cashback-shortcodes.php)
+**Паттерн:** Singleton
+
+Регистрирует шорткод `[cashback_balance]` для вывода кешбэк-баланса авторизованного пользователя в любом месте сайта (посты, страницы, виджеты, шаблоны темы).
+
+#### Атрибуты шорткода
+
+| Атрибут | Значения | По умолчанию | Описание |
+|---------|---------|-------------|----------|
+| `type` | `available`, `pending`, `paid`, `all` | `available` | Тип отображаемого баланса |
+| `format` | `widget`, `number` | `widget` | `widget` — с подписью и `₽`, `number` — только цифра |
+| `guest` | `hide`, `login_link`, `text` | `hide` | Что показывать незалогиненным пользователям |
+| `decimals` | целое число | `2` | Количество знаков после запятой |
+
+#### Примеры использования
+
+```
+[cashback_balance]
+```
+Доступный баланс: `Баланс: 1 234,56 ₽`
+
+```
+[cashback_balance type="all"]
+```
+Блок со всеми тремя строками: доступный / в обработке / выплачено
+
+```
+[cashback_balance type="pending"]
+[cashback_balance type="paid"]
+```
+Отдельный тип баланса
+
+```
+[cashback_balance format="number"]
+```
+Только число для встройки в текст: `1 234,56`
+
+```
+[cashback_balance guest="login_link"]
+[cashback_balance guest="text"]
+```
+Для незалогиненных: ссылка на страницу входа / текст «Доступно после авторизации»
+
+```
+[cashback_balance type="available" decimals="0"]
+```
+Без копеек
+
+#### Использование в PHP
+
+```php
+echo do_shortcode('[cashback_balance type="all"]');
+```
+
+#### CSS-классы
+
+| Класс | Элемент |
+|-------|---------|
+| `.cashback-balance` | Обёртка inline-варианта (один тип) |
+| `.cashback-balance--available/pending/paid` | Модификатор типа |
+| `.cashback-balance__label` | Подпись |
+| `.cashback-balance__amount` | Сумма |
+| `.cashback-balance-widget` | Обёртка `type="all"` |
+| `.cashback-balance-widget__row` | Строка виджета |
+| `.cashback-balance-widget__row--available/pending/paid` | Модификатор строки |
+| `.cashback-balance-widget__label` | Подпись строки |
+| `.cashback-balance-widget__amount` | Сумма строки |
+| `.cashback-balance__login-link` | Ссылка входа для гостей |
+| `.cashback-balance__guest` | Текст для гостей |
 
 ---
 
