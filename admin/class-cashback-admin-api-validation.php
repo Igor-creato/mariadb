@@ -403,6 +403,77 @@ class Cashback_Admin_API_Validation
                                 <p class="description">Преобразование статуса заказа из CPA-сети в нашу систему. Допустимые значения: waiting / hold / completed / declined</p>
                             </td>
                         </tr>
+                        <tr>
+                            <th>Маппинг полей API</th>
+                            <td>
+                                <input type="hidden" class="api-field" name="api_field_map"
+                                    value="<?php echo esc_attr($network['api_field_map'] ?? ''); ?>">
+
+                                <div class="field-map-header">
+                                    <span class="field-map-col-label">Поле в API сети</span>
+                                    <span class="field-map-arrow-spacer"></span>
+                                    <span class="field-map-col-label">Поле в нашей системе</span>
+                                </div>
+                                <div class="field-map-editor" data-network-id="<?php echo esc_attr($network['id']); ?>">
+                                    <?php
+                                    $field_map = json_decode($network['api_field_map'] ?? '', true);
+                                    if (!is_array($field_map)) {
+                                        $field_map = [];
+                                    }
+                                    $local_columns = [
+                                        'comission'   => 'comission (комиссия)',
+                                        'sum_order'   => 'sum_order (сумма заказа)',
+                                        'uniq_id'     => 'uniq_id (ID действия)',
+                                        'order_number' => 'order_number (номер заказа)',
+                                        'offer_id'    => 'offer_id (ID оффера)',
+                                        'offer_name'  => 'offer_name (название оффера)',
+                                        'currency'    => 'currency (валюта)',
+                                        'action_date' => 'action_date (дата покупки)',
+                                        'click_time'  => 'click_time (время клика)',
+                                        'action_type' => 'action_type (тип действия)',
+                                        'website_id'  => 'website_id (ID площадки)',
+                                        'funds_ready' => 'funds_ready (готовность к выплате)',
+                                    ];
+                                    $has_rows = false;
+                                    foreach ($field_map as $api_key => $local_col) :
+                                        $has_rows = true;
+                                    ?>
+                                    <div class="field-map-row">
+                                        <input type="text" class="field-map-api regular-text"
+                                               placeholder="поле API" value="<?php echo esc_attr($api_key); ?>">
+                                        <span class="field-map-arrow">→</span>
+                                        <select class="field-map-local">
+                                            <?php foreach ($local_columns as $col_val => $col_label) : ?>
+                                            <option value="<?php echo esc_attr($col_val); ?>"<?php selected($local_col, $col_val); ?>><?php echo esc_html($col_label); ?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                        <button type="button" class="field-map-remove button-link">
+                                            <span class="dashicons dashicons-no-alt" style="color:#dc3232;"></span>
+                                        </button>
+                                    </div>
+                                    <?php endforeach; ?>
+                                    <?php if (!$has_rows) : ?>
+                                    <div class="field-map-row">
+                                        <input type="text" class="field-map-api regular-text" placeholder="поле API" value="">
+                                        <span class="field-map-arrow">→</span>
+                                        <select class="field-map-local">
+                                            <?php foreach ($local_columns as $col_val => $col_label) : ?>
+                                            <option value="<?php echo esc_attr($col_val); ?>"><?php echo esc_html($col_label); ?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                        <button type="button" class="field-map-remove button-link">
+                                            <span class="dashicons dashicons-no-alt" style="color:#dc3232;"></span>
+                                        </button>
+                                    </div>
+                                    <?php endif; ?>
+                                </div>
+
+                                <button type="button" class="button field-map-add-btn" style="margin-top:8px;">
+                                    + Добавить поле
+                                </button>
+                                <p class="description">Маппинг полей из нормализованного ответа API в колонки таблицы транзакций. Например: <code>payment → comission</code>, <code>cart → sum_order</code></p>
+                            </td>
+                        </tr>
                     </table>
 
                     <p>
@@ -796,6 +867,16 @@ class Cashback_Admin_API_Validation
             $fields['api_status_map'] = wp_json_encode($decoded);
         }
 
+        // Валидация маппинга полей (должен быть валидный JSON)
+        $field_map_raw = wp_unslash($_POST['api_field_map'] ?? '');
+        if (!empty($field_map_raw)) {
+            $decoded_fm = json_decode($field_map_raw, true);
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                wp_send_json_error(['message' => 'Маппинг полей: невалидный JSON — ' . json_last_error_msg()]);
+            }
+            $fields['api_field_map'] = wp_json_encode($decoded_fm);
+        }
+
         $wpdb->update(
             $wpdb->prefix . 'cashback_affiliate_networks',
             $fields,
@@ -1087,6 +1168,7 @@ class Cashback_Admin_API_Validation
         $click_time  = sanitize_text_field($_POST['click_time'] ?? '');
         $action_type = sanitize_text_field($_POST['action_type'] ?? '');
         $website_id  = sanitize_text_field($_POST['website_id'] ?? '');
+        $funds_ready = (int) ($_POST['funds_ready'] ?? 0);
 
         if (($user_id === '') || empty($network) || empty($action_id)) {
             wp_send_json_error(['message' => 'Обязательные поля: user_id, network, action_id']);
@@ -1142,6 +1224,7 @@ class Cashback_Admin_API_Validation
             'website_id'      => $website_id !== '' ? (int) $website_id : null,
             'action_type'     => $action_type ?: null,
             'api_verified'    => 1,
+            'funds_ready'     => $funds_ready,
             'idempotency_key' => $idempotency_key,
         ];
 
@@ -1162,6 +1245,7 @@ class Cashback_Admin_API_Validation
             '%d',  // website_id
             '%s',  // action_type
             '%d',  // api_verified
+            '%d',  // funds_ready
             '%s',  // idempotency_key
         ];
 

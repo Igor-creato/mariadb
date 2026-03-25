@@ -364,6 +364,54 @@
     }
 
     // =========================================================================
+    // Визуальный редактор маппинга полей API
+    // =========================================================================
+
+    function fieldMapRowHtml() {
+        return '<div class="field-map-row">'
+            + '<input type="text" class="field-map-api regular-text" placeholder="поле API" value="">'
+            + '<span class="field-map-arrow">→</span>'
+            + '<select class="field-map-local">'
+            + '<option value="comission">comission (комиссия)</option>'
+            + '<option value="sum_order">sum_order (сумма заказа)</option>'
+            + '<option value="uniq_id">uniq_id (ID действия)</option>'
+            + '<option value="order_number">order_number (номер заказа)</option>'
+            + '<option value="offer_id">offer_id (ID оффера)</option>'
+            + '<option value="offer_name">offer_name (название оффера)</option>'
+            + '<option value="currency">currency (валюта)</option>'
+            + '<option value="action_date">action_date (дата покупки)</option>'
+            + '<option value="click_time">click_time (время клика)</option>'
+            + '<option value="action_type">action_type (тип действия)</option>'
+            + '<option value="website_id">website_id (ID площадки)</option>'
+            + '<option value="funds_ready">funds_ready (готовность к выплате)</option>'
+            + '</select>'
+            + '<button type="button" class="field-map-remove button-link">'
+            + '<span class="dashicons dashicons-no-alt" style="color:#dc3232;"></span>'
+            + '</button>'
+            + '</div>';
+    }
+
+    $(document).on('click', '.field-map-add-btn', function () {
+        $(this).prev('.field-map-editor').append(fieldMapRowHtml());
+    });
+
+    $(document).on('click', '.field-map-remove', function () {
+        $(this).closest('.field-map-row').remove();
+    });
+
+    function serializeFieldMap($card) {
+        const map = {};
+        $card.find('.field-map-row').each(function () {
+            const key = $(this).find('.field-map-api').val().trim();
+            const val = $(this).find('.field-map-local').val();
+            if (key) {
+                map[key] = val;
+            }
+        });
+        $card.find('input[name="api_field_map"]').val(JSON.stringify(map));
+    }
+
+    // =========================================================================
     // Сохранение настроек сети
     // =========================================================================
 
@@ -379,8 +427,9 @@
             network_id: networkId,
         };
 
-        // Сериализуем визуальный редактор маппинга в hidden input
+        // Сериализуем визуальные редакторы маппингов в hidden inputs
         serializeStatusMap($card);
+        serializeFieldMap($card);
 
         // Собираем все поля
         $card.find('.api-field').each(function () {
@@ -765,6 +814,7 @@
                 click_time: $btn.attr('data-click-time') || '',
                 action_type: $btn.attr('data-action-type') || '',
                 website_id: $btn.attr('data-website-id') || '',
+                funds_ready: $btn.attr('data-funds-ready') || '0',
             },
             success: function (response) {
                 if (response.success) {
@@ -909,7 +959,8 @@
             + ' data-currency="' + escHtml(m.currency || 'RUB') + '"'
             + ' data-click-time="' + escHtml(m.click_time || '') + '"'
             + ' data-action-type="' + escHtml(m.action_type || '') + '"'
-            + ' data-website-id="' + escHtml(m.website_id || '') + '">Добавить</button>'
+            + ' data-website-id="' + escHtml(m.website_id || '') + '"'
+            + ' data-funds-ready="' + (m.funds_ready || 0) + '">Добавить</button>'
             + '</td></tr>';
         return row;
     }

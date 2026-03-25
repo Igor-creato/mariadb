@@ -198,6 +198,9 @@ class Cashback_API_Migration
             'api_status_map' => "ALTER TABLE `{$table}` ADD COLUMN `api_status_map` text DEFAULT NULL
                 COMMENT 'JSON маппинг статусов сети → локальные' AFTER `api_click_field`",
 
+            'api_field_map' => "ALTER TABLE `{$table}` ADD COLUMN `api_field_map` text DEFAULT NULL
+                COMMENT 'JSON маппинг полей API → колонки таблицы транзакций' AFTER `api_status_map`",
+
             'api_actions_endpoint' => "ALTER TABLE `{$table}` ADD COLUMN `api_actions_endpoint` varchar(500) DEFAULT NULL
                 COMMENT 'Endpoint для получения действий (/statistics/actions/)' AFTER `api_status_map`",
 
@@ -298,6 +301,14 @@ class Cashback_API_Migration
                         'open'     => 'waiting',
                         'hold'     => 'waiting',
                     ]),
+                    'api_field_map'        => wp_json_encode([
+                        'payment'          => 'comission',
+                        'cart'             => 'sum_order',
+                        'action_id'        => 'uniq_id',
+                        'order_id'         => 'order_number',
+                        'advcampaign_id'   => 'offer_id',
+                        'advcampaign_name' => 'offer_name',
+                    ]),
                 ],
                 ['slug' => 'admitad']
             );
@@ -324,6 +335,14 @@ class Cashback_API_Migration
                         'rejected' => 'declined',
                         'canceled' => 'declined',
                         'hold'     => 'waiting',
+                    ]),
+                    'api_field_map'        => wp_json_encode([
+                        'payment'          => 'comission',
+                        'cart'             => 'sum_order',
+                        'action_id'        => 'uniq_id',
+                        'order_id'         => 'order_number',
+                        'advcampaign_id'   => 'offer_id',
+                        'advcampaign_name' => 'offer_name',
                     ]),
                 ],
                 ['slug' => 'epn']

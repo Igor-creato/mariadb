@@ -225,6 +225,9 @@ class Cashback_API_Client
             $network['status_map'] = $this->get_default_status_map($slug);
         }
 
+        // Парсим маппинг полей API → локальные колонки
+        $network['field_map'] = $this->get_field_map($network);
+
         return $network;
     }
 
@@ -262,6 +265,149 @@ class Cashback_API_Client
             'approved' => 'completed',
             'declined' => 'declined',
         ];
+    }
+
+    // =========================================================================
+    // Field map helpers
+    // =========================================================================
+
+    /**
+     * Дефолтный маппинг полей API → колонки транзакций
+     */
+    private const DEFAULT_FIELD_MAP = [
+        'payment'          => 'comission',
+        'cart'             => 'sum_order',
+        'action_id'        => 'uniq_id',
+        'order_id'         => 'order_number',
+        'advcampaign_id'   => 'offer_id',
+        'advcampaign_name' => 'offer_name',
+    ];
+
+    /**
+     * Допустимые колонки транзакций для маппинга (whitelist)
+     */
+    private const ALLOWED_LOCAL_COLUMNS = [
+        'comission', 'sum_order', 'uniq_id', 'order_number',
+        'offer_id', 'offer_name', 'currency', 'action_date',
+        'click_time', 'action_type', 'website_id', 'funds_ready',
+    ];
+
+    /**
+     * Получить маппинг полей из конфига сети (мерж с дефолтом)
+     *
+     * Пользовательский маппинг дополняет дефолтный:
+     * - Настроенные поля перезаписывают дефолтные (по локальной колонке)
+     * - Ненастроенные колонки берутся из DEFAULT_FIELD_MAP
+     * - Это гарантирует, что все обязательные колонки (uniq_id, comission и т.д.)
+     *   всегда имеют маппинг, даже если админ настроил только часть полей
+     *
+     * @param array $config Конфиг сети (строка из cashback_affiliate_networks)
+     * @return array<string, string> API field → local column
+     */
+    private function get_field_map(array $config): array
+    {
+        if (!empty($config['api_field_map'])) {
+            $raw = $config['api_field_map'];
+            $map = is_string($raw) ? json_decode($raw, true) : (is_array($raw) ? $raw : null);
+            if (is_array($map) && !empty($map)) {
+                // Фильтруем: допускаем только валидные локальные колонки
+                $filtered = [];
+                foreach ($map as $api_field => $local_col) {
+                    $api_field = trim((string) $api_field);
+                    $local_col = trim((string) $local_col);
+                    if ($api_field !== '' && in_array($local_col, self::ALLOWED_LOCAL_COLUMNS, true)) {
+                        $filtered[$api_field] = $local_col;
+                    }
+                }
+
+                if (!empty($filtered)) {
+                    // Мержим с дефолтом: для каждой дефолтной колонки,
+                    // если она не покрыта пользовательским маппингом — добавляем дефолт
+                    $covered_columns = array_values($filtered);
+                    foreach (self::DEFAULT_FIELD_MAP as $def_api => $def_col) {
+                        if (!in_array($def_col, $covered_columns, true)) {
+                            $filtered[$def_api] = $def_col;
+                        }
+                    }
+                    return $filtered;
+                }
+            }
+        }
+
+        return self::DEFAULT_FIELD_MAP;
+    }
+
+    /**
+     * Извлечь значения из API action по маппингу полей
+     *
+     * Возвращает массив ['local_column' => value, ...] на основе field_map.
+     * Для полей, отсутствующих в action, устанавливает дефолты.
+     *
+     * @param array $action  Нормализованный ответ API (после адаптера)
+     * @param array $field_map Маппинг API field → local column
+     * @return array<string, mixed> local_column → value
+     */
+    private function apply_field_map(array $action, array $field_map): array
+    {
+        $result = [];
+
+        foreach ($field_map as $api_field => $local_col) {
+            $value = $action[$api_field] ?? null;
+
+            // Приведение типов по колонке
+            switch ($local_col) {
+                case 'comission':
+                case 'sum_order':
+                    $result[$local_col] = (float) ($value ?? 0);
+                    break;
+                case 'offer_id':
+                case 'website_id':
+                    $result[$local_col] = ($value !== null && $value !== '') ? (int) $value : null;
+                    break;
+                default:
+                    $result[$local_col] = (string) ($value ?? '');
+                    break;
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * Обратный поиск: по имени локальной колонки найти имя поля в API
+     *
+     * @param string $local_column Колонка в таблице транзакций
+     * @param array  $field_map    Маппинг API field → local column
+     * @return string Имя поля API (или пустая строка)
+     */
+    private function api_field_for(string $local_column, array $field_map): string
+    {
+        $flipped = array_flip($field_map);
+        return (string) ($flipped[$local_column] ?? '');
+    }
+
+    /**
+     * Определить значение funds_ready из API-action.
+     *
+     * Порядок: field_map → адаптер (funds_ready) → Admitad (processed).
+     *
+     * @param array $action    Нормализованный action из API
+     * @param array $field_map Маппинг полей
+     * @return int 0 или 1
+     */
+    private function resolve_funds_ready(array $action, array $field_map): int
+    {
+        $fm_funds_ready = $this->api_field_for('funds_ready', $field_map);
+        if ($fm_funds_ready !== '') {
+            return !empty($action[$fm_funds_ready]) ? 1 : 0;
+        }
+        if (isset($action['funds_ready'])) {
+            return (int) $action['funds_ready'];
+        }
+        if (isset($action['processed'])) {
+            return empty($action['processed']) ? 0 : 1;
+        }
+        return 0;
     }
 
     // =========================================================================
@@ -657,6 +803,22 @@ class Cashback_API_Client
         // Маппинг статусов
         $status_map = $network['status_map'];
 
+        // Маппинг полей API → локальные колонки
+        $field_map = $network['field_map'];
+
+        // Имена полей API по маппингу (обратный поиск)
+        $fm_payment  = $this->api_field_for('comission', $field_map) ?: 'payment';
+        $fm_cart     = $this->api_field_for('sum_order', $field_map) ?: 'cart';
+        $fm_uniq_id  = $this->api_field_for('uniq_id', $field_map) ?: 'action_id';
+        $fm_order_id = $this->api_field_for('order_number', $field_map) ?: 'order_id';
+        $fm_offer_id = $this->api_field_for('offer_id', $field_map) ?: 'advcampaign_id';
+        $fm_offer_nm = $this->api_field_for('offer_name', $field_map) ?: 'advcampaign_name';
+        $fm_currency    = $this->api_field_for('currency', $field_map) ?: 'currency';
+        $fm_action_date = $this->api_field_for('action_date', $field_map) ?: 'action_date';
+        $fm_click_time  = $this->api_field_for('click_time', $field_map) ?: 'click_date';
+        $fm_action_type = $this->api_field_for('action_type', $field_map) ?: 'action_type';
+        $fm_website_id  = $this->api_field_for('website_id', $field_map) ?: 'website_id';
+
         // Имя поля для click_id в API (по умолчанию subid1)
         $click_field = $network['api_click_field'] ?? 'subid1';
 
@@ -687,8 +849,8 @@ class Cashback_API_Client
         foreach ($api_actions as $action) {
             $api_click_id = (string) ($action[$click_field] ?? '');
             $api_status   = strtolower($action['status'] ?? 'pending');
-            $api_payment  = (float) ($action['payment'] ?? 0);
-            $api_cart     = (float) ($action['cart'] ?? 0);
+            $api_payment  = (float) ($action[$fm_payment] ?? 0);
+            $api_cart     = (float) ($action[$fm_cart] ?? 0);
             $mapped_status = $status_map[$api_status] ?? 'waiting';
 
             // Подсчёт сумм по API
@@ -709,9 +871,9 @@ class Cashback_API_Client
                 $local_tx = $local_by_click_id[$api_click_id];
             }
 
-            // 2. Fallback: action_id → uniq_id (уникальный ID в рамках CPA-сети)
+            // 2. Fallback: uniq_id (уникальный ID в рамках CPA-сети)
             if (!$local_tx) {
-                $action_id_key = (string) ($action['action_id'] ?? '');
+                $action_id_key = (string) ($action[$fm_uniq_id] ?? '');
                 if ($action_id_key !== '' && isset($local_by_uniq_id[$action_id_key])) {
                     $local_tx = $local_by_uniq_id[$action_id_key];
                 }
@@ -719,19 +881,20 @@ class Cashback_API_Client
 
             if (!$local_tx) {
                 $missing_local[] = [
-                    'action_id'      => $action['action_id'] ?? '',
+                    'action_id'      => $action[$fm_uniq_id] ?? '',
                     'click_id'       => $api_click_id,
-                    'order_id'       => $action['order_id'] ?? '',
+                    'order_id'       => $action[$fm_order_id] ?? '',
                     'status'         => $api_status,
                     'payment'        => $api_payment,
                     'cart'           => $api_cart,
-                    'date'           => $action['action_date'] ?? '',
-                    'campaign'       => $action['advcampaign_name'] ?? '',
-                    'campaign_id'    => $action['advcampaign_id'] ?? '',
-                    'currency'       => $action['currency'] ?? 'RUB',
-                    'click_time'     => $action['click_date'] ?? $action['click_time'] ?? $action['closing_date'] ?? '',
-                    'action_type'    => $action['action_type'] ?? '',
-                    'website_id'     => $action['website_id'] ?? $action['website_name'] ?? $action['website'] ?? ($network['api_website_id'] ?? ''),
+                    'date'           => $action[$fm_action_date] ?? '',
+                    'campaign'       => $action[$fm_offer_nm] ?? '',
+                    'campaign_id'    => $action[$fm_offer_id] ?? '',
+                    'currency'       => $action[$fm_currency] ?? 'RUB',
+                    'click_time'     => $action[$fm_click_time] ?? $action['click_time'] ?? $action['closing_date'] ?? '',
+                    'action_type'    => $action[$fm_action_type] ?? '',
+                    'website_id'     => $action[$fm_website_id] ?? $action['website_name'] ?? $action['website'] ?? ($network['api_website_id'] ?? ''),
+                    'funds_ready'    => $this->resolve_funds_ready($action, $field_map),
                 ];
                 continue;
             }
@@ -799,8 +962,8 @@ class Cashback_API_Client
                     'status_mismatch'    => !$status_match,
                     'commission_mismatch' => !$commission_match,
                     'cart_mismatch'      => !$cart_match,
-                    'action_id'          => $action['action_id'] ?? '',
-                    'order_id'           => $action['order_id'] ?? '',
+                    'action_id'          => $action[$fm_uniq_id] ?? '',
+                    'order_id'           => $action[$fm_order_id] ?? '',
                 ];
 
                 // Авто-обновляем расхождения — синхронизируем локальные данные с API
@@ -817,6 +980,7 @@ class Cashback_API_Client
                     $network_slug,
                     $api_click_id,
                     $action,
+                    $field_map,
                     $dummy_updated,
                     $dummy_skipped,
                     $dummy_errors
@@ -1115,9 +1279,22 @@ class Cashback_API_Client
             ];
         }
 
-        // ─── Маппинг статусов ───
+        // ─── Маппинг статусов и полей ───
         $status_map = $network['status_map'];
         $click_field = $network['api_click_field'] ?? 'subid1';
+
+        // Маппинг полей API → локальные колонки (те же переменные что и в registered-блоке)
+        $fm_payment  = $this->api_field_for('comission', $field_map) ?: 'payment';
+        $fm_cart     = $this->api_field_for('sum_order', $field_map) ?: 'cart';
+        $fm_uniq_id  = $this->api_field_for('uniq_id', $field_map) ?: 'action_id';
+        $fm_order_id = $this->api_field_for('order_number', $field_map) ?: 'order_id';
+        $fm_offer_id = $this->api_field_for('offer_id', $field_map) ?: 'advcampaign_id';
+        $fm_offer_nm = $this->api_field_for('offer_name', $field_map) ?: 'advcampaign_name';
+        $fm_currency    = $this->api_field_for('currency', $field_map) ?: 'currency';
+        $fm_action_date = $this->api_field_for('action_date', $field_map) ?: 'action_date';
+        $fm_click_time  = $this->api_field_for('click_time', $field_map) ?: 'click_date';
+        $fm_action_type = $this->api_field_for('action_type', $field_map) ?: 'action_type';
+        $fm_website_id  = $this->api_field_for('website_id', $field_map) ?: 'website_id';
 
         // ─── Сравнение ───
         $matched       = [];
@@ -1133,8 +1310,8 @@ class Cashback_API_Client
         foreach ($api_actions as $action) {
             $api_click_id  = (string) ($action[$click_field] ?? '');
             $api_status    = strtolower($action['status'] ?? 'pending');
-            $api_payment   = (float) ($action['payment'] ?? 0);
-            $api_cart      = (float) ($action['cart'] ?? 0);
+            $api_payment   = (float) ($action[$fm_payment] ?? 0);
+            $api_cart      = (float) ($action[$fm_cart] ?? 0);
             $mapped_status = $status_map[$api_status] ?? 'waiting';
 
             // Подсчёт сумм по API
@@ -1154,9 +1331,9 @@ class Cashback_API_Client
                 $local_tx = $local_by_click_id[$api_click_id];
             }
 
-            // 2. Fallback: action_id → uniq_id (уникальный ID в рамках CPA-сети)
+            // 2. Fallback: uniq_id (уникальный ID в рамках CPA-сети)
             if (!$local_tx) {
-                $action_id_key = (string) ($action['action_id'] ?? '');
+                $action_id_key = (string) ($action[$fm_uniq_id] ?? '');
                 if ($action_id_key !== '' && isset($local_by_uniq_id[$action_id_key])) {
                     $local_tx = $local_by_uniq_id[$action_id_key];
                 }
@@ -1164,19 +1341,20 @@ class Cashback_API_Client
 
             if (!$local_tx) {
                 $missing_local[] = [
-                    'action_id'      => $action['action_id'] ?? '',
+                    'action_id'      => $action[$fm_uniq_id] ?? '',
                     'click_id'       => $api_click_id,
-                    'order_id'       => $action['order_id'] ?? '',
+                    'order_id'       => $action[$fm_order_id] ?? '',
                     'status'         => $api_status,
                     'payment'        => $api_payment,
                     'cart'           => $api_cart,
-                    'date'           => $action['action_date'] ?? '',
-                    'campaign'       => $action['advcampaign_name'] ?? '',
-                    'campaign_id'    => $action['advcampaign_id'] ?? '',
-                    'currency'       => $action['currency'] ?? 'RUB',
-                    'click_time'     => $action['click_date'] ?? $action['click_time'] ?? $action['closing_date'] ?? '',
-                    'action_type'    => $action['action_type'] ?? '',
-                    'website_id'     => $action['website_id'] ?? $action['website_name'] ?? $action['website'] ?? ($network['api_website_id'] ?? ''),
+                    'date'           => $action[$fm_action_date] ?? '',
+                    'campaign'       => $action[$fm_offer_nm] ?? '',
+                    'campaign_id'    => $action[$fm_offer_id] ?? '',
+                    'currency'       => $action[$fm_currency] ?? 'RUB',
+                    'click_time'     => $action[$fm_click_time] ?? $action['click_time'] ?? $action['closing_date'] ?? '',
+                    'action_type'    => $action[$fm_action_type] ?? '',
+                    'website_id'     => $action[$fm_website_id] ?? $action['website_name'] ?? $action['website'] ?? ($network['api_website_id'] ?? ''),
+                    'funds_ready'    => $this->resolve_funds_ready($action, $field_map),
                 ];
                 continue;
             }
@@ -1239,8 +1417,8 @@ class Cashback_API_Client
                     'status_mismatch'    => !$status_match,
                     'commission_mismatch' => !$commission_match,
                     'cart_mismatch'      => !$cart_match,
-                    'action_id'          => $action['action_id'] ?? '',
-                    'order_id'           => $action['order_id'] ?? '',
+                    'action_id'          => $action[$fm_uniq_id] ?? '',
+                    'order_id'           => $action[$fm_order_id] ?? '',
                 ];
 
                 // Авто-обновляем расхождения — синхронизируем локальные данные с API
@@ -1257,6 +1435,7 @@ class Cashback_API_Client
                     $network_slug,
                     $api_click_id,
                     $action,
+                    $field_map,
                     $dummy_updated,
                     $dummy_skipped,
                     $dummy_errors
@@ -1460,6 +1639,12 @@ class Cashback_API_Client
             $click_field  = $config['api_click_field'] ?? 'subid1';
             $network_name = $config['name'] ?? $slug;
 
+            // Маппинг полей API → локальные колонки
+            $field_map   = $config['field_map'];
+            $fm_payment  = $this->api_field_for('comission', $field_map) ?: 'payment';
+            $fm_cart     = $this->api_field_for('sum_order', $field_map) ?: 'cart';
+            $fm_uniq_id  = $this->api_field_for('uniq_id', $field_map) ?: 'action_id';
+
             // Собираем click_id и action_id из API-ответа
             $api_click_ids  = [];
             $api_action_ids = [];
@@ -1468,7 +1653,7 @@ class Cashback_API_Client
                 if ($cid !== '') {
                     $api_click_ids[] = $cid;
                 }
-                $aid = (string) ($action['action_id'] ?? '');
+                $aid = (string) ($action[$fm_uniq_id] ?? '');
                 if ($aid !== '') {
                     $api_action_ids[] = $aid;
                 }
@@ -1560,7 +1745,7 @@ class Cashback_API_Client
                 $cid = (string) ($action[$click_field] ?? '');
 
                 // Проверяем, найдётся ли action в одной из таблиц
-                $aid_check = (string) ($action['action_id'] ?? '');
+                $aid_check = (string) ($action[$fm_uniq_id] ?? '');
                 $would_match = ($cid !== '' && (isset($local_map_by_click[$cid]) || isset($unreg_map_by_click[$cid])))
                     || ($aid_check !== '' && (isset($local_map_by_uniq[$aid_check]) || isset($unreg_map_by_uniq[$aid_check])));
 
@@ -1596,8 +1781,8 @@ class Cashback_API_Client
                 $api_click_id  = (string) ($action[$click_field] ?? '');
                 $api_status    = strtolower($action['status'] ?? 'pending');
                 $mapped_status = $status_map[$api_status] ?? 'waiting';
-                $api_payment   = (float) ($action['payment'] ?? 0);
-                $api_cart      = (float) ($action['cart'] ?? 0);
+                $api_payment   = (float) ($action[$fm_payment] ?? 0);
+                $api_cart      = (float) ($action[$fm_cart] ?? 0);
 
                 // ─── Матчинг: cashback_transactions ───
                 $local = null;
@@ -1607,9 +1792,9 @@ class Cashback_API_Client
                     $local = $local_map_by_click[$api_click_id];
                 }
 
-                // 2. Fallback: action_id → uniq_id (уникальный ID в рамках CPA-сети)
+                // 2. Fallback: uniq_id (уникальный ID в рамках CPA-сети)
                 if (!$local) {
-                    $action_id_key = (string) ($action['action_id'] ?? '');
+                    $action_id_key = (string) ($action[$fm_uniq_id] ?? '');
                     if ($action_id_key !== '' && isset($local_map_by_uniq[$action_id_key])) {
                         $local = $local_map_by_uniq[$action_id_key];
                     }
@@ -1617,7 +1802,7 @@ class Cashback_API_Client
 
                 // ─── Если найдено в cashback_transactions — обновляем ───
                 if ($local) {
-                    $this->sync_update_local($wpdb, $this->transactions_table, $local, $mapped_status, $api_payment, $api_cart, $slug, $api_click_id, $action, $updated, $skipped, $update_errors);
+                    $this->sync_update_local($wpdb, $this->transactions_table, $local, $mapped_status, $api_payment, $api_cart, $slug, $api_click_id, $action, $field_map, $updated, $skipped, $update_errors);
                     continue;
                 }
 
@@ -1629,9 +1814,9 @@ class Cashback_API_Client
                     $unreg = $unreg_map_by_click[$api_click_id];
                 }
 
-                // 2. Fallback: action_id → uniq_id
+                // 2. Fallback: uniq_id
                 if (!$unreg) {
-                    $action_id_key = (string) ($action['action_id'] ?? '');
+                    $action_id_key = (string) ($action[$fm_uniq_id] ?? '');
                     if ($action_id_key !== '' && isset($unreg_map_by_uniq[$action_id_key])) {
                         $unreg = $unreg_map_by_uniq[$action_id_key];
                     }
@@ -1639,14 +1824,14 @@ class Cashback_API_Client
 
                 // ─── Если найдено в unregistered — обновляем ───
                 if ($unreg) {
-                    $this->sync_update_local($wpdb, $this->unregistered_table, $unreg, $mapped_status, $api_payment, $api_cart, $slug, $api_click_id, $action, $updated, $skipped, $update_errors);
+                    $this->sync_update_local($wpdb, $this->unregistered_table, $unreg, $mapped_status, $api_payment, $api_cart, $slug, $api_click_id, $action, $field_map, $updated, $skipped, $update_errors);
                     continue;
                 }
 
                 // ─── Guard: cross-table UNIQUE KEY check ───
                 // Защита от дубликатов для перенесённых транзакций (click_id=NULL случай):
                 // если батч-карты пропустили строку, последний шанс найти её по UNIQUE KEY (uniq_id, partner).
-                $action_id_guard = (string) ($action['action_id'] ?? '');
+                $action_id_guard = (string) ($action[$fm_uniq_id] ?? '');
                 if ($action_id_guard !== '') {
                     $transferred = $wpdb->get_row($wpdb->prepare(
                         "SELECT id, click_id, uniq_id, order_status, comission, sum_order, api_verified
@@ -1660,7 +1845,7 @@ class Cashback_API_Client
                     ), ARRAY_A);
 
                     if ($transferred) {
-                        $this->sync_update_local($wpdb, $this->transactions_table, $transferred, $mapped_status, $api_payment, $api_cart, $slug, $api_click_id, $action, $updated, $skipped, $update_errors);
+                        $this->sync_update_local($wpdb, $this->transactions_table, $transferred, $mapped_status, $api_payment, $api_cart, $slug, $api_click_id, $action, $field_map, $updated, $skipped, $update_errors);
                         continue;
                     }
                 }
@@ -1674,7 +1859,7 @@ class Cashback_API_Client
                     $this->log_sync_insert(
                         $slug,
                         $insert_result['insert_id'],
-                        (string) ($action['action_id'] ?? ''),
+                        (string) ($action[$fm_uniq_id] ?? ''),
                         $mapped_status,
                         $api_payment,
                         $insert_result['table_type']
@@ -1688,7 +1873,7 @@ class Cashback_API_Client
                         if (defined('WP_DEBUG') && WP_DEBUG) {
                             error_log(sprintf(
                                 '[Cashback Sync] Insert failed for action_id=%s: %s',
-                                $action['action_id'] ?? 'unknown',
+                                $action[$fm_uniq_id] ?? 'unknown',
                                 $insert_result['error']
                             ));
                         }
@@ -1752,6 +1937,7 @@ class Cashback_API_Client
         string $slug,
         string $api_click_id,
         array $action,
+        array $field_map,
         int &$updated,
         int &$skipped,
         int &$update_errors
@@ -1779,13 +1965,8 @@ class Cashback_API_Client
 
         $needs_verify = empty($local['api_verified']);
 
-        // funds_ready: EPN передаёт как 'funds_ready', Admitad — как 'processed' (1/0)
-        $api_funds_ready = 0;
-        if (isset($action['funds_ready'])) {
-            $api_funds_ready = (int) $action['funds_ready'];
-        } elseif (isset($action['processed'])) {
-            $api_funds_ready = empty($action['processed']) ? 0 : 1;
-        }
+        // funds_ready: определяется через маппинг, fallback — прямое чтение из адаптера
+        $api_funds_ready = $this->resolve_funds_ready($action, $field_map);
         $needs_funds_ready = ($api_funds_ready === 1 && empty($local['funds_ready']));
 
         if (!$status_changed && !$commission_changed && !$cart_changed && !$needs_verify && !$needs_funds_ready) {
@@ -1867,7 +2048,7 @@ class Cashback_API_Client
         $this->log_sync_event(
             $slug,
             (int) $local['id'],
-            $api_click_id ?: ($action['action_id'] ?? ''),
+            $api_click_id ?: ($local['uniq_id'] ?? ''),
             $local_status,
             $mapped_status,
             $api_payment
@@ -1939,27 +2120,35 @@ class Cashback_API_Client
         $api_status    = strtolower($action['status'] ?? 'pending');
         $mapped_status = $status_map[$api_status] ?? 'waiting';
 
-        // 5. Парсим даты
-        $action_date_mysql = self::parse_api_date((string) ($action['action_date'] ?? ''));
-        $click_time_raw    = (string) ($action['click_date'] ?? $action['click_time'] ?? $action['closing_date'] ?? '');
+        // 5. Извлекаем поля через маппинг
+        $field_map = $config['field_map'];
+        $mapped    = $this->apply_field_map($action, $field_map);
+
+        // 6. Парсим даты (через маппинг)
+        $fm_action_date = $this->api_field_for('action_date', $field_map) ?: 'action_date';
+        $fm_click_time  = $this->api_field_for('click_time', $field_map) ?: 'click_date';
+        $action_date_mysql = self::parse_api_date((string) ($action[$fm_action_date] ?? ''));
+        $click_time_raw    = (string) ($action[$fm_click_time] ?? $action['click_time'] ?? $action['closing_date'] ?? '');
         $click_time_mysql  = self::parse_api_date($click_time_raw);
 
-        // 6. Извлекаем поля
-        $action_id   = (string) ($action['action_id'] ?? '');
+        $action_id   = (string) ($mapped['uniq_id'] ?? '');
         $click_id    = (string) ($action[$click_field] ?? '');
-        $order_id    = (string) ($action['order_id'] ?? '');
-        $payment     = (float) ($action['payment'] ?? 0);
-        $cart        = (float) ($action['cart'] ?? 0);
-        $campaign    = (string) ($action['advcampaign_name'] ?? '');
-        $campaign_id = (string) ($action['advcampaign_id'] ?? '');
-        $currency    = (string) ($action['currency'] ?? 'RUB');
-        $action_type = (string) ($action['action_type'] ?? '');
-        $website_id  = (string) ($action['website_id'] ?? $action['website'] ?? ($config['api_website_id'] ?? ''));
+        $order_id    = (string) ($mapped['order_number'] ?? '');
+        $payment     = (float) ($mapped['comission'] ?? 0);
+        $cart        = (float) ($mapped['sum_order'] ?? 0);
+        $campaign    = (string) ($mapped['offer_name'] ?? '');
+        $campaign_id = $mapped['offer_id'] ?? null;
+        $currency    = (string) ($mapped['currency'] ?? $action['currency'] ?? 'RUB');
+        $action_type = (string) ($mapped['action_type'] ?? $action['action_type'] ?? '');
+        $website_id  = (string) ($mapped['website_id'] ?? $action['website_id'] ?? $action['website'] ?? ($config['api_website_id'] ?? ''));
 
         // 7. Валидация валюты (ISO 4217)
         if (!preg_match('/^[A-Z]{3}$/', $currency)) {
             $currency = 'RUB';
         }
+
+        // 7a. funds_ready: через маппинг, fallback — адаптер
+        $api_funds_ready = $this->resolve_funds_ready($action, $field_map);
 
         // 8. action_id и network_name обязательны (части UNIQUE KEY unique_uniq_partner)
         if ($action_id === '') {
@@ -1981,15 +2170,16 @@ class Cashback_API_Client
             'comission'       => $payment,
             'sum_order'       => $cart,
             'order_status'    => $mapped_status,
-            'offer_id'        => $campaign_id !== '' ? (int) $campaign_id : null,
+            'offer_id'        => ($campaign_id !== null && $campaign_id !== '' && $campaign_id !== 0) ? (int) $campaign_id : null,
             'offer_name'      => $campaign,
             'currency'        => $currency,
             'action_date'     => $action_date_mysql,
             'click_time'      => $click_time_mysql,
             'click_id'        => $click_id !== '' ? $click_id : null,
-            'website_id'      => $website_id !== '' ? (int) $website_id : null,
+            'website_id'      => ($website_id !== '' && $website_id !== '0') ? (int) $website_id : null,
             'action_type'     => $action_type !== '' ? $action_type : null,
             'api_verified'    => 1,
+            'funds_ready'     => $api_funds_ready,
             'idempotency_key' => $idempotency_key,
         ];
 
@@ -2010,6 +2200,7 @@ class Cashback_API_Client
             '%d',  // website_id
             '%s',  // action_type
             '%d',  // api_verified
+            '%d',  // funds_ready
             '%s',  // idempotency_key
         ];
 
@@ -2200,12 +2391,14 @@ class Cashback_API_Client
         $api_click_ids = [];
         $api_order_ids = [];
 
+        $fm_order_id_stale = $this->api_field_for('order_number', $config['field_map']) ?: 'order_id';
+
         foreach ($api_actions_list as $action) {
             $cid = (string) ($action[$click_field] ?? '');
             if ($cid !== '') {
                 $api_click_ids[$cid] = true;
             }
-            $oid = (string) ($action['order_id'] ?? '');
+            $oid = (string) ($action[$fm_order_id_stale] ?? '');
             if ($oid !== '') {
                 $api_order_ids[$oid] = true;
             }
