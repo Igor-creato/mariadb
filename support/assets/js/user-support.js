@@ -232,6 +232,52 @@
             });
         });
 
+        // ========= Скачивание вложения =========
+        $(document).on('click', '.support-download-btn', function() {
+            var btn = $(this);
+            var id = btn.data('id');
+            if (!id) { return; }
+
+            btn.prop('disabled', true);
+
+            var fd = new FormData();
+            fd.append('action', 'support_download_file');
+            fd.append('nonce', cashback_support.download_nonce);
+            fd.append('id', id);
+
+            fetch(cashback_support.ajax_url, {
+                method: 'POST',
+                body: fd,
+                credentials: 'same-origin'
+            }).then(function(response) {
+                if (!response.ok) {
+                    throw new Error('error');
+                }
+                var filename = 'file';
+                var cd = response.headers.get('Content-Disposition');
+                if (cd) {
+                    var m = cd.match(/filename\*?=(?:UTF-8'')?([^;"\r\n]+)|filename="([^"]+)"/i);
+                    if (m) { filename = decodeURIComponent(m[1] || m[2]); }
+                }
+                return response.blob().then(function(blob) {
+                    return { blob: blob, filename: filename };
+                });
+            }).then(function(data) {
+                var url = URL.createObjectURL(data.blob);
+                var a = document.createElement('a');
+                a.href = url;
+                a.download = data.filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(function() { URL.revokeObjectURL(url); }, 100);
+                btn.prop('disabled', false);
+            }).catch(function() {
+                showAlert('support-detail-alert', 'error', 'Ошибка при скачивании файла');
+                btn.prop('disabled', false);
+            });
+        });
+
         // ========= Закрытие тикета =========
         $(document).on('click', '#support-close-btn', function() {
             var btn = $(this);

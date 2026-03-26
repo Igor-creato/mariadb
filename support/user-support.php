@@ -902,14 +902,7 @@ class Cashback_User_Support
                 $size = size_format($att->file_size);
 
                 $attachments_html .= sprintf(
-                    '<form method="post" action="%s" style="display:inline;">'
-                    . '<input type="hidden" name="action" value="support_download_file">'
-                    . '<input type="hidden" name="nonce" value="%s">'
-                    . '<input type="hidden" name="id" value="%d">'
-                    . '<button type="submit" class="support-attachment-link" style="background:none;border:none;padding:0;cursor:pointer;">%s %s <span class="support-attachment-size">(%s)</span></button>'
-                    . '</form>',
-                    esc_url(admin_url('admin-ajax.php')),
-                    esc_attr(wp_create_nonce('support_download_file_nonce')),
+                    '<button type="button" class="support-attachment-link support-download-btn" data-id="%d" style="background:none;border:none;padding:0;cursor:pointer;">%s %s <span class="support-attachment-size">(%s)</span></button>',
                     (int) $att->id,
                     $icon,
                     esc_html($att->file_name),
