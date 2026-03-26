@@ -1534,14 +1534,14 @@ class Mariadb_Plugin
      * MySQL Event является fallback-механизмом (суточный запуск).
      * Идемпотентность: processed_at IS NULL гарантирует однократное начисление.
      */
-    public static function process_ready_transactions(): void
+    public static function process_ready_transactions(): bool
     {
         global $wpdb;
         $prefix = $wpdb->prefix;
 
         $lock = $wpdb->get_var("SELECT GET_LOCK('cashback_balance_php_lock', 0)");
         if ($lock != 1) {
-            return;
+            return false;
         }
 
         try {
@@ -1614,6 +1614,8 @@ class Mariadb_Plugin
         } finally {
             $wpdb->query("SELECT RELEASE_LOCK('cashback_balance_php_lock')");
         }
+
+        return true;
     }
 }
 

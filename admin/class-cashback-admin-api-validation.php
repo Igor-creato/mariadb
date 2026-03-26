@@ -989,6 +989,10 @@ class Cashback_Admin_API_Validation
 
         $result = Cashback_API_Cron::manual_sync();
 
+        if (!empty($result['locked'])) {
+            wp_send_json_error(['message' => 'Синхронизация уже выполняется. Попробуйте через несколько секунд.']);
+        }
+
         $this->log_audit('manual_sync', 0, $result);
 
         wp_send_json_success($result);

@@ -179,7 +179,15 @@ class Cashback_API_Cron
      */
     public static function manual_sync(): array
     {
-        self::run_sync();
+        if (get_transient('cb_api_sync_running')) {
+            return ['locked' => true];
+        }
+        set_transient('cb_api_sync_running', 1, 5 * MINUTE_IN_SECONDS);
+        try {
+            self::run_sync();
+        } finally {
+            delete_transient('cb_api_sync_running');
+        }
         return get_option('cashback_last_sync_result', []);
     }
 }
