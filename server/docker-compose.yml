@@ -1,11 +1,17 @@
+networks:
+  site_internal:
+    external: true
+
 services:
   cpa-mock:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: cpa-mock-server
+    networks:
+      - site_internal
     ports:
-      - '3000:3000'
+      - '127.0.0.1:3001:3000'
     volumes:
       # Данные (транзакции, credentials) сохраняются на хосте
       - ./data:/app/data
