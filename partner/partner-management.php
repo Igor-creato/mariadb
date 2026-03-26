@@ -442,6 +442,11 @@ class Cashback_Partner_Management_Admin
             return;
         }
 
+        // Читаем текущий статус активности до обновления
+        $old_is_active = (int) $wpdb->get_var(
+            $wpdb->prepare("SELECT is_active FROM {$this->table_name} WHERE id = %d", $id)
+        );
+
         // Обновляем запись в базе данных
         $result = $wpdb->update(
             $this->table_name,
@@ -462,14 +467,21 @@ class Cashback_Partner_Management_Admin
             return;
         }
 
+        // Синхронизируем статус публикации товаров при изменении активности сети
+        $products_affected = 0;
+        if ($old_is_active !== $is_active) {
+            $products_affected = $this->sync_products_visibility($id, $is_active);
+        }
+
         // Возвращаем обновленные данные
         wp_send_json_success([
-            'id' => $id,
-            'name' => $name,
-            'slug' => $slug,
-            'notes' => $notes,
-            'sort_order' => $sort_order,
-            'is_active' => $is_active,
+            'id'               => $id,
+            'name'             => $name,
+            'slug'             => $slug,
+            'notes'            => $notes,
+            'sort_order'       => $sort_order,
+            'is_active'        => $is_active,
+            'products_affected' => $products_affected,
         ]);
     }
 
@@ -717,6 +729,80 @@ class Cashback_Partner_Management_Admin
         }
 
         wp_send_json_success(['message' => 'Параметр удален.']);
+    }
+
+    /**
+     * Синхронизирует статус публикации товаров при изменении активности сети.
+     *
+     * При деактивации: переводит опубликованные товары в черновик и помечает мета
+     * _cashback_auto_unpublished = 1, чтобы при реактивации восстановить только их.
+     * При активации: публикует товары, помеченные флагом _cashback_auto_unpublished.
+     *
+     * @param int $network_id  ID партнёрской сети.
+     * @param int $is_active   Новое значение активности (1 — активна, 0 — неактивна).
+     * @return int Количество затронутых товаров.
+     */
+    private function sync_products_visibility(int $network_id, int $is_active): int
+    {
+        if ($is_active === 0) {
+            // Деактивация: снимаем с публикации все опубликованные товары сети
+            $products = get_posts([
+                'post_type'      => 'product',
+                'post_status'    => 'publish',
+                'posts_per_page' => -1,
+                'fields'         => 'ids',
+                'meta_query'     => [
+                    [
+                        'key'     => '_affiliate_network_id',
+                        'value'   => $network_id,
+                        'compare' => '=',
+                        'type'    => 'NUMERIC',
+                    ],
+                ],
+            ]);
+
+            foreach ($products as $product_id) {
+                update_post_meta($product_id, '_cashback_auto_unpublished', '1');
+                wp_update_post([
+                    'ID'          => $product_id,
+                    'post_status' => 'draft',
+                ]);
+            }
+
+            return count($products);
+        }
+
+        // Активация: публикуем только товары, снятые автоматически
+        $products = get_posts([
+            'post_type'      => 'product',
+            'post_status'    => ['draft', 'pending', 'private'],
+            'posts_per_page' => -1,
+            'fields'         => 'ids',
+            'meta_query'     => [
+                'relation' => 'AND',
+                [
+                    'key'     => '_affiliate_network_id',
+                    'value'   => $network_id,
+                    'compare' => '=',
+                    'type'    => 'NUMERIC',
+                ],
+                [
+                    'key'     => '_cashback_auto_unpublished',
+                    'value'   => '1',
+                    'compare' => '=',
+                ],
+            ],
+        ]);
+
+        foreach ($products as $product_id) {
+            delete_post_meta($product_id, '_cashback_auto_unpublished');
+            wp_update_post([
+                'ID'          => $product_id,
+                'post_status' => 'publish',
+            ]);
+        }
+
+        return count($products);
     }
 
     /**
