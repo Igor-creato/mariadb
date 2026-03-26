@@ -457,8 +457,8 @@ class WC_Affiliate_URL_Params
             ? sanitize_text_field(wp_unslash($_POST['_store_domain']))
             : '';
 
-        // Автозаполнение из product URL если поле пустое
-        if (empty($store_domain) && $product) {
+        // Автозаполнение из product URL если поле пустое (только для внешних товаров)
+        if (empty($store_domain) && $product && $product instanceof \WC_Product_External) {
             $product_url = $product->get_product_url();
             if ($product_url) {
                 $parsed = wp_parse_url($product_url);
