@@ -898,18 +898,19 @@ class Cashback_User_Support
         if (!empty($attachments)) {
             $attachments_html .= '<div class="support-attachments">';
             foreach ($attachments as $att) {
-                $download_url = add_query_arg([
-                    'action' => 'support_download_file',
-                    'nonce'  => wp_create_nonce('support_download_file_nonce'),
-                    'id'     => (int) $att->id,
-                ], admin_url('admin-ajax.php'));
-
                 $icon = self::get_file_icon($att->file_name);
                 $size = size_format($att->file_size);
 
                 $attachments_html .= sprintf(
-                    '<a href="%s" class="support-attachment-link" target="_blank">%s %s <span class="support-attachment-size">(%s)</span></a>',
-                    esc_url($download_url),
+                    '<form method="post" action="%s" style="display:inline;">'
+                    . '<input type="hidden" name="action" value="support_download_file">'
+                    . '<input type="hidden" name="nonce" value="%s">'
+                    . '<input type="hidden" name="id" value="%d">'
+                    . '<button type="submit" class="support-attachment-link" style="background:none;border:none;padding:0;cursor:pointer;">%s %s <span class="support-attachment-size">(%s)</span></button>'
+                    . '</form>',
+                    esc_url(admin_url('admin-ajax.php')),
+                    esc_attr(wp_create_nonce('support_download_file_nonce')),
+                    (int) $att->id,
                     $icon,
                     esc_html($att->file_name),
                     esc_html($size)
@@ -959,7 +960,10 @@ class Cashback_User_Support
      */
     public function handle_download_file(): void
     {
-        if (!check_ajax_referer('support_download_file_nonce', 'nonce', false)) {
+        if (
+            !isset($_POST['nonce']) ||
+            !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'support_download_file_nonce')
+        ) {
             wp_die('Неверный токен безопасности.', 'Ошибка', ['response' => 403]);
         }
 
@@ -967,7 +971,7 @@ class Cashback_User_Support
             wp_die('Требуется авторизация.', 'Ошибка', ['response' => 403]);
         }
 
-        $attachment_id = absint($_GET['id'] ?? 0);
+        $attachment_id = absint($_POST['id'] ?? 0);
         if (!$attachment_id) {
             wp_die('Не указан файл.', 'Ошибка', ['response' => 400]);
         }

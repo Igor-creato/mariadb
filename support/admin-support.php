@@ -710,15 +710,19 @@ class Cashback_Support_Admin
         if (!empty($attachments)) {
             $attachments_html .= '<div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #e0e0e0;">';
             foreach ($attachments as $att) {
-                $download_url = add_query_arg([
-                    'action' => 'support_admin_download_file',
-                    'nonce'  => wp_create_nonce('support_admin_download_file_nonce'),
-                    'id'     => (int) $att->id,
-                ], admin_url('admin-ajax.php'));
                 $size = size_format($att->file_size);
                 $attachments_html .= sprintf(
-                    '<div><a href="%s" target="_blank">&#128206; %s</a> <small>(%s)</small></div>',
-                    esc_url($download_url),
+                    '<div>'
+                    . '<form method="post" action="%s" style="display:inline;">'
+                    . '<input type="hidden" name="action" value="support_admin_download_file">'
+                    . '<input type="hidden" name="nonce" value="%s">'
+                    . '<input type="hidden" name="id" value="%d">'
+                    . '<button type="submit" style="background:none;border:none;padding:0;color:#0073aa;cursor:pointer;text-decoration:underline;">&#128206; %s</button>'
+                    . '</form>'
+                    . ' <small>(%s)</small></div>',
+                    esc_url(admin_url('admin-ajax.php')),
+                    esc_attr(wp_create_nonce('support_admin_download_file_nonce')),
+                    (int) $att->id,
                     esc_html($att->file_name),
                     esc_html($size)
                 );
@@ -1082,7 +1086,7 @@ class Cashback_Support_Admin
      */
     public function handle_admin_download_file(): void
     {
-        if (!isset($_GET['nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_GET['nonce'])), 'support_admin_download_file_nonce')) {
+        if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'support_admin_download_file_nonce')) {
             wp_die('Неверный токен безопасности.', 'Ошибка', ['response' => 403]);
         }
 
@@ -1090,7 +1094,7 @@ class Cashback_Support_Admin
             wp_die('Недостаточно прав.', 'Ошибка', ['response' => 403]);
         }
 
-        $attachment_id = absint($_GET['id'] ?? 0);
+        $attachment_id = absint($_POST['id'] ?? 0);
         if (!$attachment_id) {
             wp_die('Не указан файл.', 'Ошибка', ['response' => 400]);
         }
