@@ -827,19 +827,19 @@ class Cashback_REST_API
   }
 
   // Слушаем подтверждение от content script браузерного расширения.
-  // Content script перехватывает cashback:site:activate, сохраняет активацию
-  // в service worker и диспатчит cashback:site:confirmed — тогда редиректим немедленно.
   document.addEventListener('cashback:site:confirmed', go);
 
-  // Сигнализируем расширению: здесь есть активация для сохранения.
+  // Сохраняем данные активации в атрибуте DOM — content script читает их при старте,
+  // не зависит от порядка выполнения (inline script всегда опережает document_idle).
   var clickId = (new URLSearchParams(window.location.search)).get('click_id') || '';
   var domain  = '';
   try { domain = new URL(redirectUrl).hostname.replace(/^www\\./, ''); } catch (e) {}
 
   if (clickId && domain) {
-    document.dispatchEvent(new CustomEvent('cashback:site:activate', {
-      detail: { domain: domain, click_id: clickId }
-    }));
+    document.documentElement.setAttribute(
+      'data-cb-activation',
+      JSON.stringify({ domain: domain, click_id: clickId })
+    );
   }
 
   // Fallback: если расширение не установлено или не ответило — редиректим через 1.5с.

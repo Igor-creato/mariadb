@@ -22,10 +22,15 @@
     try {
         const siteHost = new URL(CASHBACK_CONFIG.SITE_URL).hostname.replace(/^www\./i, '');
         if (domain === siteHost) {
-            // На странице активации устанавливаем мост: страница ↔ service worker
             const params = new URLSearchParams(window.location.search);
             if (params.get('cashback_go') === '1' && params.get('click_id')) {
+                // Страница активации: устанавливаем мост страница ↔ service worker
                 setupActivationPageBridge();
+            } else {
+                // Страница магазина/товара на нашем сайте:
+                // перехватываем клики по кнопкам кэшбэка, чтобы активировать через расширение
+                // без промежуточной страницы и задержки редиректа.
+                setupSiteButtonInterceptor();
             }
             return; // уведомления на своём сайте не показываем
         }
@@ -33,21 +38,86 @@
         // ignore
     }
 
+    // ─── Перехват кликов по кнопкам кэшбэка на нашем сайте ───
+    //
+    // Когда пользователь нажимает «Получить кэшбэк» на карточке или странице товара,
+    // перехватываем клик, активируем кэшбэк через service worker и открываем
+    // партнёрский URL напрямую — без промежуточной страницы и задержки.
+    // Если расширение не работает или пользователь не авторизован — fallback на обычную ссылку.
+
+    function setupSiteButtonInterceptor() {
+        document.addEventListener('click', function (e) {
+            // Ищем ближайшую ссылку с data-product-id (кнопка «Получить кэшбэк»)
+            const btn = e.target.closest('[data-product-id]');
+            if (!btn) return;
+
+            const productId = parseInt(btn.getAttribute('data-product-id'), 10);
+            if (!productId) return;
+
+            // Перехватываем только ссылки через наш click-tracking endpoint
+            const href = btn.getAttribute('href') || '';
+            if (!href.includes('cashback_click=')) return;
+
+            e.preventDefault();
+            e.stopPropagation();
+
+            const originalText = btn.textContent;
+            btn.textContent = '...';
+
+            chrome.runtime.sendMessage({
+                type: 'ACTIVATE',
+                productId: productId,
+                domain: null, // SW извлечёт домен из result.redirect_url
+            }).then(function (result) {
+                btn.textContent = originalText;
+                if (result && !result.error && result.redirect_url && isValidRedirectUrl(result.redirect_url)) {
+                    window.open(result.redirect_url, '_blank');
+                } else {
+                    // Fallback: открываем через исходную ссылку (сервер залогирует клик)
+                    window.open(href, '_blank');
+                }
+            }).catch(function () {
+                btn.textContent = originalText;
+                window.open(href, '_blank');
+            });
+        }, true); // capture: перехватываем до срабатывания href
+    }
+
     // ─── Мост страницы активации → service worker ───
+    //
+    // Страница записывает данные в data-cb-activation ДО наступления document_idle,
+    // поэтому content script всегда находит их в DOM без зависимости от событий.
 
     function setupActivationPageBridge() {
-        document.addEventListener('cashback:site:activate', async function (event) {
+        async function processActivation(cbDomain, cbClickId) {
             try {
                 await chrome.runtime.sendMessage({
                     type:     'SITE_ACTIVATED',
-                    domain:   event.detail.domain,
-                    click_id: event.detail.click_id,
+                    domain:   cbDomain,
+                    click_id: cbClickId,
                 });
             } catch {
-                // Расширение не отвечает (не установлено или ошибка)
+                // Service worker не ответил — редирект произойдёт через fallback таймер
             }
-            // Сигнализируем странице: активация обработана, можно редиректить
+            // Сигнализируем странице: можно редиректить немедленно
             document.dispatchEvent(new CustomEvent('cashback:site:confirmed'));
+        }
+
+        // Путь 1 (основной): данные уже записаны в DOM до document_idle
+        const raw = document.documentElement.getAttribute('data-cb-activation');
+        if (raw) {
+            try {
+                const data = JSON.parse(raw);
+                if (data.domain && data.click_id) {
+                    processActivation(data.domain, data.click_id);
+                    return;
+                }
+            } catch { /* невалидный JSON — игнорируем */ }
+        }
+
+        // Путь 2 (резервный): слушаем событие на случай нестандартного порядка загрузки
+        document.addEventListener('cashback:site:activate', function (event) {
+            processActivation(event.detail.domain, event.detail.click_id);
         });
     }
 

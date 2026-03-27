@@ -200,10 +200,10 @@ async function handleActivate() {
             throw new Error(result.error);
         }
 
-        // Открываем redirect URL в текущей вкладке
+        // Открываем партнёрский URL напрямую (без промежуточной страницы)
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (tab && result.activation_page_url && isValidRedirectUrl(result.activation_page_url)) {
-            await chrome.tabs.update(tab.id, { url: result.activation_page_url });
+        if (tab && result.redirect_url && isValidRedirectUrl(result.redirect_url)) {
+            await chrome.tabs.update(tab.id, { url: result.redirect_url });
         }
 
         // Показываем активированное состояние

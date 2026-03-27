@@ -149,12 +149,32 @@ async function handleMessage(message, sender) {
 
         case 'ACTIVATE': {
             const result = await CashbackAPI.activateCashback(message.productId);
-            // Сохраняем активацию с привязкой к текущему пользователю
-            const domain = message.domain;
-            if (domain) {
-                const userId = await getCachedUserId();
-                await saveActivation(domain, result, userId);
+
+            // Определяем домен: из сообщения (popup) или из redirect_url (content script)
+            let domain = message.domain;
+            if (!domain && result.redirect_url) {
+                try {
+                    domain = new URL(result.redirect_url).hostname.replace(/^www\./i, '');
+                } catch {}
             }
+
+            if (domain) {
+                // Получаем user_id — нужен для изоляции активаций между пользователями
+                let userId = await getCachedUserId();
+                if (!userId) {
+                    try {
+                        const profile = await CashbackAPI.fetchProfile();
+                        userId = String(profile.user_id);
+                        await setCachedUserId(userId);
+                    } catch {
+                        // Пользователь не авторизован — активация не сохраняется
+                    }
+                }
+                if (userId) {
+                    await saveActivation(domain, result, userId);
+                }
+            }
+
             // Обновляем иконку текущей вкладки
             if (sender.tab) {
                 await updateIconForTab(sender.tab.id, sender.tab.url);
