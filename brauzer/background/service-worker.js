@@ -377,6 +377,7 @@ async function saveActivation(domain, result, userId) {
             expires_at: result.expires_at,
             click_id: result.click_id,
             redirect_url: result.redirect_url,
+            activation_page_url: result.activation_page_url || null,
             user_id: userId || null,
         },
     });

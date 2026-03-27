@@ -49,6 +49,7 @@ class Cashback_REST_API
         add_filter('rest_authentication_errors', [$this, 'authenticate_extension_cookie'], 99);
         add_filter('rest_pre_dispatch', [$this, 'block_user_enumeration'], 10, 3);
         add_action('template_redirect', [$this, 'block_author_enumeration']);
+        add_action('template_redirect', [$this, 'handle_activation_page'], 1);
         // Сброс кеша магазинов при сохранении или удалении товара
         add_action('save_post_product', [$this, 'flush_stores_cache']);
         add_action('delete_post', [$this, 'flush_stores_cache']);
@@ -516,10 +517,19 @@ class Cashback_REST_API
 
         $expires_at = gmdate('Y-m-d H:i:s', time() + self::ACTIVATION_WINDOW);
 
+        // Формируем URL активации на базе permalink товара, чтобы CPA-сеть
+        // видела Referer: yoursite.com/product/название/ вместо /?cashback_go=1
+        $product_permalink    = get_permalink($product_id) ?: home_url('/');
+        $activation_page_url  = add_query_arg(
+            ['cashback_go' => '1', 'click_id' => $click_id],
+            $product_permalink
+        );
+
         return new \WP_REST_Response([
-            'redirect_url' => $affiliate_url,
-            'click_id'     => $click_id,
-            'expires_at'   => $expires_at,
+            'redirect_url'        => $affiliate_url,
+            'activation_page_url' => $activation_page_url,
+            'click_id'            => $click_id,
+            'expires_at'          => $expires_at,
         ], 200);
     }
 
@@ -599,6 +609,293 @@ class Cashback_REST_API
             'activated_at' => null,
             'expires_at'   => null,
         ], 200);
+    }
+
+    // ─── Промежуточная страница активации ───
+
+    /**
+     * Промежуточная страница активации кэшбэка.
+     *
+     * Срабатывает на template_redirect (приоритет 1) для URL ?cashback_go=1&click_id=XXXX.
+     * Валидирует click_id, получает affiliate_url из БД, рендерит страницу активации
+     * с использованием шапки/подвала активной темы.
+     *
+     * JS-редирект (window.location.href) гарантирует, что браузер отправит
+     * Referer: [наш сайт] при открытии affiliate URL — что требуется CPA-сетями
+     * для атрибуции перехода через наш сервис.
+     *
+     * HTTP Referer из заголовка запроса (URL магазина, с которого пришёл пользователь)
+     * сохраняется в click_log — клик логируется ранее (в REST API), без referer.
+     */
+    public function handle_activation_page(): void
+    {
+        if (!isset($_GET['cashback_go']) || '1' !== $_GET['cashback_go']) {
+            return;
+        }
+
+        $click_id = isset($_GET['click_id']) ? sanitize_text_field(wp_unslash($_GET['click_id'])) : '';
+
+        if (empty($click_id) || strlen($click_id) !== 32 || !ctype_xdigit($click_id)) {
+            wp_safe_redirect(home_url(), 302);
+            exit;
+        }
+
+        global $wpdb;
+        $table     = $wpdb->prefix . 'cashback_click_log';
+        $threshold = gmdate('Y-m-d H:i:s', time() - self::ACTIVATION_WINDOW);
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+        $row = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT affiliate_url, product_id FROM {$table}
+                 WHERE click_id = %s AND created_at >= %s LIMIT 1",
+                $click_id,
+                $threshold
+            ),
+            ARRAY_A
+        );
+
+        if (empty($row) || empty($row['affiliate_url'])) {
+            wp_safe_redirect(home_url(), 302);
+            exit;
+        }
+
+        $affiliate_url = $row['affiliate_url'];
+        $product_id    = (int) $row['product_id'];
+
+        // Обновляем referer: в лог клика записываем URL страницы товара на нашем сервисе,
+        // чтобы в логе было видно, что переход совершён именно с нашей страницы партнёра.
+        // (Клик логировался ранее через REST API из service worker — без referer.)
+        $product_page_url = $product_id > 0 ? get_permalink($product_id) : '';
+        if (!empty($product_page_url)) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+            $wpdb->update(
+                $table,
+                ['referer' => $product_page_url],
+                ['click_id' => $click_id],
+                ['%s'],
+                ['%s']
+            );
+        }
+
+        $product    = wc_get_product($product_id);
+        $store_name = ($product && $product->get_name()) ? $product->get_name() : 'Магазин';
+        $cb_label   = (string) get_post_meta($product_id, '_cashback_display_label', true);
+        $cb_value   = (string) get_post_meta($product_id, '_cashback_display_value', true);
+
+        if (empty($cb_label)) {
+            $cb_label = 'Кэшбэк';
+        }
+
+        $js_affiliate_url = wp_json_encode($affiliate_url);
+        $js_store_name    = wp_json_encode($store_name);
+        $js_cb_label      = wp_json_encode($cb_label);
+        $js_cb_value      = wp_json_encode($cb_value);
+
+        nocache_headers();
+
+        // Подключаем стили карточки в <head> активной темы
+        $card_styles = $this->get_activation_card_styles();
+        add_action('wp_head', static function () use ($card_styles): void {
+            echo '<style id="cashback-go-styles">' . $card_styles . '</style>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+        }, 100);
+
+        // Рендерим страницу с шапкой и подвалом активной темы
+        get_header();
+        // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+        echo $this->render_activation_content(
+            $js_affiliate_url,
+            $js_store_name,
+            $js_cb_label,
+            $js_cb_value
+        );
+        get_footer();
+        exit;
+    }
+
+    /**
+     * Рендерит HTML-блок карточки активации (без обёртки страницы).
+     *
+     * Вставляется между get_header() и get_footer() активной темы,
+     * чтобы страница выглядела нативно в рамках текущего дизайна сайта.
+     *
+     * Все динамические данные передаются ТОЛЬКО через JS-переменные,
+     * закодированные через wp_json_encode() — защита от XSS.
+     * affiliate_url берётся из БД — защита от open redirect.
+     *
+     * @param string $js_affiliate_url  JSON-encoded URL для редиректа
+     * @param string $js_store_name     JSON-encoded название магазина
+     * @param string $js_cb_label       JSON-encoded метка кэшбэка
+     * @param string $js_cb_value       JSON-encoded значение кэшбэка
+     * @return string
+     */
+    private function render_activation_content(
+        string $js_affiliate_url,
+        string $js_store_name,
+        string $js_cb_label,
+        string $js_cb_value
+    ): string {
+        return <<<HTML
+<div class="cashback-go-wrap">
+  <div class="cashback-go-card">
+    <div class="cg-brand">&#128176; Кэшбэк Сервис</div>
+    <div class="cg-store-name" id="js-store-name"></div>
+    <div class="cg-cashback-badge" id="js-cb-badge"></div>
+    <div class="cg-status">&#9989; Кэшбэк активирован!</div>
+    <div class="cg-countdown-text" id="js-countdown"></div>
+    <div class="cg-progress-bar-wrap">
+      <div class="cg-progress-bar" id="js-progress"></div>
+    </div>
+    <button class="cg-btn-go" id="js-btn-go">Перейти в магазин сейчас &#8594;</button>
+    <div class="cg-notice">Для фиксации кэшбэка совершите покупку в течение 30 минут.</div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var redirectUrl = {$js_affiliate_url};
+  var storeName   = {$js_store_name};
+  var cbLabel     = {$js_cb_label};
+  var cbValue     = {$js_cb_value};
+  var SECONDS     = 5;
+
+  document.getElementById('js-store-name').textContent = storeName;
+  document.getElementById('js-cb-badge').textContent   = cbValue
+    ? (cbLabel + ' до ' + cbValue)
+    : cbLabel;
+
+  document.getElementById('js-btn-go').addEventListener('click', function () {
+    window.location.href = redirectUrl;
+  });
+
+  var countdownEl = document.getElementById('js-countdown');
+  var progressEl  = document.getElementById('js-progress');
+  var remaining   = SECONDS;
+
+  function tick() {
+    countdownEl.textContent = 'Переход к магазину через ' + remaining + ' сек...';
+    progressEl.style.transform = 'scaleX(' + (remaining / SECONDS) + ')';
+    if (remaining <= 0) {
+      window.location.href = redirectUrl;
+      return;
+    }
+    remaining--;
+    setTimeout(tick, 1000);
+  }
+
+  tick();
+})();
+</script>
+HTML;
+    }
+
+    /**
+     * CSS-стили для карточки активации кэшбэка.
+     *
+     * Инжектируются в <head> темы через wp_head.
+     * Используют нейтральные цвета, не перекрывающие дизайн темы,
+     * стилизуя только компонент .cashback-go-wrap / .cashback-go-card.
+     *
+     * @return string
+     */
+    private function get_activation_card_styles(): string
+    {
+        return '
+.cashback-go-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 50vh;
+    padding: 40px 20px;
+    box-sizing: border-box;
+}
+.cashback-go-card {
+    max-width: 480px;
+    width: 100%;
+    text-align: center;
+    padding: 40px 48px;
+    border-radius: 16px;
+    border: 1px solid rgba(0,0,0,0.1);
+    box-shadow: 0 4px 32px rgba(0,0,0,0.10);
+    background: #fff;
+    box-sizing: border-box;
+}
+.cg-brand {
+    font-size: 12px;
+    letter-spacing: 0.8px;
+    margin-bottom: 24px;
+    text-transform: uppercase;
+    font-weight: 600;
+    opacity: 0.5;
+}
+.cg-store-name {
+    font-size: 22px;
+    font-weight: 700;
+    margin-bottom: 10px;
+}
+.cg-cashback-badge {
+    display: inline-block;
+    background: linear-gradient(135deg, #3949ab, #1e88e5);
+    color: #fff;
+    font-size: 15px;
+    font-weight: 600;
+    padding: 6px 20px;
+    border-radius: 20px;
+    margin-bottom: 24px;
+}
+.cg-status {
+    font-size: 16px;
+    font-weight: 600;
+    color: #27ae60;
+    margin-bottom: 20px;
+}
+.cg-countdown-text {
+    font-size: 14px;
+    opacity: 0.6;
+    margin-bottom: 10px;
+    min-height: 20px;
+}
+.cg-progress-bar-wrap {
+    background: rgba(0,0,0,0.08);
+    border-radius: 4px;
+    height: 5px;
+    overflow: hidden;
+    margin-bottom: 24px;
+}
+.cg-progress-bar {
+    height: 100%;
+    width: 100%;
+    background: linear-gradient(90deg, #3949ab, #1e88e5);
+    transform-origin: left center;
+    transition: transform 1s linear;
+}
+.cg-btn-go {
+    display: inline-block;
+    background: linear-gradient(135deg, #3949ab, #1e88e5);
+    color: #fff !important;
+    font-size: 15px;
+    font-weight: 600;
+    text-decoration: none !important;
+    padding: 14px 32px;
+    border-radius: 10px;
+    cursor: pointer;
+    border: none;
+    transition: opacity 0.2s;
+    box-sizing: border-box;
+}
+.cg-btn-go:hover { opacity: 0.85; }
+.cg-notice {
+    font-size: 12px;
+    opacity: 0.5;
+    margin-top: 18px;
+    line-height: 1.6;
+}
+@media (max-width: 520px) {
+    .cashback-go-card { padding: 28px 20px; }
+}
+        ';
     }
 
     // ─── Private helpers ───

@@ -209,9 +209,9 @@
                     activateBtn.classList.add('success');
                     notification.classList.add('activated');
 
-                    if (result && result.redirect_url && isValidRedirectUrl(result.redirect_url)) {
+                    if (result && result.activation_page_url && isValidRedirectUrl(result.activation_page_url)) {
                         setTimeout(() => {
-                            window.location.href = result.redirect_url;
+                            window.location.href = result.activation_page_url;
                         }, 800);
                     } else {
                         setTimeout(() => dismissNotification(host, notification, domain), 3000);

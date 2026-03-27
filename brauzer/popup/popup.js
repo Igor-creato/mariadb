@@ -202,8 +202,8 @@ async function handleActivate() {
 
         // Открываем redirect URL в текущей вкладке
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (tab && result.redirect_url && isValidRedirectUrl(result.redirect_url)) {
-            await chrome.tabs.update(tab.id, { url: result.redirect_url });
+        if (tab && result.activation_page_url && isValidRedirectUrl(result.activation_page_url)) {
+            await chrome.tabs.update(tab.id, { url: result.activation_page_url });
         }
 
         // Показываем активированное состояние
