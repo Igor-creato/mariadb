@@ -32,10 +32,13 @@ async function getCachedUserId() {
 
 async function setCachedUserId(userId) {
     if (!userId) return;
+    // Всегда храним как строку — API возвращает число, а активации хранят строку.
+    // Несоответствие типов приводит к "123" !== 123 → ложному промаху кеша.
+    const normalizedId = String(userId);
     const prev = await getCachedUserId();
-    await chrome.storage.session.set({ [CURRENT_USER_KEY]: userId });
+    await chrome.storage.session.set({ [CURRENT_USER_KEY]: normalizedId });
     // При смене пользователя — очистить все активации предыдущего
-    if (prev && prev !== userId) {
+    if (prev && prev !== normalizedId) {
         await clearAllActivations();
     }
 }
@@ -90,6 +93,11 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     if (changeInfo.status === 'complete' && tab.url) {
+        // Server-side redirect (?cashback_click=): detect activation page and
+        // pre-store activation so the icon is green when the partner site opens.
+        if (isActivationPageUrl(tab.url)) {
+            await handleActivationPageNavigation(tab.url);
+        }
         await updateIconForTab(tabId, tab.url);
     }
 });
@@ -178,6 +186,28 @@ async function handleMessage(message, sender) {
 
         case 'REFRESH_STORES': {
             await CashbackAPI.fetchStores(true);
+            return { success: true };
+        }
+
+        case 'SITE_ACTIVATED': {
+            // Активация инициирована кнопкой на сайте (не через popup расширения).
+            // Content script страницы активации передаёт domain и click_id.
+            let userId = await getCachedUserId();
+            if (!userId) {
+                try {
+                    const profile = await CashbackAPI.fetchProfile();
+                    userId = String(profile.user_id);
+                    await setCachedUserId(userId);
+                } catch {
+                    return { success: false, reason: 'not_authenticated' };
+                }
+            }
+            await saveActivation(message.domain, {
+                click_id:            message.click_id,
+                expires_at:          new Date(Date.now() + CASHBACK_CONFIG.ACTIVATION_TTL).toISOString(),
+                redirect_url:        null,
+                activation_page_url: null,
+            }, userId);
             return { success: true };
         }
 
@@ -378,7 +408,7 @@ async function saveActivation(domain, result, userId) {
             click_id: result.click_id,
             redirect_url: result.redirect_url,
             activation_page_url: result.activation_page_url || null,
-            user_id: userId || null,
+            user_id: userId ? String(userId) : null,
         },
     });
 }
@@ -398,6 +428,55 @@ async function cleanupExpiredActivations() {
 
     if (keysToRemove.length > 0) {
         await chrome.storage.session.remove(keysToRemove);
+    }
+}
+
+// ─── Определение страницы активации (server-side redirect) ───
+
+/**
+ * Проверяет, является ли URL промежуточной страницей активации кэшбэка.
+ * Признак: домен нашего сайта + параметры cashback_go=1 и click_id.
+ */
+function isActivationPageUrl(url) {
+    try {
+        const parsed = new URL(url);
+        const site   = new URL(CASHBACK_CONFIG.SITE_URL);
+        return parsed.hostname === site.hostname &&
+               parsed.searchParams.get('cashback_go') === '1' &&
+               !!parsed.searchParams.get('click_id');
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Вызывается когда браузер открыл страницу активации (после server-side redirect
+ * через ?cashback_click=). Запрашивает у REST API домен назначения по click_id
+ * и сохраняет активацию, чтобы к моменту перехода на партнёрский сайт расширение
+ * знало что кэшбэк активен и показывало зелёный значок.
+ */
+async function handleActivationPageNavigation(url) {
+    try {
+        const parsed   = new URL(url);
+        const click_id = parsed.searchParams.get('click_id');
+        if (!click_id) return;
+
+        const data = await CashbackAPI.request('/session-status', { click_id });
+        if (data.activated && data.domain) {
+            let userId = await getCachedUserId();
+            if (!userId) {
+                // user_id не закеширован в этой сессии — фетчим профиль.
+                // Без user_id активация будет отвергнута в getActivationStatus().
+                const profile = await CashbackAPI.fetchProfile();
+                userId = String(profile.user_id);
+                await setCachedUserId(userId);
+            }
+            await saveActivation(data.domain, data, userId);
+        }
+    } catch (e) {
+        // Не авторизован (гость) или другая ошибка — молча игнорируем,
+        // для гостей кэшбэк не начисляется и зелёный значок не нужен.
+        console.warn('[Cashback] handleActivationPageNavigation failed:', e.message);
     }
 }
 

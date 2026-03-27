@@ -832,8 +832,15 @@ class WC_Affiliate_URL_Params
                 'spam_click'    => $rate_status === 'spam' ? 1 : 0,
             ]);
 
-            // 302 redirect (не 301 — URL уникален каждый раз из-за click_id)
-            wp_redirect($affiliate_url, 302);
+            // Redirect through activation page so the browser extension can detect
+            // the cashback activation and show the green icon on the partner site.
+            // The click is already logged above, handle_activation_page() will look it
+            // up by click_id and perform the final redirect to $affiliate_url.
+            $activation_page_url = add_query_arg(
+                ['cashback_go' => '1', 'click_id' => $click_id],
+                get_permalink($product_id) ?: home_url('/')
+            );
+            wp_redirect($activation_page_url, 302);
             exit;
         } catch (\Throwable $e) {
             // Лучше потерять лог клика, чем потерять пользователя

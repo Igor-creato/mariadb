@@ -166,7 +166,7 @@ class Cashback_REST_API
             ],
         ]);
 
-        // Статус активации для домена
+        // Статус активации для домена или по click_id
         register_rest_route(self::NAMESPACE, '/session-status', [
             'methods'             => 'GET',
             'callback'            => [$this, 'get_session_status'],
@@ -174,7 +174,12 @@ class Cashback_REST_API
             'args'                => [
                 'domain' => [
                     'type'              => 'string',
-                    'required'          => true,
+                    'required'          => false,
+                    'sanitize_callback' => 'sanitize_text_field',
+                ],
+                'click_id' => [
+                    'type'              => 'string',
+                    'required'          => false,
                     'sanitize_callback' => 'sanitize_text_field',
                 ],
             ],
@@ -542,8 +547,55 @@ class Cashback_REST_API
     {
         global $wpdb;
 
-        $user_id = get_current_user_id();
-        $domain  = $request->get_param('domain');
+        $user_id  = get_current_user_id();
+        $click_id = $request->get_param('click_id');
+
+        // Lookup by click_id: used by the browser extension after a server-side redirect
+        // (?cashback_click=) to pre-store the activation before arriving at the partner site.
+        if (!empty($click_id) && strlen($click_id) === 32 && ctype_xdigit($click_id)) {
+            $click_log_table = $wpdb->prefix . 'cashback_click_log';
+            $threshold       = gmdate('Y-m-d H:i:s', time() - self::ACTIVATION_WINDOW);
+
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+            $click = $wpdb->get_row($wpdb->prepare(
+                "SELECT click_id, created_at, affiliate_url
+                 FROM {$click_log_table}
+                 WHERE click_id = %s AND user_id = %d AND created_at >= %s LIMIT 1",
+                $click_id,
+                $user_id,
+                $threshold
+            ), ARRAY_A);
+
+            if ($click && !empty($click['affiliate_url'])) {
+                $host        = (string) parse_url($click['affiliate_url'], PHP_URL_HOST);
+                $dest_domain = strtolower(preg_replace('/^www\./i', '', $host));
+                $click_time  = strtotime($click['created_at']);
+                $expires_at  = gmdate('Y-m-d H:i:s', $click_time + self::ACTIVATION_WINDOW);
+
+                return new \WP_REST_Response([
+                    'activated'    => true,
+                    'domain'       => $dest_domain,
+                    'activated_at' => $click['created_at'],
+                    'expires_at'   => $expires_at,
+                    'click_id'     => $click['click_id'],
+                ], 200);
+            }
+
+            return new \WP_REST_Response([
+                'activated'    => false,
+                'activated_at' => null,
+                'expires_at'   => null,
+            ], 200);
+        }
+
+        $domain = $request->get_param('domain');
+        if (empty($domain)) {
+            return new \WP_REST_Response([
+                'activated'    => false,
+                'activated_at' => null,
+                'expires_at'   => null,
+            ], 200);
+        }
 
         // Нормализация: удаляем протокол, www., trailing slash
         $domain = preg_replace('#^https?://#i', '', $domain);
@@ -742,10 +794,7 @@ class Cashback_REST_API
     <div class="cg-store-name" id="js-store-name"></div>
     <div class="cg-cashback-badge" id="js-cb-badge"></div>
     <div class="cg-status">&#9989; Кэшбэк активирован!</div>
-    <div class="cg-countdown-text" id="js-countdown"></div>
-    <div class="cg-progress-bar-wrap">
-      <div class="cg-progress-bar" id="js-progress"></div>
-    </div>
+    <div class="cg-countdown-text" id="js-countdown">Переход к магазину...</div>
     <button class="cg-btn-go" id="js-btn-go">Перейти в магазин сейчас &#8594;</button>
     <div class="cg-notice">Для фиксации кэшбэка совершите покупку в течение 30 минут.</div>
   </div>
@@ -759,7 +808,6 @@ class Cashback_REST_API
   var storeName   = {$js_store_name};
   var cbLabel     = {$js_cb_label};
   var cbValue     = {$js_cb_value};
-  var SECONDS     = 5;
 
   document.getElementById('js-store-name').textContent = storeName;
   document.getElementById('js-cb-badge').textContent   = cbValue
@@ -770,22 +818,32 @@ class Cashback_REST_API
     window.location.href = redirectUrl;
   });
 
-  var countdownEl = document.getElementById('js-countdown');
-  var progressEl  = document.getElementById('js-progress');
-  var remaining   = SECONDS;
-
-  function tick() {
-    countdownEl.textContent = 'Переход к магазину через ' + remaining + ' сек...';
-    progressEl.style.transform = 'scaleX(' + (remaining / SECONDS) + ')';
-    if (remaining <= 0) {
+  var redirected = false;
+  function go() {
+    if (!redirected) {
+      redirected = true;
       window.location.href = redirectUrl;
-      return;
     }
-    remaining--;
-    setTimeout(tick, 1000);
   }
 
-  tick();
+  // Слушаем подтверждение от content script браузерного расширения.
+  // Content script перехватывает cashback:site:activate, сохраняет активацию
+  // в service worker и диспатчит cashback:site:confirmed — тогда редиректим немедленно.
+  document.addEventListener('cashback:site:confirmed', go);
+
+  // Сигнализируем расширению: здесь есть активация для сохранения.
+  var clickId = (new URLSearchParams(window.location.search)).get('click_id') || '';
+  var domain  = '';
+  try { domain = new URL(redirectUrl).hostname.replace(/^www\\./, ''); } catch (e) {}
+
+  if (clickId && domain) {
+    document.dispatchEvent(new CustomEvent('cashback:site:activate', {
+      detail: { domain: domain, click_id: clickId }
+    }));
+  }
+
+  // Fallback: если расширение не установлено или не ответило — редиректим через 1.5с.
+  setTimeout(go, 1500);
 })();
 </script>
 HTML;
@@ -856,20 +914,6 @@ HTML;
     opacity: 0.6;
     margin-bottom: 10px;
     min-height: 20px;
-}
-.cg-progress-bar-wrap {
-    background: rgba(0,0,0,0.08);
-    border-radius: 4px;
-    height: 5px;
-    overflow: hidden;
-    margin-bottom: 24px;
-}
-.cg-progress-bar {
-    height: 100%;
-    width: 100%;
-    background: linear-gradient(90deg, #3949ab, #1e88e5);
-    transform-origin: left center;
-    transition: transform 1s linear;
 }
 .cg-btn-go {
     display: inline-block;

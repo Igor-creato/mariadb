@@ -18,12 +18,37 @@
 
     const domain = window.location.hostname.replace(/^www\./i, '');
 
-    // Не показываем на нашем собственном сайте
+    // Не показываем на нашем собственном сайте — кроме страницы активации (?cashback_go=1)
     try {
         const siteHost = new URL(CASHBACK_CONFIG.SITE_URL).hostname.replace(/^www\./i, '');
-        if (domain === siteHost) return;
+        if (domain === siteHost) {
+            // На странице активации устанавливаем мост: страница ↔ service worker
+            const params = new URLSearchParams(window.location.search);
+            if (params.get('cashback_go') === '1' && params.get('click_id')) {
+                setupActivationPageBridge();
+            }
+            return; // уведомления на своём сайте не показываем
+        }
     } catch {
         // ignore
+    }
+
+    // ─── Мост страницы активации → service worker ───
+
+    function setupActivationPageBridge() {
+        document.addEventListener('cashback:site:activate', async function (event) {
+            try {
+                await chrome.runtime.sendMessage({
+                    type:     'SITE_ACTIVATED',
+                    domain:   event.detail.domain,
+                    click_id: event.detail.click_id,
+                });
+            } catch {
+                // Расширение не отвечает (не установлено или ошибка)
+            }
+            // Сигнализируем странице: активация обработана, можно редиректить
+            document.dispatchEvent(new CustomEvent('cashback:site:confirmed'));
+        });
     }
 
     // Не показываем на служебных страницах
