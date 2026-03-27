@@ -236,14 +236,17 @@ async function updateIconForTab(tabId, url) {
                 // Не авторизован — покажем кнопку входа
             }
 
-            try {
-                await chrome.tabs.sendMessage(tabId, {
-                    type: 'SHOW_NOTIFICATION',
-                    store,
-                    isAuthenticated,
-                });
-            } catch {
-                // Content script ещё не загружен — он сам запросит через fallback
+            // Отправляем уведомление только если popup_mode !== 'hide'
+            if (!store.popup_mode || store.popup_mode !== 'hide') {
+                try {
+                    await chrome.tabs.sendMessage(tabId, {
+                        type: 'SHOW_NOTIFICATION',
+                        store,
+                        isAuthenticated,
+                    });
+                } catch {
+                    // Content script ещё не загружен — он сам запросит через fallback
+                }
             }
         }
     } catch (e) {

@@ -287,6 +287,7 @@ class Cashback_REST_API
                         pm_domain.meta_value AS store_domain,
                         pm_label.meta_value AS cashback_label,
                         pm_value.meta_value AS cashback_value,
+                        pm_popup.meta_value AS popup_mode,
                         n.name AS network_name,
                         n.slug AS network_slug
                  FROM {$wpdb->posts} p
@@ -294,6 +295,7 @@ class Cashback_REST_API
                  INNER JOIN {$wpdb->postmeta} pm_domain ON p.ID = pm_domain.post_id AND pm_domain.meta_key = '_store_domain'
                  LEFT JOIN {$wpdb->postmeta} pm_label ON p.ID = pm_label.post_id AND pm_label.meta_key = '_cashback_display_label'
                  LEFT JOIN {$wpdb->postmeta} pm_value ON p.ID = pm_value.post_id AND pm_value.meta_key = '_cashback_display_value'
+                 LEFT JOIN {$wpdb->postmeta} pm_popup ON p.ID = pm_popup.post_id AND pm_popup.meta_key = '_store_popup_mode'
                  LEFT JOIN {$networks_table} n ON n.id = pm_net.meta_value AND n.is_active = 1
                  WHERE p.post_type = %s
                    AND p.post_status = 'publish'
@@ -324,6 +326,7 @@ class Cashback_REST_API
                 'cashback_value' => $product['cashback_value'] ?: '',
                 'product_id'     => (int) $product['ID'],
                 'network_slug'   => $product['network_slug'] ?: '',
+                'popup_mode'     => $product['popup_mode'] ?: 'show',
             ];
         }
 

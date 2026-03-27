@@ -59,6 +59,11 @@
                 return;
             }
 
+            // Если администратор выбрал «Не показывать» — уведомление не выводим
+            if (response.store.popup_mode === 'hide') {
+                return;
+            }
+
             // Проверяем авторизацию отдельно (не блокирует показ)
             let isAuthenticated = false;
             try {

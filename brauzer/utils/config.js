@@ -10,7 +10,7 @@
 const CASHBACK_CONFIG = {
   // URL WordPress-сайта (без trailing slash)
   // ПРОДАКШЕН: заменить на https://your-domain.com
-  SITE_URL: 'http://localhost/kash-back',
+  SITE_URL: 'https://site.autmatization-bot.ru',
 
   // Базовый URL REST API
   get API_BASE() {

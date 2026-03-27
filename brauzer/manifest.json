@@ -11,7 +11,7 @@
     "activeTab"
   ],
   "host_permissions": [
-    "http://localhost/*"
+    "https://site.autmatization-bot.ru/*"
   ],
   "action": {
     "default_popup": "popup/popup.html",

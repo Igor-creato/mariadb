@@ -295,6 +295,19 @@ class WC_Affiliate_URL_Params
             'type'        => 'text',
         ]);
 
+        woocommerce_wp_select([
+            'id'          => '_store_popup_mode',
+            'label'       => __('Всплывающее окно', 'wc-affiliate-url-params'),
+            'description' => __('Показывать ли всплывающее уведомление в браузерном расширении.', 'wc-affiliate-url-params'),
+            'desc_tip'    => true,
+            'value'       => get_post_meta($post->ID, '_store_popup_mode', true),
+            'options'     => [
+                ''     => __('— Выберите показывать ли всплывающее окно —', 'wc-affiliate-url-params'),
+                'show' => __('Показывать', 'wc-affiliate-url-params'),
+                'hide' => __('Не показывать', 'wc-affiliate-url-params'),
+            ],
+        ]);
+
         woocommerce_wp_text_input([
             'id'          => '_cashback_display_label',
             'label'       => __('Текст метки', 'wc-affiliate-url-params'),
@@ -470,6 +483,26 @@ class WC_Affiliate_URL_Params
         $store_domain = strtolower(preg_replace('/^www\./i', '', $store_domain));
         update_post_meta($post_id, '_store_domain', $store_domain);
 
+        // Всплывающее окно браузерного расширения
+        $popup_mode = isset($_POST['_store_popup_mode'])
+            ? sanitize_text_field(wp_unslash($_POST['_store_popup_mode']))
+            : '';
+
+        // Валидация: если домен задан, а режим не выбран — не даём опубликовать
+        if (!empty($store_domain) && !in_array($popup_mode, ['show', 'hide'], true)) {
+            set_transient(
+                'cashback_popup_mode_error_' . get_current_user_id(),
+                __('Выберите показывать или не показывать всплывающее окно.', 'wc-affiliate-url-params'),
+                30
+            );
+            // Откатываем статус если товар стал publish
+            if (get_post_status($post_id) === 'publish') {
+                wp_update_post(['ID' => $post_id, 'post_status' => 'draft']);
+            }
+        } else {
+            update_post_meta($post_id, '_store_popup_mode', $popup_mode);
+        }
+
         // Сбрасываем кеш списка магазинов для браузерного расширения
         delete_transient('cashback_ext_stores_cache');
 
@@ -523,6 +556,16 @@ class WC_Affiliate_URL_Params
     public function show_admin_notices(): void
     {
         $user_id = get_current_user_id();
+
+        // Ошибка: режим всплывающего окна не выбран
+        $popup_error = get_transient('cashback_popup_mode_error_' . $user_id);
+        if ($popup_error) {
+            printf(
+                '<div class="notice notice-error is-dismissible"><p>%s</p></div>',
+                esc_html($popup_error)
+            );
+            delete_transient('cashback_popup_mode_error_' . $user_id);
+        }
 
         // Ошибка: сеть не выбрана
         $error = get_transient('cashback_affiliate_network_error_' . $user_id);
