@@ -619,11 +619,11 @@ class WC_Affiliate_URL_Params
             wp_cache_set($cache_key, $cached_params, self::CACHE_GROUP, self::CACHE_EXPIRATION);
         }
 
-        if (empty($cached_params)) {
-            return $url;
-        }
-
-        // URL ведёт на server-side redirect endpoint (query param — работает на любом сервере)
+        // Всегда маршрутизируем через server-side redirect endpoint.
+        // Это необходимо для:
+        //   1. Логирования клика с уникальным click_id (даже если параметры сети не настроены).
+        //   2. Работы перехватчика кликов в браузерном расширении (ищет cashback_click= в href).
+        // build_final_affiliate_url() обработает отсутствие параметров — вернёт исходный URL товара.
         return home_url('/?cashback_click=' . $product_id);
     }
 
