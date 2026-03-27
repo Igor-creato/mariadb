@@ -49,6 +49,18 @@ class Cashback_REST_API
         add_filter('rest_authentication_errors', [$this, 'authenticate_extension_cookie'], 99);
         add_filter('rest_pre_dispatch', [$this, 'block_user_enumeration'], 10, 3);
         add_action('template_redirect', [$this, 'block_author_enumeration']);
+        // Сброс кеша магазинов при сохранении или удалении товара
+        add_action('save_post_product', [$this, 'flush_stores_cache']);
+        add_action('delete_post', [$this, 'flush_stores_cache']);
+        add_action('woocommerce_update_product', [$this, 'flush_stores_cache']);
+    }
+
+    /**
+     * Сброс transient-кеша списка магазинов.
+     */
+    public function flush_stores_cache(): void
+    {
+        delete_transient(self::STORES_CACHE_KEY);
     }
 
     /**
@@ -319,6 +331,15 @@ class Cashback_REST_API
                 continue;
             }
 
+            // Нормализуем домен: убираем протокол, www., trailing slash и путь
+            $domain = preg_replace('#^https?://#i', '', $domain);
+            $domain = preg_replace('#^www\.#i', '', $domain);
+            $domain = strtolower(explode('/', $domain)[0]);
+
+            if (empty($domain)) {
+                continue;
+            }
+
             $stores[] = [
                 'domain'         => $domain,
                 'store_name'     => $product['post_title'] ?: ($product['network_name'] ?: $domain),
@@ -514,15 +535,23 @@ class Cashback_REST_API
         $user_id = get_current_user_id();
         $domain  = $request->get_param('domain');
 
-        // Нормализация: удаляем www., нижний регистр
+        // Нормализация: удаляем протокол, www., trailing slash
+        $domain = preg_replace('#^https?://#i', '', $domain);
         $domain = strtolower(preg_replace('/^www\./i', '', $domain));
+        $domain = explode('/', $domain)[0];
 
-        // Находим product_id по домену магазина
+        // Находим product_id по домену магазина.
+        // Ищем как нормализованный домен, так и варианты с протоколом (legacy)
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
         $product_ids = $wpdb->get_col($wpdb->prepare(
             "SELECT post_id FROM {$wpdb->postmeta}
-             WHERE meta_key = '_store_domain' AND meta_value = %s",
-            $domain
+             WHERE meta_key = '_store_domain'
+               AND (meta_value = %s
+                    OR meta_value = %s
+                    OR meta_value = %s)",
+            $domain,
+            'https://' . $domain,
+            'http://' . $domain
         ));
 
         if (empty($product_ids)) {

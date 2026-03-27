@@ -139,7 +139,11 @@ const CashbackAPI = {
         const cleanDomain = domain.replace(/^www\./i, '');
 
         return stores.find(store => {
-            const storeDomain = store.domain.replace(/^www\./i, '');
+            // Убираем протокол (https://, http://) и www. из домена магазина
+            const storeDomain = store.domain
+                .replace(/^https?:\/\//i, '')
+                .replace(/^www\./i, '')
+                .replace(/\/.*$/, ''); // убираем путь, если есть
             return cleanDomain === storeDomain || cleanDomain.endsWith('.' + storeDomain);
         }) || null;
     },

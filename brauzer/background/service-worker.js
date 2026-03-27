@@ -119,9 +119,22 @@ async function handleMessage(message, sender) {
             const domain = message.domain;
             const store = await CashbackAPI.findStoreByDomain(domain);
             if (!store) {
+                // Синхронизируем иконку: магазин не найден — серая
+                if (sender.tab) {
+                    await setIcon(sender.tab.id, ICON_STATES.GRAY);
+                }
                 return { store: null, activated: false };
             }
             const activation = await getActivationStatus(domain);
+            // Синхронизируем иконку с актуальным состоянием
+            if (sender.tab) {
+                if (activation.activated) {
+                    await setIcon(sender.tab.id, ICON_STATES.GREEN);
+                } else {
+                    const badgeText = extractCashbackPercent(store.cashback_value);
+                    await setIcon(sender.tab.id, ICON_STATES.RED, badgeText);
+                }
+            }
             return { store, activated: activation.activated, activation };
         }
 
@@ -193,7 +206,21 @@ async function updateIconForTab(tabId, url) {
             return;
         }
 
-        const store = await CashbackAPI.findStoreByDomain(domain);
+        let store = await CashbackAPI.findStoreByDomain(domain);
+        if (!store) {
+            // Магазин не найден в кеше — если кеш старше 10 минут, пробуем обновить
+            // (защита от лишних запросов при посещении сайтов не из списка)
+            const cacheData = await chrome.storage.local.get('stores_updated_at');
+            const cacheAge = Date.now() - (cacheData.stores_updated_at || 0);
+            if (cacheAge > 10 * 60 * 1000) {
+                try {
+                    await CashbackAPI.fetchStores(true);
+                    store = await CashbackAPI.findStoreByDomain(domain);
+                } catch {
+                    // Если обновить не удалось — оставляем серую иконку
+                }
+            }
+        }
         if (!store) {
             await setIcon(tabId, ICON_STATES.GRAY);
             return;
@@ -256,48 +283,16 @@ async function updateIconForTab(tabId, url) {
 }
 
 async function setIcon(tabId, state, badgeText = '') {
-    const ICON_COLORS = {
-        gray:  { bg: '#6b7280', accent: '#9ca3af' },
-        red:   { bg: '#e74c3c', accent: '#c0392b' },
-        green: { bg: '#27ae60', accent: '#1e8449' },
-    };
-
     try {
-        // Динамическая генерация иконки через OffscreenCanvas
-        const imageData = {};
-        for (const size of [16, 32]) {
-            const canvas = new OffscreenCanvas(size, size);
-            const ctx = canvas.getContext('2d');
-            const c = ICON_COLORS[state];
-            const cx = size / 2;
-            const cy = size / 2;
-            const r = size * 0.42;
-
-            ctx.clearRect(0, 0, size, size);
-
-            // Внешний круг
-            ctx.beginPath();
-            ctx.arc(cx, cy, r, 0, Math.PI * 2);
-            ctx.fillStyle = c.bg;
-            ctx.fill();
-
-            // Внутренний круг
-            ctx.beginPath();
-            ctx.arc(cx, cy, r * 0.78, 0, Math.PI * 2);
-            ctx.fillStyle = c.accent;
-            ctx.fill();
-
-            // Буква "К"
-            ctx.fillStyle = '#ffffff';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.font = `bold ${Math.round(size * 0.4)}px Arial, sans-serif`;
-            ctx.fillText('К', cx, cy + 1);
-
-            imageData[size] = ctx.getImageData(0, 0, size, size);
-        }
-
-        await chrome.action.setIcon({ tabId, imageData });
+        await chrome.action.setIcon({
+            tabId,
+            path: {
+                16:  chrome.runtime.getURL(`icons/icon-${state}-16.png`),
+                32:  chrome.runtime.getURL(`icons/icon-${state}-32.png`),
+                48:  chrome.runtime.getURL(`icons/icon-${state}-48.png`),
+                128: chrome.runtime.getURL(`icons/icon-${state}-128.png`),
+            },
+        });
 
         if (badgeText) {
             await chrome.action.setBadgeText({ tabId, text: badgeText });
@@ -309,21 +304,7 @@ async function setIcon(tabId, state, badgeText = '') {
             await chrome.action.setBadgeText({ tabId, text: '' });
         }
     } catch (e) {
-        // Tab may have been closed or OffscreenCanvas not available
-        // Fallback to static icons
-        try {
-            await chrome.action.setIcon({
-                tabId,
-                path: {
-                    16: `icons/icon-${state}-16.png`,
-                    32: `icons/icon-${state}-32.png`,
-                    48: `icons/icon-${state}-48.png`,
-                    128: `icons/icon-${state}-128.png`,
-                },
-            });
-        } catch {
-            // Tab was closed
-        }
+        console.warn('[Cashback] setIcon error:', e && e.message);
     }
 }
 
