@@ -139,7 +139,8 @@ jQuery(document).ready(function($) {
             'action': 'save_withdrawal_settings',
             'nonce': cashbackPayoutMethodsData.saveSettingsNonce,
             'max_withdrawal_amount': $('#max_withdrawal_amount').val(),
-            'email_sender_name': $('#email_sender_name').val()
+            'email_sender_name': $('#email_sender_name').val(),
+            'balance_delay_days': $('#balance_delay_days').val()
         }, function(response) {
             if (response.success) {
                 $msg.html('<div class="notice notice-success is-dismissible"><p>' + response.data.message + '</p></div>');

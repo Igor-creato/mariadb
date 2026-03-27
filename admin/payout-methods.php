@@ -228,6 +228,13 @@ class Cashback_Payout_Methods_Admin
                                     <p class="description">Имя, от которого пользователи будут получать письма. Применяется ко всем письмам WordPress. Если не задано — используется стандартное имя WordPress.</p>
                                 </td>
                             </tr>
+                            <tr>
+                                <th scope="row"><label for="balance_delay_days">Задержка начисления на баланс (дней):</label></th>
+                                <td>
+                                    <input type="number" id="balance_delay_days" name="balance_delay_days" class="regular-text" value="<?php echo esc_attr(get_option('cashback_balance_delay_days', 0)); ?>" min="0" max="365" step="1" />
+                                    <p class="description">Минимальное количество дней с последнего обновления транзакции до зачисления кешбэка на баланс. 0 — без задержки (зачисление при ближайшей синхронизации).</p>
+                                </td>
+                            </tr>
                         </table>
                         <p class="submit">
                             <input type="submit" class="button button-primary" value="Сохранить настройки" />
@@ -513,6 +520,10 @@ class Cashback_Payout_Methods_Admin
             ? sanitize_text_field(wp_unslash($_POST['email_sender_name']))
             : '';
         update_option('cashback_email_sender_name', $email_sender_name);
+
+        $delay_days = isset($_POST['balance_delay_days']) ? absint($_POST['balance_delay_days']) : 0;
+        $delay_days = min($delay_days, 365);
+        update_option('cashback_balance_delay_days', $delay_days);
 
         wp_send_json_success(['message' => 'Настройки сохранены.']);
     }

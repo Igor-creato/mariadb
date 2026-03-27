@@ -1547,6 +1547,16 @@ class Mariadb_Plugin
         try {
             $batch_id = wp_generate_uuid4();
 
+            $delay_days = (int) get_option('cashback_balance_delay_days', 0);
+            $delay_sql  = '';
+            if ($delay_days > 0) {
+                // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+                $delay_sql = $wpdb->prepare(
+                    ' AND t.updated_at <= DATE_SUB(NOW(), INTERVAL %d DAY)',
+                    $delay_days
+                );
+            }
+
             $wpdb->query('START TRANSACTION');
 
             // ШАГ 1: Маркируем транзакции с funds_ready=1 для начисления
@@ -1563,7 +1573,8 @@ class Mariadb_Plugin
                    AND t.processed_at IS NULL
                    AND t.cashback IS NOT NULL
                    AND t.cashback > 0
-                   AND t.spam_click = 0",
+                   AND t.spam_click = 0"
+                . $delay_sql, // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
                 $batch_id
             ));
 

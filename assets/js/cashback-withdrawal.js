@@ -151,6 +151,17 @@ jQuery(document).ready(function ($) {
 });
 
 /**
+ * Форматирование суммы в стиле шорткода: «1 234,56 ₽»
+ * (number_format с разделителем тысяч — пробел, десятичным — запятая)
+ */
+function formatCashbackAmount(amount, decimals) {
+  var fixed = parseFloat(amount).toFixed(decimals);
+  var parts = fixed.split('.');
+  parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0'); // неразрывный пробел
+  return parts.join(',') + '\u00a0\u20bd'; // «,» + «₽»
+}
+
+/**
  * Функция для обновления отображения баланса пользователя
  */
 function updateBalanceDisplay() {
@@ -163,13 +174,27 @@ function updateBalanceDisplay() {
     },
     success: function (response) {
       if (response.success) {
-        // Обновляем отображение всех трёх балансов
+        var avail   = response.data.balance;
+        var pending = response.data.pending_balance;
+        var paid    = response.data.paid_balance;
+
+        // Обновляем отображение на странице вывода (элементы по ID)
         jQuery('#cashback-balance-amount').html(response.data.formatted_balance);
         jQuery('#cashback-pending-amount').html(response.data.formatted_pending);
         jQuery('#cashback-paid-amount').html(response.data.formatted_paid);
 
         // Обновляем максимальное значение для поля ввода
-        jQuery('#withdrawal-amount').attr('max', response.data.balance);
+        jQuery('#withdrawal-amount').attr('max', avail);
+
+        // Обновляем шорткоды [cashback_balance] — одиночный виджет
+        jQuery('.cashback-balance--available .cashback-balance__amount').text(formatCashbackAmount(avail, 2));
+        jQuery('.cashback-balance--pending .cashback-balance__amount').text(formatCashbackAmount(pending, 2));
+        jQuery('.cashback-balance--paid .cashback-balance__amount').text(formatCashbackAmount(paid, 2));
+
+        // Обновляем шорткоды [cashback_balance type="all"] — виджет со всеми балансами
+        jQuery('.cashback-balance-widget__row--available .cashback-balance-widget__amount').text(formatCashbackAmount(avail, 2));
+        jQuery('.cashback-balance-widget__row--pending .cashback-balance-widget__amount').text(formatCashbackAmount(pending, 2));
+        jQuery('.cashback-balance-widget__row--paid .cashback-balance-widget__amount').text(formatCashbackAmount(paid, 2));
       }
     },
     error: function () {
