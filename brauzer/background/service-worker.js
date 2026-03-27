@@ -62,8 +62,9 @@ chrome.runtime.onInstalled.addListener(async () => {
         console.warn('[Cashback] Failed to load stores on install:', e.message);
     }
 
-    // Настроить периодическое обновление списка магазинов (каждые 6 часов)
-    chrome.alarms.create(ALARM_REFRESH_STORES, { periodInMinutes: 360 });
+    // Периодическое обновление списка магазинов (каждые 15 минут — как резервный механизм,
+    // основной TTL кеша — 10 минут, данные обновляются при каждом визите)
+    chrome.alarms.create(ALARM_REFRESH_STORES, { periodInMinutes: 15 });
 
     // Очистка устаревших активаций (каждые 5 минут)
     chrome.alarms.create(ALARM_CLEANUP_ACTIVATIONS, { periodInMinutes: 5 });
@@ -206,21 +207,19 @@ async function updateIconForTab(tabId, url) {
             return;
         }
 
-        let store = await CashbackAPI.findStoreByDomain(domain);
-        if (!store) {
-            // Магазин не найден в кеше — если кеш старше 10 минут, пробуем обновить
-            // (защита от лишних запросов при посещении сайтов не из списка)
-            const cacheData = await chrome.storage.local.get('stores_updated_at');
-            const cacheAge = Date.now() - (cacheData.stores_updated_at || 0);
-            if (cacheAge > 10 * 60 * 1000) {
-                try {
-                    await CashbackAPI.fetchStores(true);
-                    store = await CashbackAPI.findStoreByDomain(domain);
-                } catch {
-                    // Если обновить не удалось — оставляем серую иконку
-                }
+        // Если кеш устарел — обновляем ДО поиска магазина, чтобы получить актуальный
+        // popup_mode и другие настройки (изменения применяются сразу после обновления в админке)
+        const cacheData = await chrome.storage.local.get('stores_updated_at');
+        const cacheAge = Date.now() - (cacheData.stores_updated_at || 0);
+        if (cacheAge > CASHBACK_CONFIG.STORES_CACHE_TTL) {
+            try {
+                await CashbackAPI.fetchStores(true);
+            } catch {
+                // Используем устаревший кеш если обновить не удалось
             }
         }
+
+        const store = await CashbackAPI.findStoreByDomain(domain);
         if (!store) {
             await setIcon(tabId, ICON_STATES.GRAY);
             return;

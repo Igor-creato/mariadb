@@ -27,8 +27,9 @@ const CASHBACK_CONFIG = {
     return `${this.SITE_URL}/shop/`;
   },
 
-  // TTL кеша списка магазинов (6 часов в мс)
-  STORES_CACHE_TTL: 6 * 60 * 60 * 1000,
+  // TTL кеша списка магазинов (10 минут в мс)
+  // Короткий TTL гарантирует быстрое применение изменений popup_mode и других настроек
+  STORES_CACHE_TTL: 10 * 60 * 1000,
 
   // TTL активации кэшбэка (30 минут в мс)
   ACTIVATION_TTL: 30 * 60 * 1000,
