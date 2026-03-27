@@ -980,35 +980,51 @@ HTML;
             return $base_url;
         }
 
-        // Получаем параметры из post_meta (продуктовые) или из сети
+        // Сначала загружаем параметры сети
+        $params_table = $wpdb->prefix . 'cashback_affiliate_network_params';
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+        $network_rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT param_name, param_type
+             FROM {$params_table}
+             WHERE network_id = %d
+             ORDER BY id ASC",
+            $network_id
+        ), ARRAY_A);
+
+        $merged = [];
+        $key_to_index = [];
+        foreach ($network_rows as $i => $row) {
+            $merged[$i] = [
+                'key'   => $row['param_name'],
+                'value' => $row['param_type'],
+            ];
+            $key_to_index[$row['param_name']] = $i;
+        }
+
+        // Мерж индивидуальных параметров товара: переопределяют или дополняют сетевые
         $product_params = get_post_meta($product_id, '_affiliate_product_params', true);
-
-        if (!is_array($product_params) || empty($product_params)) {
-            // Fallback: параметры из сети
-            $params_table = $wpdb->prefix . 'cashback_affiliate_network_params';
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
-            $network_params = $wpdb->get_results($wpdb->prepare(
-                "SELECT param_name, param_type, default_value
-                 FROM {$params_table}
-                 WHERE network_id = %d",
-                $network_id
-            ), ARRAY_A);
-
-            $product_params = [];
-            foreach ($network_params as $np) {
-                $product_params[] = [
-                    'key'   => $np['param_name'],
-                    'value' => $np['param_type'],
-                ];
+        if (is_array($product_params) && !empty($product_params)) {
+            foreach ($product_params as $pp) {
+                if (empty($pp['key'])) {
+                    continue;
+                }
+                if (isset($key_to_index[$pp['key']])) {
+                    $merged[$key_to_index[$pp['key']]]['value'] = $pp['value'];
+                } else {
+                    $merged[] = [
+                        'key'   => $pp['key'],
+                        'value' => $pp['value'],
+                    ];
+                }
             }
         }
 
-        if (empty($product_params)) {
+        if (empty($merged)) {
             return $base_url;
         }
 
         $params = [];
-        foreach ($product_params as $param) {
+        foreach ($merged as $param) {
             if (empty($param['key']) || empty($param['value'])) {
                 continue;
             }
