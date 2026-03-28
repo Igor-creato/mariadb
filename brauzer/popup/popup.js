@@ -4,7 +4,7 @@
  * Управляет отображением:
  * - Экрана авторизации
  * - Баланса пользователя
- * - Блока кэшбэка (доступен / активирован / недоступен)
+ * - Блока кэшбэка (4 состояния: idle / active / competing / expired)
  * - Списка последних транзакций
  */
 
@@ -13,28 +13,39 @@ document.addEventListener('DOMContentLoaded', init);
 // ─── Элементы DOM ───
 
 const $ = (selector) => document.querySelector(selector);
-const $$ = (selector) => document.querySelectorAll(selector);
 
 const els = {
-    loading: $('#loading'),
-    screenAuth: $('#screen-auth'),
-    screenMain: $('#screen-main'),
-    btnLogin: $('#btn-login'),
-    userName: $('#user-name'),
-    balanceAvailable: $('#balance-available'),
-    balancePending: $('#balance-pending'),
-    balancePaid: $('#balance-paid'),
-    cashbackSection: $('#cashback-section'),
-    cashbackAvailable: $('#cashback-available'),
-    cashbackActivated: $('#cashback-activated'),
-    cashbackNone: $('#cashback-none'),
-    storeName: $('#store-name'),
-    cashbackValue: $('#cashback-value'),
-    btnActivate: $('#btn-activate'),
-    timerValue: $('#timer-value'),
-    linkStores: $('#link-stores'),
-    transactionsList: $('#transactions-list'),
-    btnRefresh: $('#btn-refresh'),
+    loading:              $('#loading'),
+    screenAuth:           $('#screen-auth'),
+    screenMain:           $('#screen-main'),
+    btnLogin:             $('#btn-login'),
+    userName:             $('#user-name'),
+    balanceAvailable:     $('#balance-available'),
+    balancePending:       $('#balance-pending'),
+    balancePaid:          $('#balance-paid'),
+    cashbackSection:      $('#cashback-section'),
+    // idle state
+    cashbackAvailable:    $('#cashback-available'),
+    storeName:            $('#store-name'),
+    cashbackValue:        $('#cashback-value'),
+    btnActivate:          $('#btn-activate'),
+    // active state
+    cashbackActivated:    $('#cashback-activated'),
+    timerValue:           $('#timer-value'),
+    // competing state
+    cashbackCompeting:    $('#cashback-competing'),
+    competingStoreName:   $('#competing-store-name'),
+    btnReactivate:        $('#btn-reactivate'),
+    // expired state
+    cashbackExpired:      $('#cashback-expired'),
+    expiredStoreName:     $('#expired-store-name'),
+    btnReactivateExpired: $('#btn-reactivate-expired'),
+    // none state
+    cashbackNone:         $('#cashback-none'),
+    linkStores:           $('#link-stores'),
+    // other
+    transactionsList:     $('#transactions-list'),
+    btnRefresh:           $('#btn-refresh'),
 };
 
 let timerInterval = null;
@@ -53,8 +64,10 @@ async function init() {
         chrome.tabs.create({ url: CASHBACK_CONFIG.STORES_URL });
     });
 
-    // Кнопка активации
-    els.btnActivate.addEventListener('click', handleActivate);
+    // Кнопки активации
+    els.btnActivate.addEventListener('click', () => handleActivate(els.btnActivate));
+    els.btnReactivate.addEventListener('click', () => handleActivate(els.btnReactivate));
+    els.btnReactivateExpired.addEventListener('click', () => handleActivate(els.btnReactivateExpired));
 
     // Кнопка обновления магазинов
     els.btnRefresh.addEventListener('click', handleRefresh);
@@ -125,12 +138,19 @@ async function getCurrentTabStoreInfo() {
     }
 }
 
+/**
+ * Рендер блока кэшбэка для текущего сайта.
+ * Четыре состояния: idle / active / competing / expired.
+ * Нет магазина → none.
+ */
 function renderCashbackSection(storeInfo) {
     els.cashbackSection.classList.remove('hidden');
 
     // Скрываем все состояния
     els.cashbackAvailable.classList.add('hidden');
     els.cashbackActivated.classList.add('hidden');
+    els.cashbackCompeting.classList.add('hidden');
+    els.cashbackExpired.classList.add('hidden');
     els.cashbackNone.classList.add('hidden');
 
     if (!storeInfo || !storeInfo.store) {
@@ -139,19 +159,46 @@ function renderCashbackSection(storeInfo) {
         return;
     }
 
-    if (storeInfo.activated) {
-        // Кэшбэк активирован
-        els.cashbackActivated.classList.remove('hidden');
-        startTimer(storeInfo.activation);
-    } else {
-        // Кэшбэк доступен, но не активирован
-        els.cashbackAvailable.classList.remove('hidden');
-        els.storeName.textContent = storeInfo.store.store_name || storeInfo.store.domain;
-        els.cashbackValue.textContent =
-            (storeInfo.store.cashback_label || 'Кэшбэк') + ' ' +
-            (storeInfo.store.cashback_value || '');
-        els.btnActivate.dataset.productId = storeInfo.store.product_id;
-        els.btnActivate.dataset.domain = storeInfo.store.domain;
+    // Определяем состояние: из нового поля state или из legacy-поля activated
+    const state = storeInfo.state ||
+        (storeInfo.activated ? 'active' : 'idle');
+
+    const store = storeInfo.store;
+
+    switch (state) {
+        case 'active':
+            // Кэшбэк активирован — зелёная иконка, таймер
+            els.cashbackActivated.classList.remove('hidden');
+            startTimer(storeInfo.activation);
+            break;
+
+        case 'competing':
+            // Чужой сайт перехватил активацию — оранжевая карточка
+            els.cashbackCompeting.classList.remove('hidden');
+            els.competingStoreName.textContent = store.store_name || store.domain;
+            // Устанавливаем данные для повторной активации
+            els.btnReactivate.dataset.productId = store.product_id;
+            els.btnReactivate.dataset.domain    = store.domain;
+            break;
+
+        case 'expired':
+            // TTL истёк — серая карточка
+            els.cashbackExpired.classList.remove('hidden');
+            els.expiredStoreName.textContent = store.store_name || store.domain;
+            els.btnReactivateExpired.dataset.productId = store.product_id;
+            els.btnReactivateExpired.dataset.domain    = store.domain;
+            break;
+
+        default:
+            // idle: кэшбэк доступен, но не активирован — красная карточка
+            els.cashbackAvailable.classList.remove('hidden');
+            els.storeName.textContent   = store.store_name || store.domain;
+            els.cashbackValue.textContent =
+                (store.cashback_label || 'Кэшбэк') + ' ' +
+                (store.cashback_value || '');
+            els.btnActivate.dataset.productId = store.product_id;
+            els.btnActivate.dataset.domain    = store.domain;
+            break;
     }
 }
 
@@ -176,12 +223,19 @@ async function handleRefresh() {
     }
 }
 
-// ─── Активация кэшбэка ───
+// ─── Активация / повторная активация кэшбэка ───
 
-async function handleActivate() {
-    const btn = els.btnActivate;
+/**
+ * Универсальный обработчик для кнопок:
+ *   #btn-activate        (idle state)
+ *   #btn-reactivate      (competing state)
+ *   #btn-reactivate-expired (expired state)
+ *
+ * Все три кнопки хранят productId и domain в data-атрибутах.
+ */
+async function handleActivate(btn) {
     const productId = parseInt(btn.dataset.productId, 10);
-    const domain = btn.dataset.domain;
+    const domain    = btn.dataset.domain;
 
     if (!productId || btn.disabled) return;
 
@@ -206,12 +260,15 @@ async function handleActivate() {
             await chrome.tabs.update(tab.id, { url: result.redirect_url });
         }
 
-        // Показываем активированное состояние
+        // Переключаем на состояние "активирован" независимо от исходного состояния
         els.cashbackAvailable.classList.add('hidden');
+        els.cashbackCompeting.classList.add('hidden');
+        els.cashbackExpired.classList.add('hidden');
         els.cashbackActivated.classList.remove('hidden');
+
         startTimer({
             remaining_minutes: 30,
-            activated_at: new Date().toISOString(),
+            activated_at:      new Date().toISOString(),
         });
     } catch {
         btn.textContent = 'Ошибка. Попробуйте снова';
@@ -247,7 +304,7 @@ function startTimer(activation) {
         if (remainingMs <= 0) {
             els.timerValue.textContent = 'Истёк';
             clearInterval(timerInterval);
-            // Переключаем на состояние "доступен"
+            // Переключаем на состояние "expired"
             setTimeout(() => location.reload(), 1000);
             return;
         }
@@ -274,7 +331,7 @@ function renderTransactions(data) {
         .map((item) => {
             const statusClass = getStatusClass(item.order_status);
             const statusLabel = getStatusLabel(item.order_status);
-            const date = formatDate(item.action_date || item.created_at);
+            const date   = formatDate(item.action_date || item.created_at);
             const amount = formatMoney(item.cashback);
 
             return `
@@ -312,9 +369,9 @@ function formatDate(dateStr) {
     try {
         const date = new Date(dateStr);
         return date.toLocaleDateString('ru-RU', {
-            day: '2-digit',
+            day:   '2-digit',
             month: '2-digit',
-            year: 'numeric',
+            year:  'numeric',
         });
     } catch {
         return dateStr;
@@ -323,22 +380,22 @@ function formatDate(dateStr) {
 
 function getStatusClass(status) {
     const map = {
-        waiting: 'status-waiting',
+        waiting:   'status-waiting',
         completed: 'status-completed',
-        balance: 'status-balance',
-        declined: 'status-declined',
-        hold: 'status-hold',
+        balance:   'status-balance',
+        declined:  'status-declined',
+        hold:      'status-hold',
     };
     return map[status] || 'status-waiting';
 }
 
 function getStatusLabel(status) {
     const map = {
-        waiting: 'Ожидание',
+        waiting:   'Ожидание',
         completed: 'Подтверждён',
-        balance: 'Зачислен',
-        declined: 'Отклонён',
-        hold: 'Проверка',
+        balance:   'Зачислен',
+        declined:  'Отклонён',
+        hold:      'Проверка',
     };
     return map[status] || status;
 }
@@ -347,4 +404,13 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+function isValidRedirectUrl(url) {
+    try {
+        const parsed = new URL(url);
+        return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    } catch {
+        return false;
+    }
 }

@@ -204,6 +204,20 @@ body {
     background: linear-gradient(135deg, #c0392b, #a93226);
 }
 
+/* Кнопка повторной активации (competing) — оранжевая */
+.btn-reactivate {
+    background: linear-gradient(135deg, #f39c12, #d68910);
+    color: #fff;
+    width: 100%;
+    padding: 12px;
+    font-size: 15px;
+    border-radius: 10px;
+}
+
+.btn-reactivate:hover {
+    background: linear-gradient(135deg, #d68910, #b7770d);
+}
+
 .btn-activate.loading {
     pointer-events: none;
 }
@@ -303,6 +317,18 @@ body {
     gap: 8px;
 }
 
+/* Competing: активация сброшена чужим сайтом */
+.cashback-competing {
+    background: linear-gradient(135deg, #2d2010, #1a1d23);
+    border: 1px solid rgba(243, 156, 18, 0.35);
+}
+
+/* Expired: время активации истекло */
+.cashback-expired {
+    background: linear-gradient(135deg, #1e2228, #1a1d23);
+    border: 1px solid rgba(127, 140, 141, 0.3);
+}
+
 .cashback-info {
     display: flex;
     align-items: center;
@@ -337,6 +363,14 @@ body {
     font-size: 15px;
     font-weight: 600;
     color: #27ae60;
+}
+
+.cashback-status-text.competing {
+    color: #f39c12;
+}
+
+.cashback-status-text.expired {
+    color: #7f8c8d;
 }
 
 .cashback-hint {

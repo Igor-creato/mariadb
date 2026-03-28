@@ -8,10 +8,12 @@
     "storage",
     "tabs",
     "alarms",
-    "activeTab"
+    "activeTab",
+    "cookies",
+    "webNavigation"
   ],
   "host_permissions": [
-    "https://site.autmatization-bot.ru/*"
+    "http://localhost/kash-back/*"
   ],
   "action": {
     "default_popup": "popup/popup.html",

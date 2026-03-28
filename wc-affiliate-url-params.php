@@ -832,6 +832,31 @@ class WC_Affiliate_URL_Params
                 'spam_click'    => $rate_status === 'spam' ? 1 : 0,
             ]);
 
+            // Устанавливаем cookie для браузерного расширения.
+            // chrome.cookies API расширения читает этот cookie на каждое событие onUpdated
+            // и сохраняет активацию в chrome.storage.session — независимо от состояния SW,
+            // кеша userId и SameSite-ограничений WP auth cookie в cross-origin fetch.
+            $dest_host   = (string) parse_url($affiliate_url, PHP_URL_HOST);
+            $dest_domain = strtolower(preg_replace('/^www\./i', '', $dest_host));
+
+            if (!empty($dest_domain)) {
+                setcookie(
+                    'cb_activation',
+                    (string) wp_json_encode([
+                        'click_id' => $click_id,
+                        'domain'   => $dest_domain,
+                        'ts'       => time(),
+                    ]),
+                    [
+                        'expires'  => time() + 1800,
+                        'path'     => '/',
+                        'secure'   => is_ssl(),
+                        'httponly' => false,
+                        'samesite' => 'Lax',
+                    ]
+                );
+            }
+
             // Redirect through activation page so the browser extension can detect
             // the cashback activation and show the green icon on the partner site.
             // The click is already logged above, handle_activation_page() will look it
@@ -1235,10 +1260,18 @@ class WC_Affiliate_URL_Params
     public function add_product_id_to_link(string $link, WC_Product $product): string
     {
         if ($product->get_type() === 'external') {
-            $base_url = $product->get_product_url();
+            $product_id   = $product->get_id();
+            $base_url     = $product->get_product_url();
+            $cashback_url = home_url('/?cashback_click=' . $product_id);
+
+            // Принудительно заменяем href на наш click-tracking endpoint.
+            // WoodMart может рендерить кнопки через get_product_url() напрямую,
+            // минуя фильтр woocommerce_product_add_to_cart_url — подправляем здесь.
+            $link = preg_replace('/\bhref="[^"]*"/', 'href="' . esc_url($cashback_url) . '"', $link, 1);
+
             $link = str_replace(
                 '<a ',
-                '<a data-product-id="' . esc_attr((string) $product->get_id()) . '"'
+                '<a data-product-id="' . esc_attr((string) $product_id) . '"'
                     . ' data-product-url="' . esc_url($base_url) . '"'
                     . ' target="_blank"'
                     . ' rel="nofollow" ',

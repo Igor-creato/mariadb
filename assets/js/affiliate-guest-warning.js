@@ -28,8 +28,8 @@
         var productId = $button.data('product-id');
         var href = $button.attr('href') || '';
 
-        // Только партнерские товары (href содержит cashback_click и есть data-product-id)
-        if (!productId || href.indexOf('cashback_click=') === -1) {
+        // Только партнерские товары — проверяем data-product-id
+        if (!productId) {
           return;
         }
 

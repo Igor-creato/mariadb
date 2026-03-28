@@ -63,7 +63,8 @@
 
         <!-- Блок кэшбэка для текущего сайта -->
         <div id="cashback-section" class="cashback-section hidden">
-            <!-- Состояние: кэшбэк доступен (красная иконка) -->
+
+            <!-- Состояние: кэшбэк доступен (idle — красная иконка) -->
             <div id="cashback-available" class="cashback-card cashback-available hidden">
                 <div class="cashback-info">
                     <span class="cashback-badge">&#128293;</span>
@@ -75,7 +76,7 @@
                 <button id="btn-activate" class="btn btn-activate">Активировать кэшбэк</button>
             </div>
 
-            <!-- Состояние: кэшбэк активирован (зелёная иконка) -->
+            <!-- Состояние: кэшбэк активирован (active — зелёная иконка) -->
             <div id="cashback-activated" class="cashback-card cashback-activated hidden">
                 <div class="cashback-info">
                     <span class="cashback-badge">&#9989;</span>
@@ -88,6 +89,32 @@
                     <span class="timer-label">Активен ещё</span>
                     <span id="timer-value" class="timer-value">30 мин</span>
                 </div>
+            </div>
+
+            <!-- Состояние: кэшбэк сброшен конкурирующей ссылкой (competing — красная иконка) -->
+            <div id="cashback-competing" class="cashback-card cashback-competing hidden">
+                <div class="cashback-info">
+                    <span class="cashback-badge">&#9888;&#65039;</span>
+                    <div class="cashback-details">
+                        <span class="cashback-store" id="competing-store-name"></span>
+                        <span class="cashback-status-text competing">Кэшбэк сброшен</span>
+                        <span class="cashback-hint">Активация перехвачена другим сайтом</span>
+                    </div>
+                </div>
+                <button id="btn-reactivate" class="btn btn-reactivate">Активировать снова</button>
+            </div>
+
+            <!-- Состояние: время активации истекло (expired — красная иконка) -->
+            <div id="cashback-expired" class="cashback-card cashback-expired hidden">
+                <div class="cashback-info">
+                    <span class="cashback-badge">&#128337;</span>
+                    <div class="cashback-details">
+                        <span class="cashback-store" id="expired-store-name"></span>
+                        <span class="cashback-status-text expired">Время активации истекло</span>
+                        <span class="cashback-hint">Активируйте кэшбэк снова</span>
+                    </div>
+                </div>
+                <button id="btn-reactivate-expired" class="btn btn-activate">Активировать снова</button>
             </div>
 
             <!-- Состояние: нет кэшбэка (серая иконка) -->

@@ -6,6 +6,9 @@
  *   1. Service Worker пушит SHOW_NOTIFICATION после определения магазина
  *   2. Content script сам запрашивает GET_STORE_INFO (fallback)
  *
+ * Детекция competing: проверяет document.referrer и URL-параметры на признаки
+ * конкурирующих affiliate-редиректов (индустриальный стандарт — Honey, Rakuten).
+ *
  * Уведомление рендерится через Shadow DOM (изоляция от CSS сайта).
  */
 
@@ -54,22 +57,27 @@
             const productId = parseInt(btn.getAttribute('data-product-id'), 10);
             if (!productId) return;
 
-            // Перехватываем только ссылки через наш click-tracking endpoint
+            // Перехватываем все кнопки с data-product-id на нашем сайте
+            // (и новые с cashback_click=, и старые с прямым affiliate URL)
             const href = btn.getAttribute('href') || '';
-            if (!href.includes('cashback_click=')) return;
+            if (!href) return;
 
             e.preventDefault();
-            e.stopPropagation();
+            e.stopImmediatePropagation(); // останавливаем и WoodMart-обработчики
 
-            const originalText = btn.textContent;
+            // Сохраняем полный innerHTML и фиксируем ширину, чтобы кнопка не меняла размер
+            const originalHTML     = btn.innerHTML;
+            const originalMinWidth = btn.style.minWidth;
+            btn.style.minWidth = btn.offsetWidth + 'px';
             btn.textContent = '...';
 
             chrome.runtime.sendMessage({
-                type: 'ACTIVATE',
+                type:      'ACTIVATE',
                 productId: productId,
-                domain: null, // SW извлечёт домен из result.redirect_url
+                domain:    null, // SW извлечёт домен из result.redirect_url
             }).then(function (result) {
-                btn.textContent = originalText;
+                btn.style.minWidth = originalMinWidth;
+                btn.innerHTML = originalHTML;
                 if (result && !result.error && result.redirect_url && isValidRedirectUrl(result.redirect_url)) {
                     window.open(result.redirect_url, '_blank');
                 } else {
@@ -77,7 +85,8 @@
                     window.open(href, '_blank');
                 }
             }).catch(function () {
-                btn.textContent = originalText;
+                btn.style.minWidth = originalMinWidth;
+                btn.innerHTML = originalHTML;
                 window.open(href, '_blank');
             });
         }, true); // capture: перехватываем до срабатывания href
@@ -131,7 +140,7 @@
 
     chrome.runtime.onMessage.addListener((message) => {
         if (message.type === 'SHOW_NOTIFICATION' && message.store && !notificationShown) {
-            handleShowNotification(message.store, message.isAuthenticated);
+            handleShowNotification(message.store, message.isAuthenticated, message.notification_type || 'activate');
         }
     });
 
@@ -150,7 +159,19 @@
                 return;
             }
 
-            if (response.activated) {
+            // Кэшбэк активен — проверяем на competing через referrer/URL
+            if (response.state === 'active' || response.activated) {
+                if (detectCompetingClick()) {
+                    // Уведомляем background — он переведёт состояние и пришлёт
+                    // SHOW_NOTIFICATION с notification_type='competing'
+                    chrome.runtime.sendMessage({ type: 'COMPETING_DETECTED', domain }).catch(() => {});
+                }
+                // Не показываем стандартное уведомление при активном кэшбэке
+                return;
+            }
+
+            // Состояние competing — уведомление уже показано фоновым скриптом
+            if (response.state === 'competing') {
                 return;
             }
 
@@ -159,7 +180,7 @@
                 return;
             }
 
-            // Проверяем авторизацию отдельно (не блокирует показ)
+            // idle или expired — обычное уведомление "Активировать кэшбэк"
             let isAuthenticated = false;
             try {
                 const authResponse = await chrome.runtime.sendMessage({ type: 'CHECK_AUTH' });
@@ -168,20 +189,103 @@
                 // Покажем уведомление для неавторизованного
             }
 
-            handleShowNotification(response.store, isAuthenticated);
+            handleShowNotification(response.store, isAuthenticated, 'activate');
         } catch {
             // Ошибка fallback-запроса — игнорируем
         }
     }, CASHBACK_CONFIG.NOTIFICATION_DELAY);
 
+    // ─── Детекция конкурирующего affiliate-клика ───
+    //
+    // Стандартный метод индустрии (Honey, Rakuten, Letyshops):
+    //   1. Проверка document.referrer — если пришли с известного конкурирующего сервиса
+    //      или через URL с типичными паттернами affiliate-редиректов → competing.
+    //   2. Проверка URL-параметров текущей страницы — affiliate-теги чужих сетей.
+    //
+    // Вызывается ТОЛЬКО при наличии активной сессии (state === 'active').
+
+    function detectCompetingClick() {
+        const referrer    = document.referrer;
+        const currentUrl  = window.location.href;
+
+        // Известные конкурирующие кэшбэк-сервисы и affiliate-сети
+        const COMPETING_DOMAINS = [
+            // Российские кэшбэк-сервисы
+            'letyshops.com', 'megabonus.com', 'kopikot.ru',
+            'smarty.sale',   'cashback.ru',   'giftd.tech',
+            'skidka.ru',     'backit.me',      'ePN.bz',
+            // Affiliate-сети (не наши)
+            'admitad.com',  'cityads.ru',  'actionpay.ru',
+            'leads.su',     'cpa.ru',      'where.ru',
+            // Глобальные кэшбэк и affiliate
+            'honey.com',          'joinhoney.com',
+            'awin.com',           'awinmid.com',
+            'tradedoubler.com',   'rakuten.com',
+            'linksynergy.com',    'commissionjunction.com',
+            'cj.com',
+        ];
+
+        // Паттерны путей, характерные для affiliate-редиректов
+        const REDIRECT_PATH_PATTERNS = [
+            '/goto/', '/r/', '/click/', '/track/',
+            '/refer/', '/redirect/', '/go/', '/out/', '/visit/', '/away/',
+        ];
+
+        // URL-параметры, уникальные для чужих affiliate-сетей
+        const COMPETING_URL_PARAMS = [
+            'awinmid', 'awinaffid', 'awc',   // AWIN
+            'admitad_uid',                     // Admitad
+        ];
+
+        // 1. Анализ document.referrer
+        if (referrer) {
+            try {
+                const ref     = new URL(referrer);
+                const refHost = ref.hostname.replace(/^www\./i, '').toLowerCase();
+                const refPath = ref.pathname;
+                const ourHost = new URL(CASHBACK_CONFIG.SITE_URL).hostname.replace(/^www\./i, '');
+
+                // Не конкурент если пришли с нашего сайта или с самого магазина
+                if (refHost !== ourHost && refHost !== domain) {
+                    // Точное совпадение с известным конкурирующим доменом
+                    if (COMPETING_DOMAINS.some(d =>
+                        refHost === d.toLowerCase() || refHost.endsWith('.' + d.toLowerCase())
+                    )) {
+                        return true;
+                    }
+                    // Обобщённый признак: путь содержит паттерн affiliate-редиректа
+                    if (REDIRECT_PATH_PATTERNS.some(p => refPath.includes(p))) {
+                        return true;
+                    }
+                }
+            } catch { /* невалидный referrer — игнорируем */ }
+        }
+
+        // 2. Анализ URL-параметров текущей страницы
+        try {
+            const params = new URL(currentUrl).searchParams;
+            if (COMPETING_URL_PARAMS.some(p => params.has(p))) {
+                return true;
+            }
+        } catch { /* невалидный URL — игнорируем */ }
+
+        return false;
+    }
+
     // ─── Общая логика показа уведомления ───
 
-    async function handleShowNotification(store, isAuthenticated) {
+    async function handleShowNotification(store, isAuthenticated, notificationType) {
         if (notificationShown) return;
 
-        // Проверяем dismiss
+        const type = notificationType || 'activate';
+
+        // Для competing-уведомлений используем отдельный ключ dismiss
+        // (не блокируется предыдущим dismiss обычного уведомления)
+        const dismissKey = type === 'competing'
+            ? `competing_dismissed_${domain}`
+            : `dismissed_${domain}`;
+
         try {
-            const dismissKey = `dismissed_${domain}`;
             const dismissed = await chrome.storage.session.get(dismissKey);
             if (dismissed[dismissKey]) {
                 return;
@@ -191,15 +295,16 @@
         }
 
         notificationShown = true;
-        showNotification(store, domain, !!isAuthenticated);
+        showNotification(store, domain, !!isAuthenticated, type);
     }
 
     // ─── Создание и показ уведомления через Shadow DOM ───
 
-    function showNotification(store, domain, isAuthenticated) {
-        const storeName = store.store_name || domain;
+    function showNotification(store, domain, isAuthenticated, notificationType) {
+        const storeName     = store.store_name || domain;
         const cashbackLabel = store.cashback_label || 'Кэшбэк';
         const cashbackValue = store.cashback_value || '';
+        const isCompeting   = notificationType === 'competing';
 
         // Контейнер-хост для Shadow DOM
         const host = document.createElement('div');
@@ -226,16 +331,36 @@
 
         // Уведомление
         const notification = document.createElement('div');
-        notification.className = 'cb-notification';
+        notification.className = isCompeting
+            ? 'cb-notification competing'
+            : 'cb-notification';
 
         const safeProductId = parseInt(store.product_id, 10) || 0;
-        const actionsHtml = isAuthenticated
-            ? `<button class="cb-btn cb-btn-activate" data-product-id="${safeProductId}">Активировать кэшбэк</button>`
-            : `<button class="cb-btn cb-btn-login">Войти и получить кэшбэк</button>`;
 
-        const subtitleText = isAuthenticated
-            ? 'Активируйте для получения возврата'
-            : 'Войдите для получения кэшбэка';
+        // ── Содержимое в зависимости от типа ──
+        let iconHtml, titleHtml, valueHtml, subtitleText, actionsHtml;
+
+        if (isCompeting) {
+            // Competing: кэшбэк был сброшен чужим сайтом
+            iconHtml    = '&#9888;&#65039;';
+            titleHtml   = escapeHtml(storeName);
+            valueHtml   = 'Активация кэшбэка сброшена чужим сайтом';
+            subtitleText = 'Нажмите, чтобы восстановить кэшбэк';
+            actionsHtml  = isAuthenticated
+                ? `<button class="cb-btn cb-btn-activate competing" data-product-id="${safeProductId}">Активировать снова</button>`
+                : `<button class="cb-btn cb-btn-login">Войти и получить кэшбэк</button>`;
+        } else {
+            // Стандартное: предложение активировать кэшбэк
+            iconHtml    = '&#127873;';
+            titleHtml   = escapeHtml(storeName);
+            valueHtml   = escapeHtml(cashbackLabel) + ' ' + escapeHtml(cashbackValue);
+            subtitleText = isAuthenticated
+                ? 'Активируйте для получения возврата'
+                : 'Войдите для получения кэшбэка';
+            actionsHtml = isAuthenticated
+                ? `<button class="cb-btn cb-btn-activate" data-product-id="${safeProductId}">Активировать кэшбэк</button>`
+                : `<button class="cb-btn cb-btn-login">Войти и получить кэшбэк</button>`;
+        }
 
         notification.innerHTML =
             '<div class="cb-header">' +
@@ -246,10 +371,10 @@
                 '<button class="cb-close" title="Закрыть">&times;</button>' +
             '</div>' +
             '<div class="cb-body">' +
-                '<span class="cb-icon">&#127873;</span>' +
+                '<span class="cb-icon">' + iconHtml + '</span>' +
                 '<div class="cb-info">' +
-                    '<span class="cb-title">' + escapeHtml(storeName) + '</span>' +
-                    '<span class="cb-value">' + escapeHtml(cashbackLabel) + ' ' + escapeHtml(cashbackValue) + '</span>' +
+                    '<span class="cb-title">' + titleHtml + '</span>' +
+                    '<span class="cb-value' + (isCompeting ? ' competing' : '') + '">' + (isCompeting ? escapeHtml(valueHtml) : valueHtml) + '</span>' +
                     '<span class="cb-subtitle">' + subtitleText + '</span>' +
                 '</div>' +
             '</div>' +
@@ -269,14 +394,14 @@
         // ─── Обработчики ───
 
         shadow.querySelector('.cb-close').addEventListener('click', () => {
-            dismissNotification(host, notification, domain);
+            dismissNotification(host, notification, domain, notificationType);
         });
 
         const loginBtn = shadow.querySelector('.cb-btn-login');
         if (loginBtn) {
             loginBtn.addEventListener('click', () => {
                 window.open(CASHBACK_CONFIG.LOGIN_URL, '_blank');
-                dismissNotification(host, notification, domain);
+                dismissNotification(host, notification, domain, notificationType);
             });
         }
 
@@ -302,6 +427,7 @@
 
                     activateBtn.textContent = '\u2713 Кэшбэк активирован!';
                     activateBtn.classList.add('success');
+                    notification.classList.remove('competing');
                     notification.classList.add('activated');
 
                     if (result && result.activation_page_url && isValidRedirectUrl(result.activation_page_url)) {
@@ -309,7 +435,7 @@
                             window.location.href = result.activation_page_url;
                         }, 800);
                     } else {
-                        setTimeout(() => dismissNotification(host, notification, domain), 3000);
+                        setTimeout(() => dismissNotification(host, notification, domain, notificationType), 3000);
                     }
                 } catch (e) {
                     activateBtn.textContent = 'Ошибка. Попробуйте снова';
@@ -321,11 +447,14 @@
 
     // ─── Скрытие уведомления ───
 
-    function dismissNotification(host, notification, domain) {
+    function dismissNotification(host, notification, domain, notificationType) {
         notification.classList.remove('visible');
         notification.classList.add('hiding');
 
-        const dismissKey = `dismissed_${domain}`;
+        const dismissKey = notificationType === 'competing'
+            ? `competing_dismissed_${domain}`
+            : `dismissed_${domain}`;
+
         chrome.storage.session.set({ [dismissKey]: true }).catch(() => {});
 
         setTimeout(() => host.remove(), 400);
@@ -365,6 +494,10 @@
             }
             .cb-notification.activated .cb-value {
                 color: #27ae60;
+            }
+            /* Competing: оранжевая рамка */
+            .cb-notification.competing {
+                border-color: rgba(243, 156, 18, 0.5);
             }
             .cb-header {
                 display: flex;
@@ -412,6 +545,13 @@
             .cb-value {
                 font-size: 18px; font-weight: 700; color: #e74c3c;
             }
+            /* Competing: оранжевый текст для предупреждения */
+            .cb-value.competing {
+                font-size: 13px;
+                font-weight: 600;
+                color: #f39c12;
+                line-height: 1.4;
+            }
             .cb-subtitle {
                 font-size: 12px; color: #8b8fa3;
             }
@@ -429,6 +569,14 @@
             }
             .cb-btn-activate:hover {
                 background: linear-gradient(135deg, #c0392b, #a93226);
+                transform: translateY(-1px);
+            }
+            /* Competing: оранжевая кнопка "Активировать снова" */
+            .cb-btn-activate.competing {
+                background: linear-gradient(135deg, #f39c12, #d68910);
+            }
+            .cb-btn-activate.competing:hover {
+                background: linear-gradient(135deg, #d68910, #b7770d);
                 transform: translateY(-1px);
             }
             .cb-btn-login {

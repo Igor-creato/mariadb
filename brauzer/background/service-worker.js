@@ -14,14 +14,28 @@ importScripts('../utils/config.js', '../utils/api.js');
 // ─── Константы ───
 
 const ICON_STATES = {
-    GRAY: 'gray',
-    RED: 'red',
+    GRAY:  'gray',
+    RED:   'red',
     GREEN: 'green',
 };
 
-const ALARM_REFRESH_STORES = 'refresh-stores';
+/**
+ * Четыре состояния кэшбэка для домена:
+ *   idle      — нет активации (пользователь не активировал)
+ *   active    — наша активация действует (зелёный значок)
+ *   competing — после нашей активации сработала чужая партнёрская ссылка
+ *   expired   — TTL истёк (запись сохраняется для UX — "Время истекло")
+ */
+const CASHBACK_STATE = {
+    IDLE:      'idle',
+    ACTIVE:    'active',
+    COMPETING: 'competing',
+    EXPIRED:   'expired',
+};
+
+const ALARM_REFRESH_STORES    = 'refresh-stores';
 const ALARM_CLEANUP_ACTIVATIONS = 'cleanup-activations';
-const CURRENT_USER_KEY = 'current_user_id';
+const CURRENT_USER_KEY        = 'current_user_id';
 
 // ─── Кеширование текущего пользователя ───
 
@@ -98,6 +112,9 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
         if (isActivationPageUrl(tab.url)) {
             await handleActivationPageNavigation(tab.url);
         }
+        // Читаем cookie cb_activation, установленный PHP при ?cashback_click=.
+        // Работает как надёжный fallback для всех сценариев потери активации.
+        await syncActivationFromCookie();
         await updateIconForTab(tabId, tab.url);
     }
 });
@@ -126,25 +143,65 @@ async function handleMessage(message, sender) {
     switch (message.type) {
         case 'GET_STORE_INFO': {
             const domain = message.domain;
-            const store = await CashbackAPI.findStoreByDomain(domain);
+            const store  = await CashbackAPI.findStoreByDomain(domain);
             if (!store) {
-                // Синхронизируем иконку: магазин не найден — серая
                 if (sender.tab) {
                     await setIcon(sender.tab.id, ICON_STATES.GRAY);
                 }
-                return { store: null, activated: false };
+                return { store: null, state: CASHBACK_STATE.IDLE, activated: false };
             }
             const activation = await getActivationStatus(domain);
             // Синхронизируем иконку с актуальным состоянием
             if (sender.tab) {
-                if (activation.activated) {
+                if (activation.state === CASHBACK_STATE.ACTIVE) {
                     await setIcon(sender.tab.id, ICON_STATES.GREEN);
                 } else {
                     const badgeText = extractCashbackPercent(store.cashback_value);
                     await setIcon(sender.tab.id, ICON_STATES.RED, badgeText);
                 }
             }
-            return { store, activated: activation.activated, activation };
+            return {
+                store,
+                state:     activation.state,
+                activated: activation.state === CASHBACK_STATE.ACTIVE,
+                activation,
+            };
+        }
+
+        case 'COMPETING_DETECTED': {
+            // Content script обнаружил конкурирующий клик через referrer/URL-анализ.
+            // Переводим состояние active → competing, обновляем иконку и показываем уведомление.
+            const domain     = message.domain;
+            const activation = await getActivationStatus(domain);
+
+            if (activation.state !== CASHBACK_STATE.ACTIVE) {
+                return { success: false, reason: 'not_active' };
+            }
+
+            await updateActivationState(domain, CASHBACK_STATE.COMPETING);
+
+            const store = await CashbackAPI.findStoreByDomain(domain);
+
+            if (sender.tab) {
+                const badgeText = extractCashbackPercent(store?.cashback_value);
+                await setIcon(sender.tab.id, ICON_STATES.RED, badgeText);
+
+                // Показываем competing-уведомление (игнорирует dismissed_{domain})
+                if (store && (!store.popup_mode || store.popup_mode !== 'hide')) {
+                    try {
+                        await chrome.tabs.sendMessage(sender.tab.id, {
+                            type:              'SHOW_NOTIFICATION',
+                            store,
+                            isAuthenticated:   true,
+                            notification_type: 'competing',
+                        });
+                    } catch {
+                        // Content script не отвечает — OK
+                    }
+                }
+            }
+
+            return { success: true };
         }
 
         case 'ACTIVATE': {
@@ -236,7 +293,8 @@ async function handleMessage(message, sender) {
             if (!store) return { state: ICON_STATES.GRAY };
             const activation = await getActivationStatus(message.domain);
             return {
-                state: activation.activated ? ICON_STATES.GREEN : ICON_STATES.RED,
+                state:     activation.state,
+                activated: activation.state === CASHBACK_STATE.ACTIVE,
                 store,
                 activation,
             };
@@ -260,7 +318,7 @@ async function updateIconForTab(tabId, url) {
         // Если кеш устарел — обновляем ДО поиска магазина, чтобы получить актуальный
         // popup_mode и другие настройки (изменения применяются сразу после обновления в админке)
         const cacheData = await chrome.storage.local.get('stores_updated_at');
-        const cacheAge = Date.now() - (cacheData.stores_updated_at || 0);
+        const cacheAge  = Date.now() - (cacheData.stores_updated_at || 0);
         if (cacheAge > CASHBACK_CONFIG.STORES_CACHE_TTL) {
             try {
                 await CashbackAPI.fetchStores(true);
@@ -274,6 +332,8 @@ async function updateIconForTab(tabId, url) {
             await setIcon(tabId, ICON_STATES.GRAY);
             return;
         }
+
+        const badgeText = extractCashbackPercent(store.cashback_value);
 
         // Проверяем активацию
         let activation = await getActivationStatus(domain);
@@ -289,41 +349,50 @@ async function updateIconForTab(tabId, url) {
                 // Не авторизован — очищаем всё
                 await clearCachedUserId();
                 await clearAllActivations();
-                activation = { activated: false };
+                activation = { state: CASHBACK_STATE.IDLE };
             }
         }
 
-        if (activation.activated) {
+        if (activation.state === CASHBACK_STATE.ACTIVE) {
             await setIcon(tabId, ICON_STATES.GREEN, '');
-        } else {
-            // Показываем значок кэшбэка
-            const badgeText = extractCashbackPercent(store.cashback_value);
-            await setIcon(tabId, ICON_STATES.RED, badgeText);
+            // Уведомление не нужно — кэшбэк активен
+            return;
+        }
 
-            // Пушим уведомление в content script
-            let isAuthenticated = false;
-            try {
-                const profile = await CashbackAPI.fetchProfile();
-                isAuthenticated = !!profile;
-                if (profile) {
-                    await setCachedUserId(profile.user_id);
-                }
-            } catch {
-                // Не авторизован — покажем кнопку входа
-            }
+        // RED для competing / expired / idle
+        await setIcon(tabId, ICON_STATES.RED, badgeText);
 
-            // Отправляем уведомление только если popup_mode !== 'hide'
-            if (!store.popup_mode || store.popup_mode !== 'hide') {
-                try {
-                    await chrome.tabs.sendMessage(tabId, {
-                        type: 'SHOW_NOTIFICATION',
-                        store,
-                        isAuthenticated,
-                    });
-                } catch {
-                    // Content script ещё не загружен — он сам запросит через fallback
-                }
+        // Для competing — уведомление уже было показано при обнаружении, не дублируем
+        if (activation.state === CASHBACK_STATE.COMPETING) {
+            return;
+        }
+
+        // Для idle и expired — обычное уведомление (если разрешено)
+        if (store.popup_mode === 'hide') {
+            return;
+        }
+
+        // Проверяем авторизацию для уведомления
+        let isAuthenticated = false;
+        try {
+            const profile = await CashbackAPI.fetchProfile();
+            isAuthenticated = !!profile;
+            if (profile) {
+                await setCachedUserId(profile.user_id);
             }
+        } catch {
+            // Не авторизован — покажем кнопку входа
+        }
+
+        try {
+            await chrome.tabs.sendMessage(tabId, {
+                type:              'SHOW_NOTIFICATION',
+                store,
+                isAuthenticated,
+                notification_type: 'activate',
+            });
+        } catch {
+            // Content script ещё не загружен — он сам запросит через fallback
         }
     } catch (e) {
         // При ошибке — серая иконка
@@ -361,93 +430,194 @@ async function setIcon(tabId, state, badgeText = '') {
 
 async function getActivationStatus(domain) {
     const cleanDomain = domain.replace(/^www\./i, '');
-    const key = `activation_${cleanDomain}`;
+    const key         = `activation_${cleanDomain}`;
 
-    const data = await chrome.storage.session.get(key);
+    const data       = await chrome.storage.session.get(key);
     const activation = data[key];
 
     if (!activation) {
-        return { activated: false };
+        return { state: CASHBACK_STATE.IDLE };
     }
 
-    // Проверяем TTL
+    // Если уже в состоянии expired — возвращаем как есть (запись сохраняется для UX)
+    if (activation.state === CASHBACK_STATE.EXPIRED) {
+        return {
+            state:        CASHBACK_STATE.EXPIRED,
+            activated_at: activation.activated_at,
+            expires_at:   activation.expires_at,
+            click_id:     activation.click_id,
+        };
+    }
+
+    // Проверяем TTL (только для active/competing)
     const elapsed = Date.now() - activation.timestamp;
     if (elapsed > CASHBACK_CONFIG.ACTIVATION_TTL) {
-        await chrome.storage.session.remove(key);
-        return { activated: false };
+        // Переводим в expired — НЕ удаляем, чтобы пользователь видел "Время истекло"
+        await updateActivationState(cleanDomain, CASHBACK_STATE.EXPIRED);
+        return {
+            state:        CASHBACK_STATE.EXPIRED,
+            activated_at: activation.activated_at,
+            expires_at:   activation.expires_at,
+            click_id:     activation.click_id,
+        };
     }
 
     // Проверяем принадлежность пользователю
     if (!activation.user_id) {
         // Legacy-запись без user_id — удаляем
         await chrome.storage.session.remove(key);
-        return { activated: false };
+        return { state: CASHBACK_STATE.IDLE };
     }
 
     const currentUserId = await getCachedUserId();
 
     if (currentUserId && activation.user_id !== currentUserId) {
         // Активация принадлежит другому пользователю
-        return { activated: false };
+        return { state: CASHBACK_STATE.IDLE };
     }
 
     if (!currentUserId) {
         // Не знаем текущего пользователя — нужна проверка через API
         const remainingMs = CASHBACK_CONFIG.ACTIVATION_TTL - elapsed;
         return {
-            activated: true,
+            state:            activation.state || CASHBACK_STATE.ACTIVE,
             needs_auth_check: true,
-            activated_at: activation.activated_at,
-            expires_at: activation.expires_at,
-            click_id: activation.click_id,
+            activated_at:     activation.activated_at,
+            expires_at:       activation.expires_at,
+            click_id:         activation.click_id,
             remaining_minutes: Math.ceil(remainingMs / 60000),
         };
     }
 
     const remainingMs = CASHBACK_CONFIG.ACTIVATION_TTL - elapsed;
     return {
-        activated: true,
-        activated_at: activation.activated_at,
-        expires_at: activation.expires_at,
-        click_id: activation.click_id,
+        state:             activation.state || CASHBACK_STATE.ACTIVE,
+        activated_at:      activation.activated_at,
+        expires_at:        activation.expires_at,
+        click_id:          activation.click_id,
         remaining_minutes: Math.ceil(remainingMs / 60000),
+        // Обратная совместимость
+        activated:         (activation.state || CASHBACK_STATE.ACTIVE) === CASHBACK_STATE.ACTIVE,
     };
 }
 
 async function saveActivation(domain, result, userId) {
     const cleanDomain = domain.replace(/^www\./i, '');
-    const key = `activation_${cleanDomain}`;
+    const key         = `activation_${cleanDomain}`;
 
     await chrome.storage.session.set({
         [key]: {
-            timestamp: Date.now(),
+            state:      CASHBACK_STATE.ACTIVE,   // новое поле
+            timestamp:  Date.now(),
             activated_at: result.expires_at
                 ? new Date(Date.now()).toISOString()
                 : null,
-            expires_at: result.expires_at,
-            click_id: result.click_id,
-            redirect_url: result.redirect_url,
+            expires_at:          result.expires_at,
+            click_id:            result.click_id,
+            redirect_url:        result.redirect_url,
             activation_page_url: result.activation_page_url || null,
-            user_id: userId ? String(userId) : null,
+            user_id:             userId ? String(userId) : null,
         },
     });
 }
 
+/**
+ * Обновляет только поле state в существующей записи активации.
+ * Используется для переходов: active→competing, active→expired.
+ */
+async function updateActivationState(domain, newState) {
+    const cleanDomain = domain.replace(/^www\./i, '');
+    const key         = `activation_${cleanDomain}`;
+
+    const data       = await chrome.storage.session.get(key);
+    const activation = data[key];
+    if (!activation) return;
+
+    await chrome.storage.session.set({
+        [key]: { ...activation, state: newState },
+    });
+}
+
+// ─── Синхронизация активации из cookie (надёжный fallback) ───
+//
+// PHP устанавливает cookie cb_activation при обработке ?cashback_click=.
+// Расширение читает его здесь через chrome.cookies API — без зависимости
+// от состояния SW, кеша userId и SameSite-ограничений WP auth cookie.
+
+async function syncActivationFromCookie() {
+    try {
+        const cookie = await chrome.cookies.get({
+            url:  CASHBACK_CONFIG.SITE_URL,
+            name: 'cb_activation',
+        });
+        if (!cookie || !cookie.value) return;
+
+        const data = JSON.parse(decodeURIComponent(cookie.value));
+        if (!data.click_id || !data.domain || !data.ts) return;
+
+        // Проверяем TTL (ts — unix timestamp в секундах)
+        const ageSeconds = Math.floor(Date.now() / 1000) - data.ts;
+        if (ageSeconds > 1800) return;
+
+        // Не перезаписываем уже сохранённую активацию для этого клика
+        const storageKey = `activation_${data.domain}`;
+        const existing   = await chrome.storage.session.get(storageKey);
+        if (existing[storageKey] && existing[storageKey].click_id === data.click_id) return;
+
+        // Получаем userId
+        let userId = await getCachedUserId();
+        if (!userId) {
+            try {
+                const profile = await CashbackAPI.fetchProfile();
+                userId = String(profile.user_id);
+                await setCachedUserId(userId);
+            } catch {
+                return; // Пользователь не авторизован — активация не сохраняется
+            }
+        }
+
+        await saveActivation(data.domain, {
+            click_id:            data.click_id,
+            expires_at:          new Date((data.ts + 1800) * 1000).toISOString(),
+            redirect_url:        null,
+            activation_page_url: null,
+        }, userId);
+
+    } catch {
+        // Игнорируем: нет разрешения, JSON невалиден и т.п.
+    }
+}
+
 async function cleanupExpiredActivations() {
-    const all = await chrome.storage.session.get(null);
+    const all         = await chrome.storage.session.get(null);
+    const keysToUpdate = [];
     const keysToRemove = [];
+    const TWO_HOURS    = 2 * 60 * 60 * 1000;
 
     for (const [key, value] of Object.entries(all)) {
-        if (key.startsWith('activation_') && value.timestamp) {
-            const elapsed = Date.now() - value.timestamp;
-            if (elapsed > CASHBACK_CONFIG.ACTIVATION_TTL) {
+        if (!key.startsWith('activation_') || !value.timestamp) continue;
+
+        const elapsed = Date.now() - value.timestamp;
+
+        if (value.state === CASHBACK_STATE.EXPIRED) {
+            // Удаляем expired записи старше 2 часов
+            if (elapsed > TWO_HOURS) {
                 keysToRemove.push(key);
             }
+        } else if (elapsed > CASHBACK_CONFIG.ACTIVATION_TTL) {
+            // Переводим active/competing в expired (а не удаляем)
+            keysToUpdate.push({ key, value });
         }
     }
 
     if (keysToRemove.length > 0) {
         await chrome.storage.session.remove(keysToRemove);
+    }
+
+    for (const { key, value } of keysToUpdate) {
+        await chrome.storage.session.set({
+            [key]: { ...value, state: CASHBACK_STATE.EXPIRED },
+        });
     }
 }
 

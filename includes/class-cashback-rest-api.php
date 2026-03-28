@@ -290,7 +290,14 @@ class Cashback_REST_API
     {
         $cached = get_transient(self::STORES_CACHE_KEY);
         if (false !== $cached) {
-            return new \WP_REST_Response($cached, 200);
+            // Инвалидируем устаревший кеш, построенный до добавления поля product_id.
+            // При попадании в эту ветку кеш перестраивается один раз автоматически.
+            if (!empty($cached) && is_array($cached) && !array_key_exists('product_id', $cached[0])) {
+                delete_transient(self::STORES_CACHE_KEY);
+                $cached = false;
+            } else {
+                return new \WP_REST_Response($cached, 200);
+            }
         }
 
         global $wpdb;
@@ -518,6 +525,7 @@ class Cashback_REST_API
             'ip_address'    => $ip_address,
             'user_agent'    => $user_agent ? sanitize_text_field($user_agent) : null,
             'spam_click'    => $rate_status === 'spam' ? 1 : 0,
+            'referer'       => get_permalink($product_id) ?: null,
         ]);
 
         $expires_at = gmdate('Y-m-d H:i:s', time() + self::ACTIVATION_WINDOW);
