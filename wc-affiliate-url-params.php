@@ -1627,7 +1627,7 @@ if(s)s.classList.add('visible');
                 'wc-affiliate-url-params',
                 plugins_url('assets/js/affiliate-guest-warning.js', __FILE__),
                 ['jquery'],
-                '4.0.0',
+                '4.1.1',
                 true
             );
 

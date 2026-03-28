@@ -19,24 +19,22 @@
   }
 
   $(document).ready(function () {
-    // Перехват кликов — ТОЛЬКО для гостей
+    // Перехват кликов — ТОЛЬКО для гостей.
+    // Используем селектор по href (cashback_click=) — это надёжнее, чем CSS-классы,
+    // которые могут отличаться в разных темах (WoodMart, Flavor, и т.д.).
     $(document).on(
       'click',
-      'a.add_to_cart_button, a.single_add_to_cart_button, a.product_type_external, a.add-to-cart-loop',
+      'a[href*="cashback_click="]',
       function (e) {
-        var $button = $(this);
-        var productId = $button.data('product-id');
-        var href = $button.attr('href') || '';
-
-        // Только партнерские товары — проверяем data-product-id
-        if (!productId) {
+        // Не перехватываем клик по кнопке «Продолжить» внутри модалки
+        if ($(this).closest('#wc-affiliate-warning-modal').length) {
           return;
         }
 
         e.preventDefault();
         e.stopImmediatePropagation();
 
-        showAuthWarning($button);
+        showAuthWarning($(this));
         return false;
       },
     );
