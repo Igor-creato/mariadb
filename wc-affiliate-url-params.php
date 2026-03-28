@@ -843,8 +843,12 @@ class WC_Affiliate_URL_Params
             // chrome.cookies API расширения читает этот cookie на каждое событие onUpdated
             // и сохраняет активацию в chrome.storage.session — независимо от состояния SW,
             // кеша userId и SameSite-ограничений WP auth cookie в cross-origin fetch.
-            $dest_host   = (string) parse_url($affiliate_url, PHP_URL_HOST);
-            $dest_domain = strtolower(preg_replace('/^www\./i', '', $dest_host));
+            //
+            // Домен из _store_domain meta (НЕ из affiliate_url, который указывает на CPA-сеть).
+            $raw_domain  = (string) get_post_meta($product_id, '_store_domain', true);
+            $dest_domain = preg_replace('#^https?://#i', '', $raw_domain);
+            $dest_domain = preg_replace('#^www\.#i', '', $dest_domain);
+            $dest_domain = strtolower(explode('/', $dest_domain)[0]);
 
             if (!empty($dest_domain)) {
                 setcookie(
@@ -893,11 +897,17 @@ class WC_Affiliate_URL_Params
     }
 
     /**
-     * Финальный redirect с activation page на реальный affiliate URL.
+     * Промежуточная страница активации кэшбэка.
      *
      * Вызывается когда браузер приходит на product_permalink?cashback_go=1&click_id={id}.
-     * К этому моменту клик уже записан в cashback_click_log — просто достаём affiliate_url
-     * и делаем 302 redirect на партнёрский сайт.
+     * К этому моменту клик уже записан в cashback_click_log.
+     *
+     * Рендерит HTML-страницу (НЕ 302 redirect), чтобы:
+     * 1. Content script расширения прочитал data-cb-activation и уведомил service worker
+     * 2. Service worker сохранил активацию до перехода на партнёрский сайт
+     * 3. Иконка расширения стала зелёной к моменту загрузки магазина
+     *
+     * Без расширения: автоматический redirect через JavaScript за 1.5 секунды.
      *
      * @since 4.1.0
      *
@@ -916,21 +926,91 @@ class WC_Affiliate_URL_Params
         nocache_headers();
 
         global $wpdb;
-        $table         = $wpdb->prefix . 'cashback_click_log';
-        $affiliate_url = $wpdb->get_var($wpdb->prepare(
-            "SELECT affiliate_url FROM `{$table}` WHERE click_id = %s LIMIT 1",
+        $table = $wpdb->prefix . 'cashback_click_log';
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+        $click = $wpdb->get_row($wpdb->prepare(
+            "SELECT affiliate_url, product_id FROM `{$table}` WHERE click_id = %s LIMIT 1",
             $click_id
-        ));
+        ), ARRAY_A);
 
-        if (!empty($affiliate_url)) {
-            $scheme = parse_url($affiliate_url, PHP_URL_SCHEME);
+        $affiliate_url = '';
+        if (!empty($click['affiliate_url'])) {
+            $scheme = parse_url($click['affiliate_url'], PHP_URL_SCHEME);
             if (in_array($scheme, ['http', 'https'], true)) {
-                wp_redirect($affiliate_url, 302);
-                exit;
+                $affiliate_url = $click['affiliate_url'];
             }
         }
 
-        wp_redirect(home_url(), 302);
+        if (empty($affiliate_url)) {
+            wp_redirect(home_url(), 302);
+            exit;
+        }
+
+        // Домен магазина из _store_domain meta (не из affiliate URL)
+        $store_domain = '';
+        if (!empty($click['product_id'])) {
+            $raw_domain   = (string) get_post_meta((int) $click['product_id'], '_store_domain', true);
+            $store_domain = preg_replace('#^https?://#i', '', $raw_domain);
+            $store_domain = preg_replace('#^www\.#i', '', $store_domain);
+            $store_domain = strtolower(explode('/', $store_domain)[0]);
+        }
+
+        // JSON для браузерного расширения (content script читает data-cb-activation)
+        $activation_data = wp_json_encode([
+            'domain'   => $store_domain,
+            'click_id' => $click_id,
+        ]);
+
+        $safe_redirect_url = esc_url($affiliate_url);
+        $safe_js_url       = esc_js($affiliate_url);
+
+        // Рендерим HTML interstitial вместо 302 redirect
+        ?>
+<!DOCTYPE html>
+<html lang="ru" data-cb-activation="<?php echo esc_attr($activation_data); ?>">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>Переход в магазин — Кэшбэк Сервис</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0f1117;color:#e4e6ea;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+.wrap{text-align:center;padding:40px 20px}
+.icon{font-size:48px;margin-bottom:16px}
+h1{font-size:20px;font-weight:600;margin-bottom:8px;color:#fff}
+p{font-size:14px;color:#8b8fa3;margin-bottom:24px}
+.spinner{width:32px;height:32px;border:3px solid rgba(255,255,255,.1);border-top-color:#27ae60;border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 16px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.link{color:#4f9cf7;font-size:13px;text-decoration:none}
+.link:hover{text-decoration:underline}
+.check{color:#27ae60;font-size:14px;margin-bottom:8px;display:none}
+.check.visible{display:block}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="icon">&#128176;</div>
+<h1>Переход в магазин</h1>
+<div class="check" id="ext-status">&#10003; Кэшбэк активирован</div>
+<p>Вы будете перенаправлены автоматически</p>
+<div class="spinner" id="spinner"></div>
+<a class="link" href="<?php echo $safe_redirect_url; ?>">Перейти сейчас &rarr;</a>
+</div>
+<script>
+(function(){
+var url='<?php echo $safe_js_url; ?>';
+var timer=setTimeout(function(){window.location.href=url;},1500);
+document.addEventListener('cashback:site:confirmed',function(){
+clearTimeout(timer);
+var s=document.getElementById('ext-status');if(s)s.classList.add('visible');
+setTimeout(function(){window.location.href=url;},300);
+});
+})();
+</script>
+</body>
+</html>
+        <?php
         exit;
     }
 

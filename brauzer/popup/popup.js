@@ -254,10 +254,17 @@ async function handleActivate(btn) {
             throw new Error(result.error);
         }
 
-        // Открываем партнёрский URL напрямую (без промежуточной страницы)
+        // Redirect через activation page (interstitial) для:
+        // 1. CPA-сеть видит корректный Referer
+        // 2. Content script bridge подтверждает активацию расширению
+        // Fallback: redirect_url напрямую если activation_page_url нет
+        const redirectTo = (result.activation_page_url && isValidRedirectUrl(result.activation_page_url))
+            ? result.activation_page_url
+            : result.redirect_url;
+
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (tab && result.redirect_url && isValidRedirectUrl(result.redirect_url)) {
-            await chrome.tabs.update(tab.id, { url: result.redirect_url });
+        if (tab && redirectTo && isValidRedirectUrl(redirectTo)) {
+            await chrome.tabs.update(tab.id, { url: redirectTo });
         }
 
         // Переключаем на состояние "активирован" независимо от исходного состояния

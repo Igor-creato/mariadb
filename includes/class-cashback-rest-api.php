@@ -530,6 +530,11 @@ class Cashback_REST_API
 
         $expires_at = gmdate('Y-m-d H:i:s', time() + self::ACTIVATION_WINDOW);
 
+        // Домен магазина из post_meta (НЕ из affiliate URL, который указывает на CPA-сеть)
+        $store_domain = $this->normalize_store_domain(
+            (string) get_post_meta($product_id, '_store_domain', true)
+        );
+
         // Формируем URL активации на базе permalink товара, чтобы CPA-сеть
         // видела Referer: yoursite.com/product/название/ вместо /?cashback_go=1
         $product_permalink    = get_permalink($product_id) ?: home_url('/');
@@ -543,6 +548,7 @@ class Cashback_REST_API
             'activation_page_url' => $activation_page_url,
             'click_id'            => $click_id,
             'expires_at'          => $expires_at,
+            'domain'              => $store_domain,
         ], 200);
     }
 
@@ -566,7 +572,7 @@ class Cashback_REST_API
 
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
             $click = $wpdb->get_row($wpdb->prepare(
-                "SELECT click_id, created_at, affiliate_url
+                "SELECT click_id, created_at, product_id
                  FROM {$click_log_table}
                  WHERE click_id = %s AND user_id = %d AND created_at >= %s LIMIT 1",
                 $click_id,
@@ -574,9 +580,9 @@ class Cashback_REST_API
                 $threshold
             ), ARRAY_A);
 
-            if ($click && !empty($click['affiliate_url'])) {
-                $host        = (string) parse_url($click['affiliate_url'], PHP_URL_HOST);
-                $dest_domain = strtolower(preg_replace('/^www\./i', '', $host));
+            if ($click) {
+                // Домен из _store_domain meta (не из affiliate_url, который указывает на CPA-сеть)
+                $dest_domain = $this->get_store_domain((int) $click['product_id']);
                 $click_time  = strtotime($click['created_at']);
                 $expires_at  = gmdate('Y-m-d H:i:s', $click_time + self::ACTIVATION_WINDOW);
 
@@ -1115,6 +1121,25 @@ HTML;
         ));
 
         return $slug ?: null;
+    }
+
+    /**
+     * Нормализация домена магазина: убирает протокол, www., путь.
+     */
+    private function normalize_store_domain(string $domain): string
+    {
+        $domain = preg_replace('#^https?://#i', '', $domain);
+        $domain = preg_replace('#^www\.#i', '', $domain);
+        return strtolower(explode('/', $domain)[0]);
+    }
+
+    /**
+     * Получение нормализованного домена магазина по product_id.
+     */
+    private function get_store_domain(int $product_id): string
+    {
+        $raw = (string) get_post_meta($product_id, '_store_domain', true);
+        return $this->normalize_store_domain($raw);
     }
 
     /**

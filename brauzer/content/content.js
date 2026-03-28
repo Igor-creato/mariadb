@@ -65,19 +65,34 @@
             e.preventDefault();
             e.stopImmediatePropagation(); // останавливаем и WoodMart-обработчики
 
-            // Сохраняем полный innerHTML и фиксируем ширину, чтобы кнопка не меняла размер
-            const originalHTML     = btn.innerHTML;
-            const originalMinWidth = btn.style.minWidth;
-            btn.style.minWidth = btn.offsetWidth + 'px';
-            btn.textContent = '...';
+            // Фиксируем размеры кнопки: сохраняем точные width/height через inline style,
+            // чтобы замена содержимого на "..." не схлопывала кнопку.
+            var originalHTML      = btn.innerHTML;
+            var savedMinWidth     = btn.style.minWidth;
+            var savedMinHeight    = btn.style.minHeight;
+            var savedWidth        = btn.style.width;
+            var savedHeight       = btn.style.height;
+            var rect              = btn.getBoundingClientRect();
+            btn.style.width     = rect.width + 'px';
+            btn.style.height    = rect.height + 'px';
+            btn.style.minWidth  = rect.width + 'px';
+            btn.style.minHeight = rect.height + 'px';
+            btn.textContent     = '...';
+
+            function restoreButton() {
+                btn.style.width     = savedWidth;
+                btn.style.height    = savedHeight;
+                btn.style.minWidth  = savedMinWidth;
+                btn.style.minHeight = savedMinHeight;
+                btn.innerHTML       = originalHTML;
+            }
 
             chrome.runtime.sendMessage({
                 type:      'ACTIVATE',
                 productId: productId,
-                domain:    null, // SW извлечёт домен из result.redirect_url
+                domain:    null, // SW извлечёт домен из result.domain
             }).then(function (result) {
-                btn.style.minWidth = originalMinWidth;
-                btn.innerHTML = originalHTML;
+                restoreButton();
                 if (result && !result.error && result.redirect_url && isValidRedirectUrl(result.redirect_url)) {
                     window.open(result.redirect_url, '_blank');
                 } else {
@@ -85,8 +100,7 @@
                     window.open(href, '_blank');
                 }
             }).catch(function () {
-                btn.style.minWidth = originalMinWidth;
-                btn.innerHTML = originalHTML;
+                restoreButton();
                 window.open(href, '_blank');
             });
         }, true); // capture: перехватываем до срабатывания href
@@ -159,9 +173,16 @@
                 return;
             }
 
-            // Кэшбэк активен — проверяем на competing через referrer/URL
+            // Кэшбэк активен — проверяем на competing через referrer/URL,
+            // но ТОЛЬКО если активация не свежая (> 60 сек).
+            // Свежая активация = пользователь только что пришёл через наш affiliate redirect,
+            // referrer будет ad.admitad.com / epn.bz / другая CPA-сеть — это НЕ конкурент.
             if (response.state === 'active' || response.activated) {
-                if (detectCompetingClick()) {
+                const activationAge = response.activation && response.activation.activated_at
+                    ? Date.now() - new Date(response.activation.activated_at).getTime()
+                    : Infinity;
+
+                if (activationAge > 60000 && detectCompetingClick()) {
                     // Уведомляем background — он переведёт состояние и пришлёт
                     // SHOW_NOTIFICATION с notification_type='competing'
                     chrome.runtime.sendMessage({ type: 'COMPETING_DETECTED', domain }).catch(() => {});
@@ -430,11 +451,22 @@
                     notification.classList.remove('competing');
                     notification.classList.add('activated');
 
-                    if (result && result.activation_page_url && isValidRedirectUrl(result.activation_page_url)) {
+                    // Redirect через партнёрскую ссылку для установки tracking cookies CPA-сети.
+                    // Используем activation_page_url (наш сайт → affiliate URL), чтобы
+                    // CPA-сеть видела корректный Referer.
+                    // Если activation_page_url нет — redirect_url напрямую.
+                    const redirectTo = (result && result.activation_page_url && isValidRedirectUrl(result.activation_page_url))
+                        ? result.activation_page_url
+                        : (result && result.redirect_url && isValidRedirectUrl(result.redirect_url))
+                            ? result.redirect_url
+                            : null;
+
+                    if (redirectTo) {
                         setTimeout(() => {
-                            window.location.href = result.activation_page_url;
+                            window.location.href = redirectTo;
                         }, 800);
                     } else {
+                        // Нет URL для redirect — просто показываем успех и закрываем
                         setTimeout(() => dismissNotification(host, notification, domain, notificationType), 3000);
                     }
                 } catch (e) {

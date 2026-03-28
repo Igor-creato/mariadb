@@ -106,9 +106,14 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 // ─── Слушатели вкладок ───
 
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+    // Ловим страницу активации при начале загрузки (до того как JS-redirect уведёт дальше).
+    // changeInfo.url появляется при навигации — не ждём 'complete'.
+    if (changeInfo.url && isActivationPageUrl(changeInfo.url)) {
+        await handleActivationPageNavigation(changeInfo.url);
+    }
+
     if (changeInfo.status === 'complete' && tab.url) {
-        // Server-side redirect (?cashback_click=): detect activation page and
-        // pre-store activation so the icon is green when the partner site opens.
+        // Повторная проверка на случай если loading-событие было пропущено
         if (isActivationPageUrl(tab.url)) {
             await handleActivationPageNavigation(tab.url);
         }
@@ -207,8 +212,14 @@ async function handleMessage(message, sender) {
         case 'ACTIVATE': {
             const result = await CashbackAPI.activateCashback(message.productId);
 
-            // Определяем домен: из сообщения (popup) или из redirect_url (content script)
+            // Определяем домен магазина:
+            // 1. Из сообщения (popup/content script на партнёрском сайте)
+            // 2. Из API-ответа (нормализованный _store_domain)
+            // 3. Fallback: из redirect_url (может быть CPA-трекер — ненадёжно)
             let domain = message.domain;
+            if (!domain && result.domain) {
+                domain = result.domain;
+            }
             if (!domain && result.redirect_url) {
                 try {
                     domain = new URL(result.redirect_url).hostname.replace(/^www\./i, '');
@@ -236,6 +247,12 @@ async function handleMessage(message, sender) {
             if (sender.tab) {
                 await updateIconForTab(sender.tab.id, sender.tab.url);
             }
+
+            // Обновляем иконки на всех вкладках с этим доменом (для немедленного GREEN)
+            if (domain) {
+                await updateIconForAllTabsWithDomain(domain);
+            }
+
             return result;
         }
 
@@ -285,6 +302,12 @@ async function handleMessage(message, sender) {
                 redirect_url:        null,
                 activation_page_url: null,
             }, userId);
+
+            // Обновляем иконки на вкладках с этим доменом
+            if (message.domain) {
+                await updateIconForAllTabsWithDomain(message.domain);
+            }
+
             return { success: true };
         }
 
@@ -667,6 +690,23 @@ async function handleActivationPageNavigation(url) {
         // Не авторизован (гость) или другая ошибка — молча игнорируем,
         // для гостей кэшбэк не начисляется и зелёный значок не нужен.
         console.warn('[Cashback] handleActivationPageNavigation failed:', e.message);
+    }
+}
+
+// ─── Обновление иконок на всех вкладках с определённым доменом ───
+
+async function updateIconForAllTabsWithDomain(domain) {
+    try {
+        const tabs = await chrome.tabs.query({});
+        for (const tab of tabs) {
+            if (!tab.url) continue;
+            const tabDomain = extractDomain(tab.url);
+            if (tabDomain === domain) {
+                await updateIconForTab(tab.id, tab.url);
+            }
+        }
+    } catch {
+        // Ошибка перебора вкладок — не критична
     }
 }
 
