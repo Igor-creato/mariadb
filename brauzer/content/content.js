@@ -65,42 +65,30 @@
             e.preventDefault();
             e.stopImmediatePropagation(); // останавливаем и WoodMart-обработчики
 
-            // Фиксируем размеры кнопки: сохраняем точные width/height через inline style,
-            // чтобы замена содержимого на "..." не схлопывала кнопку.
-            var originalHTML      = btn.innerHTML;
-            var savedMinWidth     = btn.style.minWidth;
-            var savedMinHeight    = btn.style.minHeight;
-            var savedWidth        = btn.style.width;
-            var savedHeight       = btn.style.height;
-            var rect              = btn.getBoundingClientRect();
-            btn.style.width     = rect.width + 'px';
-            btn.style.height    = rect.height + 'px';
-            btn.style.minWidth  = rect.width + 'px';
-            btn.style.minHeight = rect.height + 'px';
-            btn.textContent     = '...';
-
-            function restoreButton() {
-                btn.style.width     = savedWidth;
-                btn.style.height    = savedHeight;
-                btn.style.minWidth  = savedMinWidth;
-                btn.style.minHeight = savedMinHeight;
-                btn.innerHTML       = originalHTML;
-            }
+            // Кнопка остаётся без изменений — никаких "...", смены размеров или текста.
+            // Пользователь видит только стандартный CSS-эффект клика темы.
 
             chrome.runtime.sendMessage({
                 type:      'ACTIVATE',
                 productId: productId,
                 domain:    null, // SW извлечёт домен из result.domain
             }).then(function (result) {
-                restoreButton();
-                if (result && !result.error && result.redirect_url && isValidRedirectUrl(result.redirect_url)) {
-                    window.open(result.redirect_url, '_blank');
+                if (result && !result.error) {
+                    // Открываем через страницу активации (5-секундный счётчик),
+                    // fallback на прямой affiliate URL если activation_page_url нет.
+                    var target = (result.activation_page_url && isValidRedirectUrl(result.activation_page_url))
+                        ? result.activation_page_url
+                        : result.redirect_url;
+                    if (target && isValidRedirectUrl(target)) {
+                        window.open(target, '_blank');
+                    } else {
+                        window.open(href, '_blank');
+                    }
                 } else {
                     // Fallback: открываем через исходную ссылку (сервер залогирует клик)
                     window.open(href, '_blank');
                 }
             }).catch(function () {
-                restoreButton();
                 window.open(href, '_blank');
             });
         }, true); // capture: перехватываем до срабатывания href
@@ -433,7 +421,6 @@
                 if (!productId || activateBtn.disabled) return;
 
                 activateBtn.disabled = true;
-                activateBtn.textContent = 'Активация...';
 
                 try {
                     const result = await chrome.runtime.sendMessage({
@@ -446,8 +433,6 @@
                         throw new Error(result.error);
                     }
 
-                    activateBtn.textContent = '\u2713 Кэшбэк активирован!';
-                    activateBtn.classList.add('success');
                     notification.classList.remove('competing');
                     notification.classList.add('activated');
 
@@ -470,7 +455,6 @@
                         setTimeout(() => dismissNotification(host, notification, domain, notificationType), 3000);
                     }
                 } catch (e) {
-                    activateBtn.textContent = 'Ошибка. Попробуйте снова';
                     activateBtn.disabled = false;
                 }
             });

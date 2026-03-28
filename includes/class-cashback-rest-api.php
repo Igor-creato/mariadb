@@ -1155,8 +1155,8 @@ HTML;
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
         $result = $wpdb->query($wpdb->prepare(
             "INSERT INTO {$table}
-                (click_id, user_id, product_id, cpa_network, affiliate_url, ip_address, user_agent, spam_click, created_at)
-             VALUES (%s, %d, %d, %s, %s, %s, %s, %d, %s)",
+                (click_id, user_id, product_id, cpa_network, affiliate_url, ip_address, user_agent, referer, spam_click, created_at)
+             VALUES (%s, %d, %d, %s, %s, %s, %s, %s, %d, %s)",
             $data['click_id'],
             $data['user_id'],
             $data['product_id'],
@@ -1164,6 +1164,7 @@ HTML;
             $data['affiliate_url'] ?? '',
             $data['ip_address'] ?? '',
             $data['user_agent'] ?? '',
+            $data['referer'] ?? '',
             $data['spam_click'] ?? 0,
             $created_at
         ));

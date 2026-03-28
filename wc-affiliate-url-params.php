@@ -786,9 +786,10 @@ class WC_Affiliate_URL_Params
             $user_agent = isset($_SERVER['HTTP_USER_AGENT'])
                 ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT']))
                 : null;
-            $referer = isset($_SERVER['HTTP_REFERER'])
-                ? esc_url_raw(wp_unslash($_SERVER['HTTP_REFERER']))
-                : null;
+            // Всегда записываем permalink одиночного товара как referer,
+            // чтобы в логе кликов отображалась ссылка на страницу товара
+            // независимо от того, откуда был клик (каталог, поиск и т.д.).
+            $referer = get_permalink($product_id) ?: null;
 
             // ─── BOT DETECTION (мягкий режим) ───
             // Redirect проходит, но клик помечается spam в БД.
@@ -964,50 +965,74 @@ class WC_Affiliate_URL_Params
         $safe_redirect_url = esc_url($affiliate_url);
         $safe_js_url       = esc_js($affiliate_url);
 
-        // Рендерим HTML interstitial вместо 302 redirect
+        // Скрываем всё содержимое темы (header, nav, footer) и показываем только
+        // нашу карточку редиректа. wp_head()/wp_footer() загружают шрифты и стили темы.
+        add_action('wp_enqueue_scripts', static function (): void {
+            // Убираем скрипты темы, которые могут мешать (но оставляем стили)
+            wp_dequeue_script('woodmart-theme');
+        }, 999);
+
         ?>
 <!DOCTYPE html>
-<html lang="ru" data-cb-activation="<?php echo esc_attr($activation_data); ?>">
+<html <?php language_attributes(); ?> data-cb-activation="<?php echo esc_attr($activation_data); ?>">
 <head>
-<meta charset="UTF-8">
+<meta charset="<?php bloginfo('charset'); ?>">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="robots" content="noindex, nofollow">
-<title>Переход в магазин — Кэшбэк Сервис</title>
+<?php wp_head(); ?>
 <style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0f1117;color:#e4e6ea;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
-.wrap{text-align:center;padding:40px 20px}
-.icon{font-size:48px;margin-bottom:16px}
-h1{font-size:20px;font-weight:600;margin-bottom:8px;color:#fff}
-p{font-size:14px;color:#8b8fa3;margin-bottom:24px}
-.spinner{width:32px;height:32px;border:3px solid rgba(255,255,255,.1);border-top-color:#27ae60;border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 16px}
-@keyframes spin{to{transform:rotate(360deg)}}
-.link{color:#4f9cf7;font-size:13px;text-decoration:none}
-.link:hover{text-decoration:underline}
-.check{color:#27ae60;font-size:14px;margin-bottom:8px;display:none}
-.check.visible{display:block}
+/* Скрываем всё, что тема может вывести через wp_body_open и wp_footer */
+body.cb-redirect-page > *:not(.cb-redirect-overlay):not(script):not(link):not(style){display:none!important}
+body.cb-redirect-page{margin:0;padding:0;min-height:100vh;display:flex;align-items:center;justify-content:center}
+.cb-redirect-overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:999999}
+.cb-redirect-card{text-align:center;padding:48px 32px;max-width:420px;width:100%}
+.cb-redirect-icon{font-size:48px;margin-bottom:20px;line-height:1}
+.cb-redirect-card h1{font-size:22px;font-weight:600;margin-bottom:10px}
+.cb-redirect-card p{font-size:15px;opacity:.7;margin-bottom:28px}
+.cb-redirect-countdown{display:inline-flex;align-items:center;justify-content:center;width:56px;height:56px;border-radius:50%;border:3px solid #27ae60;color:#27ae60;font-size:22px;font-weight:700;margin:0 auto 20px;font-variant-numeric:tabular-nums}
+.cb-redirect-link{font-size:14px}
+.cb-redirect-check{color:#27ae60;font-size:15px;margin-bottom:10px;display:none}
+.cb-redirect-check.visible{display:block}
 </style>
 </head>
-<body>
-<div class="wrap">
-<div class="icon">&#128176;</div>
+<body <?php body_class('cb-redirect-page'); ?>>
+<?php
+if (function_exists('wp_body_open')) {
+    wp_body_open();
+}
+?>
+<div class="cb-redirect-overlay">
+<div class="cb-redirect-card">
+<div class="cb-redirect-icon">&#128176;</div>
 <h1>Переход в магазин</h1>
-<div class="check" id="ext-status">&#10003; Кэшбэк активирован</div>
-<p>Вы будете перенаправлены автоматически</p>
-<div class="spinner" id="spinner"></div>
-<a class="link" href="<?php echo $safe_redirect_url; ?>">Перейти сейчас &rarr;</a>
+<div class="cb-redirect-check" id="ext-status">&#10003; Кэшбэк активирован</div>
+<p>Вы будете перенаправлены через <span id="cb-seconds">5</span> сек.</p>
+<div class="cb-redirect-countdown" id="cb-countdown">5</div>
+<div><a class="cb-redirect-link" href="<?php echo $safe_redirect_url; ?>">Перейти сейчас &rarr;</a></div>
+</div>
 </div>
 <script>
 (function(){
 var url='<?php echo $safe_js_url; ?>';
-var timer=setTimeout(function(){window.location.href=url;},1500);
+var seconds=5;
+var elCircle=document.getElementById('cb-countdown');
+var elText=document.getElementById('cb-seconds');
+var confirmed=false;
+var iv=setInterval(function(){
+seconds--;
+if(elCircle)elCircle.textContent=seconds;
+if(elText)elText.textContent=seconds;
+if(seconds<=0){clearInterval(iv);window.location.href=url;}
+},1000);
 document.addEventListener('cashback:site:confirmed',function(){
-clearTimeout(timer);
-var s=document.getElementById('ext-status');if(s)s.classList.add('visible');
-setTimeout(function(){window.location.href=url;},300);
+if(confirmed)return;
+confirmed=true;
+var s=document.getElementById('ext-status');
+if(s)s.classList.add('visible');
 });
 })();
 </script>
+<?php wp_footer(); ?>
 </body>
 </html>
         <?php

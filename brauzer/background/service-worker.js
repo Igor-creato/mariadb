@@ -101,6 +101,13 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     if (alarm.name === ALARM_CLEANUP_ACTIVATIONS) {
         await cleanupExpiredActivations();
     }
+
+    // Alarm при истечении TTL конкретного домена → иконка красная
+    if (alarm.name.startsWith('expire_')) {
+        const domain = alarm.name.slice('expire_'.length);
+        await updateActivationState(domain, CASHBACK_STATE.EXPIRED);
+        await updateIconForAllTabsWithDomain(domain);
+    }
 });
 
 // ─── Слушатели вкладок ───
@@ -542,6 +549,11 @@ async function saveActivation(domain, result, userId) {
             user_id:             userId ? String(userId) : null,
         },
     });
+
+    // Планируем alarm для смены иконки на красную при истечении TTL.
+    // chrome.alarms требует минимум ~1 мин, но точная минута не критична для UX.
+    const delayMinutes = CASHBACK_CONFIG.ACTIVATION_TTL / 60000;
+    chrome.alarms.create(`expire_${cleanDomain}`, { delayInMinutes: delayMinutes });
 }
 
 /**
