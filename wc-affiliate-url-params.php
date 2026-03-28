@@ -869,10 +869,15 @@ class WC_Affiliate_URL_Params
                 );
             }
 
-            // Redirect through activation page so the browser extension can detect
-            // the cashback activation and show the green icon on the partner site.
-            // The click is already logged above, handle_activation_page() will look it
-            // up by click_id and perform the final redirect to $affiliate_url.
+            // Гости (неавторизованные) — моментальный редирект без промежуточной страницы.
+            // Кешбэк не начисляется, задержка не нужна.
+            if ($user_id === 0) {
+                wp_redirect($affiliate_url, 302);
+                exit;
+            }
+
+            // Авторизованные: промежуточная страница с 5-секундным счётчиком,
+            // чтобы браузерное расширение зафиксировало активацию кешбэка.
             $activation_page_url = add_query_arg(
                 ['cashback_go' => '1', 'click_id' => $click_id],
                 get_permalink($product_id) ?: home_url('/')
@@ -924,6 +929,22 @@ class WC_Affiliate_URL_Params
             exit;
         }
 
+        // Гости — моментальный редирект (страница только для авторизованных)
+        if (!is_user_logged_in()) {
+            global $wpdb;
+            $table = $wpdb->prefix . 'cashback_click_log';
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+            $row = $wpdb->get_var($wpdb->prepare(
+                "SELECT affiliate_url FROM `{$table}` WHERE click_id = %s LIMIT 1",
+                $click_id
+            ));
+            $url = ($row && in_array(parse_url($row, PHP_URL_SCHEME), ['http', 'https'], true))
+                ? $row
+                : home_url();
+            wp_redirect($url, 302);
+            exit;
+        }
+
         nocache_headers();
 
         global $wpdb;
@@ -965,12 +986,25 @@ class WC_Affiliate_URL_Params
         $safe_redirect_url = esc_url($affiliate_url);
         $safe_js_url       = esc_js($affiliate_url);
 
-        // Скрываем всё содержимое темы (header, nav, footer) и показываем только
-        // нашу карточку редиректа. wp_head()/wp_footer() загружают шрифты и стили темы.
+        // Убираем ВСЕ скрипты темы/плагинов — они ломают наш countdown,
+        // потому что ожидают DOM-элементы темы (header, nav, footer), которых нет.
+        // Стили оставляем — из них берём CSS-переменные (шрифты, цвета).
         add_action('wp_enqueue_scripts', static function (): void {
-            // Убираем скрипты темы, которые могут мешать (но оставляем стили)
-            wp_dequeue_script('woodmart-theme');
-        }, 999);
+            global $wp_scripts;
+            if ($wp_scripts instanceof \WP_Scripts) {
+                foreach (array_keys($wp_scripts->registered) as $handle) {
+                    wp_dequeue_script($handle);
+                }
+            }
+        }, 9999);
+
+        // Дополнительная страховка: убираем скрипты, добавленные после wp_enqueue_scripts
+        add_action('wp_print_scripts', static function (): void {
+            global $wp_scripts;
+            if ($wp_scripts instanceof \WP_Scripts) {
+                $wp_scripts->queue = [];
+            }
+        }, 9999);
 
         ?>
 <!DOCTYPE html>
@@ -980,59 +1014,152 @@ class WC_Affiliate_URL_Params
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="robots" content="noindex, nofollow">
 <?php wp_head(); ?>
-<style>
-/* Скрываем всё, что тема может вывести через wp_body_open и wp_footer */
-body.cb-redirect-page > *:not(.cb-redirect-overlay):not(script):not(link):not(style){display:none!important}
-body.cb-redirect-page{margin:0;padding:0;min-height:100vh;display:flex;align-items:center;justify-content:center}
-.cb-redirect-overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:999999}
-.cb-redirect-card{text-align:center;padding:48px 32px;max-width:420px;width:100%}
-.cb-redirect-icon{font-size:48px;margin-bottom:20px;line-height:1}
-.cb-redirect-card h1{font-size:22px;font-weight:600;margin-bottom:10px}
-.cb-redirect-card p{font-size:15px;opacity:.7;margin-bottom:28px}
-.cb-redirect-countdown{display:inline-flex;align-items:center;justify-content:center;width:56px;height:56px;border-radius:50%;border:3px solid #27ae60;color:#27ae60;font-size:22px;font-weight:700;margin:0 auto 20px;font-variant-numeric:tabular-nums}
-.cb-redirect-link{font-size:14px}
-.cb-redirect-check{color:#27ae60;font-size:15px;margin-bottom:10px;display:none}
-.cb-redirect-check.visible{display:block}
+<style id="cb-redirect-styles">
+/* Скрываем всё, что тема может вывести (header, nav, footer, preloader и пр.) */
+body.cb-redirect-page > *:not(.cb-redirect-overlay) { display:none !important; }
+body.cb-redirect-page {
+    margin: 0; padding: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--wd-main-bgcolor, #fff);
+    color: var(--wd-text-color, var(--color-gray-800, #333));
+    font-family: var(--wd-text-font, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif);
+    font-size: var(--wd-text-font-size, 15px);
+    line-height: var(--wd-text-line-height, 1.6);
+}
+.cb-redirect-overlay {
+    position: fixed; inset: 0;
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+    z-index: 2147483647;
+    background-color: var(--wd-main-bgcolor, #fff);
+}
+.cb-redirect-card {
+    text-align: center;
+    padding: 48px 32px;
+    max-width: 420px; width: 90%;
+}
+.cb-redirect-icon {
+    font-size: 48px;
+    margin-bottom: 20px;
+    line-height: 1;
+}
+.cb-redirect-card h1 {
+    font-size: 22px;
+    font-weight: 600;
+    margin: 0 0 10px;
+    color: var(--wd-title-color, var(--color-gray-800, #333));
+    font-family: var(--wd-title-font, var(--wd-text-font, inherit));
+}
+.cb-redirect-card p {
+    font-size: 15px;
+    color: var(--color-gray-500, #767676);
+    margin: 0 0 24px;
+}
+.cb-redirect-countdown {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 64px; height: 64px;
+    border-radius: 50%;
+    border: 3px solid var(--wd-primary-color, #27ae60);
+    color: var(--wd-primary-color, #27ae60);
+    font-size: 26px;
+    font-weight: 700;
+    margin: 0 auto 16px;
+    font-variant-numeric: tabular-nums;
+}
+.cb-redirect-progress {
+    width: 200px; height: 4px;
+    margin: 0 auto 24px;
+    background: var(--color-gray-200, #e9e9e9);
+    border-radius: 2px;
+    overflow: hidden;
+}
+.cb-redirect-progress-bar {
+    height: 100%; width: 100%;
+    background: var(--wd-primary-color, #27ae60);
+    border-radius: 2px;
+    transform-origin: left center;
+}
+.cb-redirect-link {
+    display: inline-block;
+    font-size: 14px;
+    color: var(--wd-primary-color, var(--wd-link-color, #333));
+    text-decoration: none;
+}
+.cb-redirect-link:hover {
+    text-decoration: underline;
+}
+.cb-redirect-check {
+    color: var(--wd-primary-color, #27ae60);
+    font-size: 15px;
+    margin-bottom: 10px;
+    display: none;
+}
+.cb-redirect-check.visible { display: block; }
 </style>
 </head>
 <body <?php body_class('cb-redirect-page'); ?>>
-<?php
-if (function_exists('wp_body_open')) {
-    wp_body_open();
-}
-?>
 <div class="cb-redirect-overlay">
 <div class="cb-redirect-card">
 <div class="cb-redirect-icon">&#128176;</div>
-<h1>Переход в магазин</h1>
-<div class="cb-redirect-check" id="ext-status">&#10003; Кэшбэк активирован</div>
-<p>Вы будете перенаправлены через <span id="cb-seconds">5</span> сек.</p>
+<h1><?php esc_html_e('Переход в магазин', 'cashback-plugin'); ?></h1>
+<div class="cb-redirect-check" id="cb-ext-status">&#10003; <?php esc_html_e('Кэшбэк активирован', 'cashback-plugin'); ?></div>
+<p><?php esc_html_e('Вы будете перенаправлены через', 'cashback-plugin'); ?> <strong id="cb-seconds">5</strong> <?php esc_html_e('сек.', 'cashback-plugin'); ?></p>
 <div class="cb-redirect-countdown" id="cb-countdown">5</div>
-<div><a class="cb-redirect-link" href="<?php echo $safe_redirect_url; ?>">Перейти сейчас &rarr;</a></div>
+<div class="cb-redirect-progress"><div class="cb-redirect-progress-bar" id="cb-progress-bar"></div></div>
+<div><a class="cb-redirect-link" href="<?php echo $safe_redirect_url; ?>"><?php esc_html_e('Перейти сейчас', 'cashback-plugin'); ?> &rarr;</a></div>
 </div>
 </div>
 <script>
-(function(){
-var url='<?php echo $safe_js_url; ?>';
-var seconds=5;
-var elCircle=document.getElementById('cb-countdown');
-var elText=document.getElementById('cb-seconds');
-var confirmed=false;
-var iv=setInterval(function(){
-seconds--;
-if(elCircle)elCircle.textContent=seconds;
-if(elText)elText.textContent=seconds;
-if(seconds<=0){clearInterval(iv);window.location.href=url;}
-},1000);
-document.addEventListener('cashback:site:confirmed',function(){
-if(confirmed)return;
-confirmed=true;
-var s=document.getElementById('ext-status');
-if(s)s.classList.add('visible');
-});
+/* Cashback redirect countdown — standalone, no dependencies */
+(function() {
+    'use strict';
+
+    var REDIRECT_URL = '<?php echo $safe_js_url; ?>';
+    var TOTAL        = 5;
+    var remaining    = TOTAL;
+
+    var elCountdown = document.getElementById('cb-countdown');
+    var elSeconds   = document.getElementById('cb-seconds');
+    var elProgress  = document.getElementById('cb-progress-bar');
+
+    /* Прогресс-бар: CSS animation вместо transition (надёжнее, не зависит от reflow) */
+    if (elProgress) {
+        var keyframes = '@keyframes cbShrink{from{transform:scaleX(1)}to{transform:scaleX(0)}}';
+        var styleEl   = document.createElement('style');
+        styleEl.textContent = keyframes;
+        document.head.appendChild(styleEl);
+        elProgress.style.animation = 'cbShrink ' + TOTAL + 's linear forwards';
+    }
+
+    function tick() {
+        remaining--;
+        if (remaining < 0) remaining = 0;
+        if (elCountdown) elCountdown.textContent = remaining;
+        if (elSeconds)   elSeconds.textContent   = remaining;
+        if (remaining <= 0) {
+            clearInterval(timer);
+            window.location.href = REDIRECT_URL;
+        }
+    }
+
+    var timer = setInterval(tick, 1000);
+
+    /* Событие от браузерного расширения: кэшбэк подтверждён */
+    var confirmed = false;
+    document.addEventListener('cashback:site:confirmed', function() {
+        if (confirmed) return;
+        confirmed = true;
+        var el = document.getElementById('cb-ext-status');
+        if (el) el.classList.add('visible');
+    });
 })();
 </script>
-<?php wp_footer(); ?>
 </body>
 </html>
         <?php

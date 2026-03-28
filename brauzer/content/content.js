@@ -49,6 +49,17 @@
     // Если расширение не работает или пользователь не авторизован — fallback на обычную ссылку.
 
     function setupSiteButtonInterceptor() {
+        // Проверяем авторизацию один раз при загрузке страницы.
+        // Если пользователь не авторизован — не перехватываем клики,
+        // чтобы сработала модалка предупреждения для гостей (affiliate-guest-warning.js).
+        let isAuthenticated = null; // null = ещё не проверено
+
+        chrome.runtime.sendMessage({ type: 'CHECK_AUTH' }).then(function (response) {
+            isAuthenticated = !!(response && response.authenticated);
+        }).catch(function () {
+            isAuthenticated = false;
+        });
+
         document.addEventListener('click', function (e) {
             // Ищем ближайшую ссылку с data-product-id (кнопка «Получить кэшбэк»)
             const btn = e.target.closest('[data-product-id]');
@@ -61,6 +72,13 @@
             // (и новые с cashback_click=, и старые с прямым affiliate URL)
             const href = btn.getAttribute('href') || '';
             if (!href) return;
+
+            // Неавторизованные: не перехватываем, пусть сайт покажет модалку предупреждения
+            if (isAuthenticated === false) return;
+
+            // Авторизация ещё не проверена (CHECK_AUTH не успел ответить): тоже пропускаем,
+            // сервер сам обработает клик корректно через ?cashback_click=
+            if (isAuthenticated === null) return;
 
             e.preventDefault();
             e.stopImmediatePropagation(); // останавливаем и WoodMart-обработчики
