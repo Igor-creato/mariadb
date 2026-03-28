@@ -716,6 +716,13 @@ class WC_Affiliate_URL_Params
      */
     public function handle_click_redirect(): void
     {
+        // Шаг 2: финальный redirect с activation page → affiliate URL.
+        // Браузерное расширение уже зафиксировало активацию по cookie на шаге 1.
+        if (isset($_GET['cashback_go']) && isset($_GET['click_id'])) {
+            $this->handle_activation_page();
+            return;
+        }
+
         if (!isset($_GET['cashback_click'])) {
             return;
         }
@@ -883,6 +890,48 @@ class WC_Affiliate_URL_Params
             wp_redirect($url ?: home_url(), 302);
             exit;
         }
+    }
+
+    /**
+     * Финальный redirect с activation page на реальный affiliate URL.
+     *
+     * Вызывается когда браузер приходит на product_permalink?cashback_go=1&click_id={id}.
+     * К этому моменту клик уже записан в cashback_click_log — просто достаём affiliate_url
+     * и делаем 302 redirect на партнёрский сайт.
+     *
+     * @since 4.1.0
+     *
+     * @return void
+     */
+    private function handle_activation_page(): void
+    {
+        $click_id = sanitize_text_field(wp_unslash($_GET['click_id'] ?? ''));
+
+        // Валидация: ровно 32 hex-символа (bin2hex(random_bytes(16)))
+        if (!ctype_xdigit($click_id) || strlen($click_id) !== 32) {
+            wp_redirect(home_url(), 302);
+            exit;
+        }
+
+        nocache_headers();
+
+        global $wpdb;
+        $table         = $wpdb->prefix . 'cashback_click_log';
+        $affiliate_url = $wpdb->get_var($wpdb->prepare(
+            "SELECT affiliate_url FROM `{$table}` WHERE click_id = %s LIMIT 1",
+            $click_id
+        ));
+
+        if (!empty($affiliate_url)) {
+            $scheme = parse_url($affiliate_url, PHP_URL_SCHEME);
+            if (in_array($scheme, ['http', 'https'], true)) {
+                wp_redirect($affiliate_url, 302);
+                exit;
+            }
+        }
+
+        wp_redirect(home_url(), 302);
+        exit;
     }
 
     /**
@@ -1269,14 +1318,21 @@ class WC_Affiliate_URL_Params
             // минуя фильтр woocommerce_product_add_to_cart_url — подправляем здесь.
             $link = preg_replace('/\bhref="[^"]*"/', 'href="' . esc_url($cashback_url) . '"', $link, 1);
 
-            $link = str_replace(
-                '<a ',
-                '<a data-product-id="' . esc_attr((string) $product_id) . '"'
-                    . ' data-product-url="' . esc_url($base_url) . '"'
-                    . ' target="_blank"'
-                    . ' rel="nofollow" ',
-                $link
-            );
+            // Добавляем data-атрибуты. target/_blank и rel=nofollow добавляем только если
+            // их нет в оригинальном HTML — WooCommerce external template уже включает их,
+            // а дублирование провоцирует WoodMart добавлять иконку внешней ссылки (↗),
+            // что меняет внешний вид кнопки.
+            $extra_attrs = 'data-product-id="' . esc_attr((string) $product_id) . '"'
+                . ' data-product-url="' . esc_url($base_url) . '"';
+
+            if (strpos($link, 'target=') === false) {
+                $extra_attrs .= ' target="_blank"';
+            }
+            if (strpos($link, 'rel=') === false) {
+                $extra_attrs .= ' rel="nofollow"';
+            }
+
+            $link = str_replace('<a ', '<a ' . $extra_attrs . ' ', $link);
         }
         return $link;
     }
