@@ -37,6 +37,60 @@ const ALARM_REFRESH_STORES    = 'refresh-stores';
 const ALARM_CLEANUP_ACTIVATIONS = 'cleanup-activations';
 const CURRENT_USER_KEY        = 'current_user_id';
 
+// ─── Навигационная история вкладок (для детекции competing) ───
+//
+// webNavigation API отслеживает ВСЕ навигации включая серверные редиректы,
+// даже когда document.referrer пуст (Referrer-Policy: no-referrer, rel="noreferrer").
+// Это главный механизм обнаружения перебития кэшбэка чужим сервисом.
+
+const TAB_NAV_HISTORY         = new Map(); // tabId → [{domain, timestamp}]
+const NAV_HISTORY_WINDOW      = 60 * 1000; // 60 секунд — окно для redirect-цепочки
+const NAV_HISTORY_MAX_ENTRIES = 30;
+
+/**
+ * Домены конкурирующих кэшбэк-сервисов и affiliate-сетей.
+ * Используется и в service-worker (webNavigation), и в content.js (referrer fallback).
+ */
+const COMPETING_DOMAINS = [
+    // Российские кэшбэк-сервисы
+    'letyshops.com', 'megabonus.com', 'kopikot.ru',
+    'smarty.sale',   'cashback.ru',   'giftd.tech',
+    'skidka.ru',     'backit.me',     'epn.bz',
+    'cashbackoff.ru','switchback.ru', 'promokodus.com',
+    // Affiliate-сети (чужие ссылки)
+    'admitad.com',  'cityads.ru',  'actionpay.ru',
+    'leads.su',     'cpa.ru',      'where.ru',
+    // Глобальные кэшбэк и affiliate
+    'honey.com',          'joinhoney.com',
+    'awin.com',           'awinmid.com',
+    'tradedoubler.com',   'rakuten.com',
+    'linksynergy.com',    'commissionjunction.com',
+    'cj.com',             'shareasale.com',
+    'impact.com',         'partnerize.com',
+];
+
+/**
+ * Affiliate-параметры URL, которые идентифицируют конкретного партнёра/клик.
+ * При активации сохраняем значения наших параметров. Если при следующем визите
+ * те же параметры имеют ДРУГИЕ значения — кэшбэк перебит чужим сервисом.
+ * Прямые заходы (без affiliate-параметров) НЕ считаются competing.
+ */
+const AFFILIATE_TRACKING_PARAMS = [
+    'tagtag_uid',                              // Admitad
+    'admitad_uid',                             // Admitad
+    'subid', 'subid1', 'subid2', 'subid3',    // Общие CPA sub-ID
+    'click_id', 'clickid',                     // Общий click tracking
+    'aff_id', 'aff_sub', 'aff_sub2',          // Общие affiliate
+    'awc',                                     // AWIN
+    'tduid',                                   // TradeDoubler
+    'irclickid',                               // Impact Radius
+    'cjevent',                                 // Commission Junction
+    'wcid',                                    // WebGains
+    'ranMID', 'ranEAID', 'ranSiteID',         // Rakuten
+    'sscid',                                   // ShareASale
+    'partnerize_clickid',                      // Partnerize
+];
+
 // ─── Кеширование текущего пользователя ───
 
 async function getCachedUserId() {
@@ -139,6 +193,101 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
         }
     } catch (e) {
         // Вкладка может быть уже закрыта
+    }
+});
+
+// Очистка истории навигации при закрытии вкладки
+chrome.tabs.onRemoved.addListener((tabId) => {
+    TAB_NAV_HISTORY.delete(tabId);
+});
+
+// ─── Детекция competing через webNavigation ───
+//
+// Главный механизм: отслеживаем ВСЕ навигации (включая серверные редиректы)
+// и строим историю доменов для каждой вкладки. Когда пользователь попадает
+// на магазин с активным кэшбэком через цепочку, включающую конкурирующий
+// домен, — это competing. При этом наша собственная активация (через наш сайт)
+// корректно пропускается: в цепочке будет наш домен.
+
+chrome.webNavigation.onCommitted.addListener((details) => {
+    // Только основной фрейм (не iframes)
+    if (details.frameId !== 0) return;
+
+    const navDomain = extractDomain(details.url);
+    if (!navDomain) return;
+
+    if (!TAB_NAV_HISTORY.has(details.tabId)) {
+        TAB_NAV_HISTORY.set(details.tabId, []);
+    }
+    const history = TAB_NAV_HISTORY.get(details.tabId);
+
+    history.push({
+        domain:    navDomain,
+        timestamp: Date.now(),
+        type:      details.transitionType,
+        qualifiers: details.transitionQualifiers || [],
+    });
+
+    // Обрезаем старые записи
+    const cutoff = Date.now() - NAV_HISTORY_WINDOW * 2; // храним с запасом
+    while (history.length > 0 && history[0].timestamp < cutoff) {
+        history.shift();
+    }
+    while (history.length > NAV_HISTORY_MAX_ENTRIES) {
+        history.shift();
+    }
+});
+
+chrome.webNavigation.onCompleted.addListener(async (details) => {
+    if (details.frameId !== 0) return;
+
+    const navDomain = extractDomain(details.url);
+    if (!navDomain) return;
+
+    // Проверяем: есть ли активный кэшбэк для этого домена?
+    const activation = await getActivationStatus(navDomain);
+    if (activation.state !== CASHBACK_STATE.ACTIVE) return;
+
+    const currentAffParams = extractAffiliateParams(details.url);
+    const hasAffParams     = Object.keys(currentAffParams).length > 0;
+
+    // Grace period: в первые 20 сек после активации.
+    // В это время сохраняем affiliate-параметры из URL — они точно наши,
+    // потому что это наш redirect через CPA-сеть.
+    if (activation.activated_at) {
+        const age = Date.now() - new Date(activation.activated_at).getTime();
+        if (age < 20000) {
+            // Сохраняем наши affiliate-параметры для будущего сравнения
+            if (hasAffParams) {
+                await saveActivationAffiliateParams(navDomain, currentAffParams);
+            }
+            return;
+        }
+    }
+
+    // ── Метод 1: Сравнение affiliate-параметров ──
+    // Самый надёжный: если в URL есть affiliate-параметры с ДРУГИМИ значениями
+    // чем при нашей активации — кэшбэк точно перебит.
+    // Прямые заходы (без affiliate-параметров) НЕ считаются competing.
+    if (hasAffParams && activation.affiliate_params) {
+        if (hasChangedAffiliateParams(activation.affiliate_params, currentAffParams)) {
+            await handleCompetingNavigation(navDomain, details.tabId);
+            return;
+        }
+    }
+
+    // ── Метод 2: Анализ цепочки навигации (webNavigation history) ──
+    // Ловит случаи когда пользователь пришёл через redirect с конкурирующего домена,
+    // даже если affiliate-параметры не сохранены или URL чистый.
+    const navHistory = TAB_NAV_HISTORY.get(details.tabId);
+    if (!navHistory || navHistory.length < 2) return;
+    const lastEntry = navHistory[navHistory.length - 1];
+
+    // Прямой переход (набрал URL, закладка) — не competing
+    if (lastEntry && (lastEntry.type === 'typed' || lastEntry.type === 'auto_bookmark')) return;
+
+    if (isCompetingNavigation(details.tabId, navDomain)) {
+        await handleCompetingNavigation(navDomain, details.tabId);
     }
 });
 
@@ -330,6 +479,27 @@ async function handleMessage(message, sender) {
             };
         }
 
+        case 'CHECK_AFFILIATE_PARAMS': {
+            // Content script передаёт текущий URL для проверки affiliate-параметров.
+            // Если параметры изменились — кэшбэк перебит чужим сервисом.
+            const chkDomain    = message.domain;
+            const chkActivation = await getActivationStatus(chkDomain);
+
+            if (chkActivation.state !== CASHBACK_STATE.ACTIVE || !chkActivation.affiliate_params) {
+                return { competing: false };
+            }
+
+            const currentParams = extractAffiliateParams(message.url);
+            if (Object.keys(currentParams).length === 0) {
+                // Нет affiliate-параметров в URL — прямой заход, не competing
+                return { competing: false };
+            }
+
+            return {
+                competing: hasChangedAffiliateParams(chkActivation.affiliate_params, currentParams),
+            };
+        }
+
         default:
             return { error: 'Unknown message type' };
     }
@@ -515,6 +685,7 @@ async function getActivationStatus(domain) {
             activated_at:     activation.activated_at,
             expires_at:       activation.expires_at,
             click_id:         activation.click_id,
+            affiliate_params: activation.affiliate_params || null,
             remaining_minutes: Math.ceil(remainingMs / 60000),
         };
     }
@@ -525,6 +696,7 @@ async function getActivationStatus(domain) {
         activated_at:      activation.activated_at,
         expires_at:        activation.expires_at,
         click_id:          activation.click_id,
+        affiliate_params:  activation.affiliate_params || null,
         remaining_minutes: Math.ceil(remainingMs / 60000),
         // Обратная совместимость
         activated:         (activation.state || CASHBACK_STATE.ACTIVE) === CASHBACK_STATE.ACTIVE,
@@ -720,6 +892,138 @@ async function updateIconForAllTabsWithDomain(domain) {
     } catch {
         // Ошибка перебора вкладок — не критична
     }
+}
+
+// ─── Детекция competing: helpers ───
+
+/**
+ * Извлекает из URL известные affiliate-параметры.
+ * Возвращает объект {param_name: value} или пустой объект.
+ */
+function extractAffiliateParams(url) {
+    try {
+        const params = new URL(url).searchParams;
+        const result = {};
+        for (const key of AFFILIATE_TRACKING_PARAMS) {
+            const val = params.get(key);
+            if (val) result[key] = val;
+        }
+        return result;
+    } catch {
+        return {};
+    }
+}
+
+/**
+ * Сравнивает сохранённые affiliate-параметры с текущими.
+ * Возвращает true если хотя бы один общий параметр имеет ДРУГОЕ значение.
+ * Если в текущем URL нет affiliate-параметров (прямой заход) — false.
+ */
+function hasChangedAffiliateParams(saved, current) {
+    if (!saved || !current) return false;
+    for (const [key, savedVal] of Object.entries(saved)) {
+        if (current[key] && current[key] !== savedVal) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Сохраняет affiliate-параметры нашей активации.
+ * Вызывается во время grace period, когда пользователь впервые попадает
+ * на магазин после нашего redirect — параметры в URL точно наши.
+ */
+async function saveActivationAffiliateParams(domain, params) {
+    const cleanDomain = domain.replace(/^www\./i, '');
+    const key         = `activation_${cleanDomain}`;
+    const data        = await chrome.storage.session.get(key);
+    const activation  = data[key];
+    if (!activation) return;
+
+    // Не перезаписываем если уже сохранены (первое приземление — самое точное)
+    if (activation.affiliate_params) return;
+
+    await chrome.storage.session.set({
+        [key]: { ...activation, affiliate_params: params },
+    });
+}
+
+/**
+ * Проверяет, является ли домен конкурирующим кэшбэк-сервисом или affiliate-сетью.
+ */
+function isCompetingDomain(hostname) {
+    const h = hostname.replace(/^www\./i, '').toLowerCase();
+    return COMPETING_DOMAINS.some(d => h === d || h.endsWith('.' + d));
+}
+
+/**
+ * Анализирует навигационную историю вкладки и определяет,
+ * пришёл ли пользователь на магазин через конкурирующий сервис.
+ *
+ * Логика: проверяем последние N секунд навигации. Если в цепочке есть
+ * конкурирующий домен, но НЕТ нашего сайта — это competing.
+ * Если наш сайт есть — это наша собственная активация через CPA.
+ */
+function isCompetingNavigation(tabId, storeDomain) {
+    const history = TAB_NAV_HISTORY.get(tabId);
+    if (!history || history.length < 2) return false;
+
+    const ourHost = extractDomain(CASHBACK_CONFIG.SITE_URL);
+    const cutoff  = Date.now() - NAV_HISTORY_WINDOW;
+
+    let foundCompeting = false;
+    let foundOurSite   = false;
+
+    // Проходим от предпоследней записи (последняя — текущая страница) к старым
+    for (let i = history.length - 2; i >= 0; i--) {
+        const entry = history[i];
+        if (entry.timestamp < cutoff) break;
+        if (entry.domain === storeDomain) continue; // пропускаем сам магазин
+
+        if (entry.domain === ourHost) {
+            foundOurSite = true;
+            break; // Наш сайт в цепочке → это наша активация, не competing
+        }
+
+        if (isCompetingDomain(entry.domain)) {
+            foundCompeting = true;
+            // Не break — продолжаем искать наш сайт выше в цепочке
+        }
+    }
+
+    return foundCompeting && !foundOurSite;
+}
+
+/**
+ * Обрабатывает обнаруженный competing: обновляет состояние,
+ * иконку и отправляет уведомление на все вкладки с этим доменом.
+ */
+async function handleCompetingNavigation(domain, triggerTabId) {
+    await updateActivationState(domain, CASHBACK_STATE.COMPETING);
+
+    const store     = await CashbackAPI.findStoreByDomain(domain);
+    const badgeText = extractCashbackPercent(store?.cashback_value);
+
+    // Обновляем иконку на вкладке-источнике
+    await setIcon(triggerTabId, ICON_STATES.RED, badgeText);
+
+    // Показываем competing-уведомление
+    if (store && store.popup_mode !== 'hide') {
+        try {
+            await chrome.tabs.sendMessage(triggerTabId, {
+                type:              'SHOW_NOTIFICATION',
+                store,
+                isAuthenticated:   true,
+                notification_type: 'competing',
+            });
+        } catch {
+            // Content script ещё не загружен
+        }
+    }
+
+    // Обновляем все остальные вкладки с этим доменом
+    await updateIconForAllTabsWithDomain(domain);
 }
 
 // ─── Утилиты ───

@@ -155,12 +155,61 @@
     if (proto !== 'http:' && proto !== 'https:') return;
 
     let notificationShown = false;
+    let currentNotificationHost = null; // Ссылка на DOM-элемент уведомления
+
+    /**
+     * Удаляет текущее уведомление из DOM.
+     * Нужно для замены обычного уведомления на competing.
+     */
+    function removeExistingNotification() {
+        if (currentNotificationHost) {
+            currentNotificationHost.remove();
+            currentNotificationHost = null;
+        }
+    }
 
     // ─── Путь 1: Получение push от Service Worker ───
 
     chrome.runtime.onMessage.addListener((message) => {
-        if (message.type === 'SHOW_NOTIFICATION' && message.store && !notificationShown) {
-            handleShowNotification(message.store, message.isAuthenticated, message.notification_type || 'activate');
+        if (message.type === 'SHOW_NOTIFICATION' && message.store) {
+            // Competing-уведомления всегда показываются, даже если обычное уже отображено.
+            // Это критично: пользователь ДОЛЖЕН узнать что кэшбэк перебит.
+            if (message.notification_type === 'competing') {
+                removeExistingNotification();
+                notificationShown = false;
+            }
+            if (!notificationShown) {
+                handleShowNotification(message.store, message.isAuthenticated, message.notification_type || 'activate');
+            }
+        }
+    });
+
+    // ─── Повторная проверка при возврате на вкладку ───
+    //
+    // Когда пользователь переключается обратно на вкладку магазина после
+    // посещения конкурирующего кэшбэк-сервиса, проверяем состояние заново.
+    // Service worker уже мог обнаружить competing через webNavigation
+    // в другой вкладке и обновить состояние — нужно подхватить это.
+
+    document.addEventListener('visibilitychange', async () => {
+        if (document.visibilityState !== 'visible') return;
+
+        try {
+            const response = await chrome.runtime.sendMessage({
+                type: 'GET_STORE_INFO',
+                domain,
+            });
+
+            if (!response || !response.store) return;
+
+            // Если состояние стало competing — показать уведомление
+            if (response.state === 'competing') {
+                removeExistingNotification();
+                notificationShown = false;
+                handleShowNotification(response.store, true, 'competing');
+            }
+        } catch {
+            // Ошибка — игнорируем
         }
     });
 
@@ -179,8 +228,8 @@
                 return;
             }
 
-            // Кэшбэк активен — проверяем на competing через referrer/URL,
-            // но ТОЛЬКО если активация не свежая (> 60 сек).
+            // Кэшбэк активен — проверяем на competing через referrer/URL/affiliate-параметры,
+            // но ТОЛЬКО если активация не свежая (> 20 сек).
             // Свежая активация = пользователь только что пришёл через наш affiliate redirect,
             // referrer будет ad.admitad.com / epn.bz / другая CPA-сеть — это НЕ конкурент.
             if (response.state === 'active' || response.activated) {
@@ -188,10 +237,28 @@
                     ? Date.now() - new Date(response.activation.activated_at).getTime()
                     : Infinity;
 
-                if (activationAge > 60000 && detectCompetingClick()) {
-                    // Уведомляем background — он переведёт состояние и пришлёт
-                    // SHOW_NOTIFICATION с notification_type='competing'
-                    chrome.runtime.sendMessage({ type: 'COMPETING_DETECTED', domain }).catch(() => {});
+                if (activationAge > 20000) {
+                    // Метод 1: referrer / URL-анализ (существующий)
+                    if (detectCompetingClick()) {
+                        chrome.runtime.sendMessage({ type: 'COMPETING_DETECTED', domain }).catch(() => {});
+                        return;
+                    }
+                    // Метод 2: сравнение affiliate-параметров через SW
+                    // Ловит случай когда чужой сервис даёт прямую ссылку на магазин
+                    // с другим tagtag_uid/subid — без redirect через свой домен.
+                    try {
+                        const paramsCheck = await chrome.runtime.sendMessage({
+                            type: 'CHECK_AFFILIATE_PARAMS',
+                            domain,
+                            url: window.location.href,
+                        });
+                        if (paramsCheck && paramsCheck.competing) {
+                            chrome.runtime.sendMessage({ type: 'COMPETING_DETECTED', domain }).catch(() => {});
+                            return;
+                        }
+                    } catch {
+                        // SW не ответил — игнорируем
+                    }
                 }
                 // Не показываем стандартное уведомление при активном кэшбэке
                 return;
@@ -240,7 +307,8 @@
             // Российские кэшбэк-сервисы
             'letyshops.com', 'megabonus.com', 'kopikot.ru',
             'smarty.sale',   'cashback.ru',   'giftd.tech',
-            'skidka.ru',     'backit.me',      'ePN.bz',
+            'skidka.ru',     'backit.me',     'epn.bz',
+            'cashbackoff.ru','switchback.ru', 'promokodus.com',
             // Affiliate-сети (не наши)
             'admitad.com',  'cityads.ru',  'actionpay.ru',
             'leads.su',     'cpa.ru',      'where.ru',
@@ -249,7 +317,8 @@
             'awin.com',           'awinmid.com',
             'tradedoubler.com',   'rakuten.com',
             'linksynergy.com',    'commissionjunction.com',
-            'cj.com',
+            'cj.com',             'shareasale.com',
+            'impact.com',         'partnerize.com',
         ];
 
         // Паттерны путей, характерные для affiliate-редиректов
@@ -260,8 +329,18 @@
 
         // URL-параметры, уникальные для чужих affiliate-сетей
         const COMPETING_URL_PARAMS = [
-            'awinmid', 'awinaffid', 'awc',   // AWIN
-            'admitad_uid',                     // Admitad
+            'awinmid', 'awinaffid', 'awc',       // AWIN
+            'admitad_uid',                         // Admitad (чужой publisher)
+            'actionpay',                           // ActionPay
+            'cityads_source',                      // CityAds
+            'letyshops_uid', 'lts_uid',            // Letyshops
+            'mb_uid',                              // Megabonus
+            'kopikot_uid',                         // Kopikot
+            'cj_aid', 'cjevent',                   // Commission Junction
+            'irclickid',                           // Impact Radius
+            'tduid',                               // TradeDoubler
+            'ranMID', 'ranEAID', 'ranSiteID',      // Rakuten
+            'sscid',                               // ShareASale
         ];
 
         // 1. Анализ document.referrer
@@ -409,6 +488,9 @@
 
         shadow.appendChild(notification);
 
+        // Сохраняем ссылку для возможной замены на competing-уведомление
+        currentNotificationHost = host;
+
         // Вставляем в DOM
         const target = document.body || document.documentElement;
         target.appendChild(host);
@@ -491,7 +573,12 @@
 
         chrome.storage.session.set({ [dismissKey]: true }).catch(() => {});
 
-        setTimeout(() => host.remove(), 400);
+        setTimeout(() => {
+            host.remove();
+            if (currentNotificationHost === host) {
+                currentNotificationHost = null;
+            }
+        }, 400);
     }
 
     // ─── Стили (инжектируются в Shadow DOM) ───
