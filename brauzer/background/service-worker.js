@@ -209,7 +209,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 // домен, — это competing. При этом наша собственная активация (через наш сайт)
 // корректно пропускается: в цепочке будет наш домен.
 
-chrome.webNavigation.onCommitted.addListener((details) => {
+chrome.webNavigation.onCommitted.addListener(async (details) => {
     // Только основной фрейм (не iframes)
     if (details.frameId !== 0) return;
 
@@ -235,6 +235,24 @@ chrome.webNavigation.onCommitted.addListener((details) => {
     }
     while (history.length > NAV_HISTORY_MAX_ENTRIES) {
         history.shift();
+    }
+
+    // Сохраняем affiliate-параметры при committed (быстрее чем onCompleted).
+    // Это надёжнее чем ждать полной загрузки страницы — на медленных сайтах
+    // onCompleted может сработать после истечения grace period.
+    try {
+        const activation = await getActivationStatus(navDomain);
+        if (activation.state === CASHBACK_STATE.ACTIVE && activation.activated_at) {
+            const age = Date.now() - new Date(activation.activated_at).getTime();
+            if (age < 20000) {
+                const commitParams = extractAffiliateParams(details.url);
+                if (Object.keys(commitParams).length > 0) {
+                    await saveActivationAffiliateParams(navDomain, commitParams);
+                }
+            }
+        }
+    } catch {
+        // Ошибка чтения активации — не критично
     }
 });
 
@@ -276,7 +294,19 @@ chrome.webNavigation.onCompleted.addListener(async (details) => {
         }
     }
 
-    // ── Метод 2: Анализ цепочки навигации (webNavigation history) ──
+    // ── Метод 2: Любой внешний редирект на магазин ──
+    // Ловит неизвестные промежуточные домены (напр. dorinebeaumont.com, кастомные
+    // трекинг-домены CPA-сетей), которых нет в списке COMPETING_DOMAINS.
+    // Работает даже когда конечный URL «чистый» от affiliate-меток: CPA-сети
+    // часто передают трекинг через cookies при редиректе, а URL очищается.
+    // Логика: любой серверный/быстрый клиентский редирект с внешнего домена
+    // (не нашего сайта) на магазин с активным кэшбэком = перебитие.
+    if (isExternalRedirectToStore(details.tabId, navDomain)) {
+        await handleCompetingNavigation(navDomain, details.tabId);
+        return;
+    }
+
+    // ── Метод 3: Анализ цепочки навигации (webNavigation history) ──
     // Ловит случаи когда пользователь пришёл через redirect с конкурирующего домена,
     // даже если affiliate-параметры не сохранены или URL чистый.
     const navHistory = TAB_NAV_HISTORY.get(details.tabId);
@@ -480,24 +510,34 @@ async function handleMessage(message, sender) {
         }
 
         case 'CHECK_AFFILIATE_PARAMS': {
-            // Content script передаёт текущий URL для проверки affiliate-параметров.
-            // Если параметры изменились — кэшбэк перебит чужим сервисом.
+            // Content script передаёт текущий URL для проверки affiliate-параметров
+            // и внешних редиректов. Если параметры изменились или был внешний
+            // редирект (даже с чистым URL) — кэшбэк перебит чужим сервисом.
             const chkDomain    = message.domain;
             const chkActivation = await getActivationStatus(chkDomain);
 
-            if (chkActivation.state !== CASHBACK_STATE.ACTIVE || !chkActivation.affiliate_params) {
+            if (chkActivation.state !== CASHBACK_STATE.ACTIVE) {
                 return { competing: false };
             }
 
+            // Метод 1: Сравнение affiliate-параметров (если есть и в URL, и сохранённые)
             const currentParams = extractAffiliateParams(message.url);
-            if (Object.keys(currentParams).length === 0) {
-                // Нет affiliate-параметров в URL — прямой заход, не competing
-                return { competing: false };
+            const hasParams     = Object.keys(currentParams).length > 0;
+
+            if (hasParams && chkActivation.affiliate_params) {
+                if (hasChangedAffiliateParams(chkActivation.affiliate_params, currentParams)) {
+                    return { competing: true };
+                }
             }
 
-            return {
-                competing: hasChangedAffiliateParams(chkActivation.affiliate_params, currentParams),
-            };
+            // Метод 2: Внешний редирект (даже с чистым URL)
+            // CPA-сети часто передают трекинг через cookies при редиректе,
+            // а конечный URL приходит без affiliate-меток.
+            if (sender.tab && isExternalRedirectToStore(sender.tab.id, chkDomain)) {
+                return { competing: true };
+            }
+
+            return { competing: false };
         }
 
         default:
@@ -955,6 +995,57 @@ async function saveActivationAffiliateParams(domain, params) {
 function isCompetingDomain(hostname) {
     const h = hostname.replace(/^www\./i, '').toLowerCase();
     return COMPETING_DOMAINS.some(d => h === d || h.endsWith('.' + d));
+}
+
+/**
+ * Определяет, пришёл ли пользователь на магазин через внешний редирект
+ * (не через наш сайт). Не требует знания конкретного конкурирующего домена.
+ *
+ * Проверяет: (1) серверный редирект (302 и т.п.) — по qualifier "server_redirect"
+ * в записи магазина, (2) клиентский редирект (JS window.location) — по быстрой
+ * смене доменов (< 10 сек). Если наш сайт в цепочке — это наша активация.
+ *
+ * Пример: dorinebeaumont.com → (302) → cosmogon.ru
+ *   → server_redirect в записи cosmogon.ru → external = true → competing
+ */
+function isExternalRedirectToStore(tabId, storeDomain) {
+    const history = TAB_NAV_HISTORY.get(tabId);
+    if (!history || history.length < 2) return false;
+
+    const ourHost = extractDomain(CASHBACK_CONFIG.SITE_URL);
+    const cutoff  = Date.now() - NAV_HISTORY_WINDOW;
+
+    // Находим последнюю запись для домена магазина
+    const storeEntry = history[history.length - 1];
+    if (!storeEntry || storeEntry.domain !== storeDomain) return false;
+
+    const isServerRedirect = storeEntry.qualifiers &&
+                             storeEntry.qualifiers.includes('server_redirect');
+
+    // Проходим от предпоследней записи назад по цепочке
+    for (let i = history.length - 2; i >= 0; i--) {
+        const entry = history[i];
+        if (entry.timestamp < cutoff) break;
+
+        // Пропускаем записи самого магазина (внутренние навигации)
+        if (entry.domain === storeDomain) continue;
+
+        // Наш сайт в цепочке → это наша собственная активация
+        if (entry.domain === ourHost) return false;
+
+        // Серверный редирект с внешнего домена → точно перебитие
+        if (isServerRedirect) return true;
+
+        // Клиентский редирект (JS): быстрая навигация < 10 секунд между
+        // внешним доменом и магазином (JS-трекеры перенаправляют моментально)
+        const timeDiff = storeEntry.timestamp - entry.timestamp;
+        if (timeDiff < 10000) return true;
+
+        // Если внешний домен найден, но промежуток слишком большой — не редирект
+        break;
+    }
+
+    return false;
 }
 
 /**
