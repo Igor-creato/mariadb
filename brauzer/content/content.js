@@ -172,6 +172,10 @@
 
     chrome.runtime.onMessage.addListener((message) => {
         if (message.type === 'SHOW_NOTIFICATION' && message.store) {
+            // Если для магазина выбрано «Не показывать» — не показываем ничего,
+            // включая competing. Пользователь увидит красную иконку и статус в popup.
+            if (message.store.popup_mode === 'hide') return;
+
             // Competing-уведомления всегда показываются, даже если обычное уже отображено.
             // Это критично: пользователь ДОЛЖЕН узнать что кэшбэк перебит.
             if (message.notification_type === 'competing') {
@@ -203,7 +207,8 @@
             if (!response || !response.store) return;
 
             // Если состояние стало competing — показать уведомление
-            if (response.state === 'competing') {
+            // (только если для магазина не выбрано «Не показывать»)
+            if (response.state === 'competing' && response.store.popup_mode !== 'hide') {
                 removeExistingNotification();
                 notificationShown = false;
                 handleShowNotification(response.store, true, 'competing');
