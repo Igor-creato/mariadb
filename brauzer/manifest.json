@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Кэшбэк Сервис",
-  "version": "1.1.0",
+  "name": "Кэшбэк Сервис Савелло Клуб",
+  "version": "1.4.0",
   "description": "Получайте кэшбэк с покупок в интернет-магазинах. Автоматическое определение магазинов, активация кэшбэка одним кликом.",
   "default_locale": "ru",
   "permissions": [
@@ -13,7 +13,7 @@
     "webNavigation"
   ],
   "host_permissions": [
-    "http://localhost/kash-back/*"
+    "https://site.autmatization-bot.ru/*"
   ],
   "action": {
     "default_popup": "popup/popup.html",
@@ -41,5 +41,10 @@
     "48": "icons/icon-gray-48.png",
     "128": "icons/icon-gray-128.png"
   },
-  "web_accessible_resources": []
+  "web_accessible_resources": [
+    {
+        "resources": ["icons/*.svg", "icons/*.png"],
+        "matches": ["<all_urls>"]
+    }
+]
 }
