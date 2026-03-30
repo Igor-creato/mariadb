@@ -833,7 +833,7 @@ class CashbackWithdrawal
 
         // === 2.2. Server-generated idempotency key ===
         // Ключ генерируется на сервере для исключения манипуляции клиентом.
-        $idempotency_key = wp_generate_uuid4();
+        $idempotency_key = cashback_generate_uuid7(false);
 
         // === 3. Check if payout method and account are filled ===
         $payout_method = $this->get_payout_method($user_id);

@@ -27,6 +27,54 @@ define('CASHBACK_MIN_WP_VERSION', '6.2');
 define('CASHBACK_MIN_WC_VERSION', '5.0');
 
 /**
+ * Генерация UUID v7 (RFC 9562) — time-ordered UUID.
+ *
+ * Структура (128 бит):
+ *  - 48 бит: unix timestamp в миллисекундах
+ *  - 4 бита: версия (0111 = 7)
+ *  - 12 бит: random
+ *  - 2 бита: вариант (10)
+ *  - 62 бита: random
+ *
+ * @param bool $with_dashes true = стандартный формат (36 символов), false = только hex (32 символа)
+ * @return string UUID v7
+ */
+function cashback_generate_uuid7(bool $with_dashes = true): string
+{
+    $time  = (int) (microtime(true) * 1000);
+    $bytes = random_bytes(16);
+
+    // 48-bit timestamp (bytes 0-5)
+    $bytes[0] = chr(($time >> 40) & 0xFF);
+    $bytes[1] = chr(($time >> 32) & 0xFF);
+    $bytes[2] = chr(($time >> 24) & 0xFF);
+    $bytes[3] = chr(($time >> 16) & 0xFF);
+    $bytes[4] = chr(($time >> 8) & 0xFF);
+    $bytes[5] = chr($time & 0xFF);
+
+    // Version 7 (bits 48-51)
+    $bytes[6] = chr((ord($bytes[6]) & 0x0F) | 0x70);
+
+    // Variant 10xx (bits 64-65)
+    $bytes[8] = chr((ord($bytes[8]) & 0x3F) | 0x80);
+
+    $hex = bin2hex($bytes);
+
+    if (!$with_dashes) {
+        return $hex;
+    }
+
+    return sprintf(
+        '%s-%s-%s-%s-%s',
+        substr($hex, 0, 8),
+        substr($hex, 8, 4),
+        substr($hex, 12, 4),
+        substr($hex, 16, 4),
+        substr($hex, 20, 12)
+    );
+}
+
+/**
  * Проверка совместимости с текущими версиями PHP и WordPress
  *
  * @return void

@@ -168,6 +168,8 @@ function cashback_plugin_uninstall(): void
         'cashback_events_active',
         // API sync results
         'cashback_last_sync_result',
+        // Migration flags
+        'cashback_migrated_uuid_ascii',
     ];
 
     foreach ($options as $option) {

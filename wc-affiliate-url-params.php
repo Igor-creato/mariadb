@@ -758,8 +758,8 @@ class WC_Affiliate_URL_Params
                 exit;
             }
 
-            // Генерация click_id через random_bytes()
-            $click_id = bin2hex(random_bytes(16));
+            // Генерация click_id через UUID v7 (time-ordered, лучшая индексация в БД)
+            $click_id = cashback_generate_uuid7(false);
 
             // Валидация: 32 hex символа
             if (!ctype_xdigit($click_id) || strlen($click_id) !== 32) {
@@ -1173,7 +1173,7 @@ body.cb-redirect-page {
      *
      * @param int    $product_id ID товара WooCommerce.
      * @param int    $user_id    ID текущего пользователя (0 для гостей).
-     * @param string $click_id   UUID v4, сгенерированный на сервере.
+     * @param string $click_id   UUID v7 (time-ordered), сгенерированный на сервере.
      *
      * @return string|null Полный affiliate URL или null если товар не найден.
      */

@@ -23,7 +23,7 @@
       "48": "icons/icon-gray-48.png",
       "128": "icons/icon-gray-128.png"
     },
-    "default_title": "Кэшбэк Сервис"
+    "default_title": "Честный и выгодный Кэшбэк Сервис Савелло Клуб"
   },
   "background": {
     "service_worker": "background/service-worker.js"

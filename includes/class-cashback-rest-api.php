@@ -500,8 +500,8 @@ class Cashback_REST_API
             ], 429);
         }
 
-        // Генерация click_id
-        $click_id = bin2hex(random_bytes(16));
+        // Генерация click_id через UUID v7 (time-ordered, лучшая индексация в БД)
+        $click_id = cashback_generate_uuid7(false);
 
         // Построение affiliate URL
         $affiliate_url = $this->build_affiliate_url($product_id, $user_id, $click_id);

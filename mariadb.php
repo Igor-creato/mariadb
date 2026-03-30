@@ -80,6 +80,7 @@ class Mariadb_Plugin
             $instance->migrate_add_original_cpa_subid();
             $instance->migrate_add_webhook_processing_status();
             $instance->migrate_add_funds_ready();
+            $instance->migrate_uuid_columns_to_ascii();
             $instance->create_events();
             $instance->initialize_existing_users();
 
@@ -198,7 +199,7 @@ class Mariadb_Plugin
             `masked_details` TEXT DEFAULT NULL COMMENT 'Маскированные реквизиты для отображения (JSON)',
             `provider` varchar(100) DEFAULT NULL COMMENT 'Идентификатор провайдера выплат (банк/сервис)',
             `provider_payout_id` varchar(255) DEFAULT NULL COMMENT 'ID операции у провайдера',
-            `idempotency_key` char(36) NOT NULL COMMENT 'UUID v4 идемпотентный ключ от клиента',
+            `idempotency_key` char(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT 'UUIDv7 идемпотентный ключ (32 hex)',
             `attempts` int(11) NOT NULL DEFAULT 0 COMMENT 'Количество попыток отправки выплаты',
             `fail_reason` text DEFAULT NULL COMMENT 'Код/описание ошибки последней попытки',
             `status` enum('waiting','processing','paid','failed','declined','needs_retry') NOT NULL DEFAULT 'waiting',
@@ -234,11 +235,11 @@ class Mariadb_Plugin
             `api_verified` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = Транзакция сверена с API. Основной триггер начисления в баланс',
             `action_date` datetime DEFAULT NULL COMMENT 'Реальное время покупки. НЕ путать с created_at (время получения хука)',
             `click_time` datetime DEFAULT NULL COMMENT 'Время клика. Для антифрода: action_date - click_time = 0 бот',
-            `click_id` char(32) DEFAULT NULL COMMENT 'UUID клика, связь с cashback_click_log.click_id',
+            `click_id` char(32) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL COMMENT 'UUIDv7 клика без дефисов (32 hex), связь с cashback_click_log.click_id',
             `website_id` int unsigned DEFAULT NULL COMMENT 'ID площадки в CPA-сети',
             `action_type` varchar(10) DEFAULT NULL COMMENT 'sale/lead. Для корректного расчёта при нескольких тарифах',
             `processed_at` datetime DEFAULT NULL COMMENT 'Когда транзакция была учтена в балансе',
-            `processed_batch_id` char(36) DEFAULT NULL COMMENT 'UUID батча начисления',
+            `processed_batch_id` char(32) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL COMMENT 'UUIDv7 батча начисления (32 hex)',
             `idempotency_key` varchar(64) DEFAULT NULL COMMENT 'Ключ идемпотентности для предотвращения дублирования транзакций',
             `original_cpa_subid` varchar(255) DEFAULT NULL COMMENT 'Оригинальный subid2 переданный в CPA при клике. Для перенесённых из unregistered = значение user_id на момент клика (например: unregistered)',
             `spam_click` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = транзакция из подозрительного клика, кэшбэк только после ручной проверки',
@@ -275,11 +276,11 @@ class Mariadb_Plugin
             `api_verified` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = Транзакция сверена с API. Основной триггер начисления в баланс',
             `action_date` datetime DEFAULT NULL COMMENT 'Реальное время покупки. НЕ путать с created_at (время получения хука)',
             `click_time` datetime DEFAULT NULL COMMENT 'Время клика. Для антифрода: action_date - click_time = 0 бот',
-            `click_id` char(32) DEFAULT NULL COMMENT 'UUID клика, связь с cashback_click_log.click_id',
+            `click_id` char(32) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL COMMENT 'UUIDv7 клика без дефисов (32 hex), связь с cashback_click_log.click_id',
             `website_id` int unsigned DEFAULT NULL COMMENT 'ID площадки в CPA-сети',
             `action_type` varchar(10) DEFAULT NULL COMMENT 'sale/lead. Для корректного расчёта при нескольких тарифах',
             `processed_at` datetime DEFAULT NULL COMMENT 'Когда транзакция была учтена в балансе',
-            `processed_batch_id` char(36) DEFAULT NULL COMMENT 'UUID батча начисления',
+            `processed_batch_id` char(32) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL COMMENT 'UUIDv7 батча начисления (32 hex)',
             `idempotency_key` varchar(64) DEFAULT NULL COMMENT 'Ключ идемпотентности для предотвращения дублирования транзакций',
             `spam_click` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = транзакция из подозрительного клика, кэшбэк только после ручной проверки',
             `funds_ready` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = CPA-сеть подтвердила готовность средств к снятию (Admitad: processed=1, EPN: status=approved)',
@@ -348,7 +349,7 @@ class Mariadb_Plugin
         // Таблица логирования кликов по партнерским ссылкам
         $table_click_log = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_click_log` (
             `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-            `click_id` char(32) NOT NULL COMMENT 'UUID клика без дефисов, передаётся в CPA как subID, ключ для диспута',
+            `click_id` char(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT 'UUIDv7 клика без дефисов (32 hex), передаётся в CPA как subID',
             `user_id` bigint(20) unsigned NOT NULL DEFAULT 0 COMMENT 'WP user ID (0 для гостей)',
             `session_id` varchar(128) DEFAULT NULL COMMENT 'Идентификатор сессии для незалогиненных',
             `product_id` bigint(20) unsigned NOT NULL COMMENT 'ID товара WooCommerce',
@@ -1545,7 +1546,7 @@ class Mariadb_Plugin
         }
 
         try {
-            $batch_id = wp_generate_uuid4();
+            $batch_id = cashback_generate_uuid7(false);
 
             $delay_days = (int) get_option('cashback_balance_delay_days', 0);
             $delay_sql  = '';
@@ -1627,6 +1628,100 @@ class Mariadb_Plugin
         }
 
         return true;
+    }
+
+    /**
+     * Миграция UUID-колонок на CHAR(32) CHARACTER SET ascii COLLATE ascii_bin.
+     *
+     * Даёт:
+     * - 32 байта вместо 128 (utf8mb4 × char(32))
+     * - Индексы в ~4 раза легче и быстрее
+     * - Бинарное сравнение без overhead коллации
+     *
+     * Для колонок, которые были CHAR(36) (с дефисами), удаляет дефисы из существующих данных.
+     */
+    private function migrate_uuid_columns_to_ascii(): void
+    {
+        global $wpdb;
+
+        if (get_option('cashback_migrated_uuid_ascii', false)) {
+            return;
+        }
+
+        $prefix = $wpdb->prefix;
+
+        // Колонки, которые были CHAR(36) с дефисами → CHAR(32) без дефисов
+        $columns_36_to_32 = [
+            "{$prefix}cashback_payout_requests" => ['idempotency_key'],
+            "{$prefix}cashback_transactions"    => ['processed_batch_id'],
+            "{$prefix}cashback_unregistered_transactions" => ['processed_batch_id'],
+        ];
+
+        foreach ($columns_36_to_32 as $table => $columns) {
+            foreach ($columns as $col) {
+                if (!$this->column_exists_in_table($table, $col)) {
+                    continue;
+                }
+
+                // Удалить дефисы из существующих данных
+                // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+                $wpdb->query(
+                    "UPDATE `{$table}` SET `{$col}` = REPLACE(`{$col}`, '-', '') WHERE `{$col}` LIKE '%-%'"
+                );
+
+                // Сменить тип колонки
+                // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+                $wpdb->query(
+                    "ALTER TABLE `{$table}` MODIFY COLUMN `{$col}` char(32) CHARACTER SET ascii COLLATE ascii_bin"
+                );
+
+                if ($wpdb->last_error) {
+                    error_log("[Cashback] migrate_uuid_ascii: failed to alter {$table}.{$col}: " . $wpdb->last_error);
+                }
+            }
+        }
+
+        // Колонки, которые уже CHAR(32) → только сменить charset/collation
+        $columns_32_ascii = [
+            "{$prefix}cashback_transactions"    => ['click_id'],
+            "{$prefix}cashback_unregistered_transactions" => ['click_id'],
+            "{$prefix}cashback_click_log"       => ['click_id'],
+        ];
+
+        foreach ($columns_32_ascii as $table => $columns) {
+            foreach ($columns as $col) {
+                if (!$this->column_exists_in_table($table, $col)) {
+                    continue;
+                }
+
+                // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+                $wpdb->query(
+                    "ALTER TABLE `{$table}` MODIFY COLUMN `{$col}` char(32) CHARACTER SET ascii COLLATE ascii_bin"
+                );
+
+                if ($wpdb->last_error) {
+                    error_log("[Cashback] migrate_uuid_ascii: failed to alter {$table}.{$col}: " . $wpdb->last_error);
+                }
+            }
+        }
+
+        update_option('cashback_migrated_uuid_ascii', true, false);
+    }
+
+    /**
+     * Проверяет наличие колонки в таблице.
+     */
+    private function column_exists_in_table(string $table, string $column): bool
+    {
+        global $wpdb;
+
+        return (bool) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM information_schema.COLUMNS
+             WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s AND COLUMN_NAME = %s",
+            DB_NAME,
+            $table,
+            $column
+        ));
     }
 }
 
