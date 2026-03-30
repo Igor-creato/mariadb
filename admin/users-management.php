@@ -30,6 +30,7 @@ class Cashback_Users_Management_Admin
         // Обработка AJAX запросов
         add_action('wp_ajax_update_user_profile', [$this, 'handle_update_user_profile']);
         add_action('wp_ajax_get_user_profile', [$this, 'handle_get_user_profile']);
+        add_action('wp_ajax_bulk_update_cashback_rate', [$this, 'handle_bulk_update_cashback_rate']);
 
         // Подключение скриптов
         add_action('admin_enqueue_scripts', [$this, 'enqueue_admin_scripts']);
@@ -71,6 +72,7 @@ class Cashback_Users_Management_Admin
         wp_localize_script('cashback-admin-users', 'cashbackUsersData', [
             'updateNonce' => wp_create_nonce('update_user_profile_nonce'),
             'getNonce' => wp_create_nonce('get_user_profile_nonce'),
+            'bulkRateNonce' => wp_create_nonce('bulk_update_cashback_rate_nonce'),
         ]);
     }
 
@@ -216,6 +218,26 @@ class Cashback_Users_Management_Admin
                     <?php endif; ?>
                 </div>
                 <br class="clear">
+            </div>
+
+            <!-- Массовое изменение ставки кэшбэка -->
+            <div class="postbox" style="padding: 12px 16px; margin-bottom: 20px;">
+                <h3 style="margin: 0 0 10px;">Массовое изменение ставки кэшбэка</h3>
+                <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                    <label for="bulk-old-rate">Текущая ставка:</label>
+                    <input type="text" id="bulk-old-rate" placeholder="60 или all" style="width: 100px;" />
+                    <label for="bulk-new-rate">Новая ставка (%):</label>
+                    <input type="number" id="bulk-new-rate" step="0.01" min="0" max="100" placeholder="65" style="width: 100px;" />
+                    <button type="button" id="bulk-rate-preview" class="button">Предпросмотр</button>
+                    <button type="button" id="bulk-rate-apply" class="button button-primary" disabled>Применить</button>
+                    <span id="bulk-rate-info" style="color: #666;"></span>
+                </div>
+                <p class="description" style="margin-top: 10px;">
+                    В поле <strong>«Текущая ставка»</strong> укажите процент, который нужно заменить (например, <code>60</code>),
+                    или введите <code>all</code>, чтобы изменить ставку у всех пользователей сразу.<br>
+                    В поле <strong>«Новая ставка»</strong> укажите новый процент кэшбэка (от 0 до 100).<br>
+                    Нажмите <strong>«Предпросмотр»</strong>, чтобы увидеть количество затронутых пользователей, затем <strong>«Применить»</strong> для подтверждения.
+                </p>
             </div>
 
             <!-- Таблица пользователей -->
@@ -605,6 +627,125 @@ class Cashback_Users_Management_Admin
 
         // Возвращаем данные
         wp_send_json_success($user_data);
+    }
+
+    /**
+     * Массовое обновление ставки кэшбэка
+     */
+    public function handle_bulk_update_cashback_rate(): void
+    {
+        if (!isset($_POST['nonce'])) {
+            wp_send_json_error(['message' => 'Отсутствует nonce.']);
+            return;
+        }
+
+        if (!wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'bulk_update_cashback_rate_nonce')) {
+            wp_send_json_error(['message' => 'Неверный nonce.']);
+            return;
+        }
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Недостаточно прав для выполнения этого действия.']);
+            return;
+        }
+
+        if (!isset($_POST['old_rate'], $_POST['new_rate'])) {
+            wp_send_json_error(['message' => 'Не указаны параметры.']);
+            return;
+        }
+
+        $old_rate_raw = trim(sanitize_text_field(wp_unslash($_POST['old_rate'])));
+        $new_rate = sanitize_text_field(wp_unslash($_POST['new_rate']));
+        $preview = !empty($_POST['preview']);
+
+        // Валидация новой ставки
+        if (!preg_match('/^\d+(\.\d{1,2})?$/', $new_rate) || bccomp($new_rate, '0', 2) < 0 || bccomp($new_rate, '100', 2) > 0) {
+            wp_send_json_error(['message' => 'Новая ставка должна быть числом от 0 до 100.']);
+            return;
+        }
+
+        global $wpdb;
+
+        $is_all = (strtolower($old_rate_raw) === 'all');
+
+        if (!$is_all) {
+            // Валидация старой ставки
+            if (!preg_match('/^\d+(\.\d{1,2})?$/', $old_rate_raw) || bccomp($old_rate_raw, '0', 2) < 0 || bccomp($old_rate_raw, '100', 2) > 0) {
+                wp_send_json_error(['message' => 'Текущая ставка должна быть числом от 0 до 100 или "all".']);
+                return;
+            }
+        }
+
+        // Подсчёт затронутых пользователей
+        if ($is_all) {
+            $count = (int) $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM {$this->profile_table_name} WHERE cashback_rate != %s",
+                $new_rate
+            ));
+        } else {
+            $count = (int) $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM {$this->profile_table_name} WHERE cashback_rate = %s",
+                $old_rate_raw
+            ));
+        }
+
+        // Режим предпросмотра — только вернуть количество
+        if ($preview) {
+            wp_send_json_success([
+                'count' => $count,
+                'old_rate' => $old_rate_raw,
+                'new_rate' => $new_rate,
+            ]);
+            return;
+        }
+
+        if ($count === 0) {
+            wp_send_json_error(['message' => 'Не найдено пользователей для обновления.']);
+            return;
+        }
+
+        // Выполняем обновление
+        if ($is_all) {
+            $result = $wpdb->query($wpdb->prepare(
+                "UPDATE {$this->profile_table_name} SET cashback_rate = %s, updated_at = %s WHERE cashback_rate != %s",
+                $new_rate,
+                current_time('mysql'),
+                $new_rate
+            ));
+        } else {
+            $result = $wpdb->query($wpdb->prepare(
+                "UPDATE {$this->profile_table_name} SET cashback_rate = %s, updated_at = %s WHERE cashback_rate = %s",
+                $new_rate,
+                current_time('mysql'),
+                $old_rate_raw
+            ));
+        }
+
+        if ($result === false) {
+            wp_send_json_error(['message' => 'Ошибка при обновлении базы данных.']);
+            return;
+        }
+
+        // Аудит-лог
+        if (class_exists('Cashback_Encryption')) {
+            Cashback_Encryption::write_audit_log(
+                'bulk_cashback_rate_update',
+                get_current_user_id(),
+                'cashback_user_profile',
+                null,
+                [
+                    'old_rate' => $old_rate_raw,
+                    'new_rate' => $new_rate,
+                    'affected_users' => $result,
+                ]
+            );
+        }
+
+        wp_send_json_success([
+            'updated' => (int) $result,
+            'old_rate' => $old_rate_raw,
+            'new_rate' => $new_rate,
+        ]);
     }
 
     /**

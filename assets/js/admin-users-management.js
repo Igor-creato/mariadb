@@ -4,6 +4,111 @@ jQuery(document).ready(function($) {
         return String(text).replace(/[&<>"']/g, function(m) { return map[m]; });
     }
 
+    // Массовое изменение ставки кэшбэка — предпросмотр
+    $('#bulk-rate-preview').on('click', function() {
+        var oldRate = $('#bulk-old-rate').val().trim();
+        var newRate = $('#bulk-new-rate').val().trim();
+
+        if (!oldRate || !newRate) {
+            alert('Заполните оба поля.');
+            return;
+        }
+
+        if (oldRate.toLowerCase() !== 'all') {
+            var parsed = parseFloat(oldRate);
+            if (isNaN(parsed) || parsed < 0 || parsed > 100) {
+                alert('Текущая ставка должна быть числом от 0 до 100 или "all".');
+                return;
+            }
+        }
+
+        var parsedNew = parseFloat(newRate);
+        if (isNaN(parsedNew) || parsedNew < 0 || parsedNew > 100) {
+            alert('Новая ставка должна быть числом от 0 до 100.');
+            return;
+        }
+
+        var $info = $('#bulk-rate-info');
+        var $applyBtn = $('#bulk-rate-apply');
+        $info.text('Загрузка...');
+        $applyBtn.prop('disabled', true);
+
+        $.post(ajaxurl, {
+            action: 'bulk_update_cashback_rate',
+            nonce: cashbackUsersData.bulkRateNonce,
+            old_rate: oldRate,
+            new_rate: newRate,
+            preview: 1
+        }, function(response) {
+            if (response.success) {
+                var count = response.data.count;
+                if (count === 0) {
+                    $info.text('Не найдено пользователей для обновления.');
+                    $applyBtn.prop('disabled', true);
+                } else {
+                    var label = oldRate.toLowerCase() === 'all'
+                        ? 'Будет обновлено пользователей: ' + count + ' (все → ' + newRate + '%)'
+                        : 'Будет обновлено пользователей: ' + count + ' (' + oldRate + '% → ' + newRate + '%)';
+                    $info.text(label);
+                    $applyBtn.prop('disabled', false);
+                }
+            } else {
+                $info.text('Ошибка: ' + response.data.message);
+                $applyBtn.prop('disabled', true);
+            }
+        }).fail(function() {
+            $info.text('Ошибка соединения.');
+            $applyBtn.prop('disabled', true);
+        });
+    });
+
+    // Массовое изменение ставки кэшбэка — применение
+    $('#bulk-rate-apply').on('click', function() {
+        var oldRate = $('#bulk-old-rate').val().trim();
+        var newRate = $('#bulk-new-rate').val().trim();
+        var infoText = $('#bulk-rate-info').text();
+
+        if (!confirm('Подтвердите массовое изменение ставки кэшбэка.\n\n' + infoText)) {
+            return;
+        }
+
+        var $info = $('#bulk-rate-info');
+        var $applyBtn = $('#bulk-rate-apply');
+        $applyBtn.prop('disabled', true);
+        $info.text('Обновление...');
+
+        $.post(ajaxurl, {
+            action: 'bulk_update_cashback_rate',
+            nonce: cashbackUsersData.bulkRateNonce,
+            old_rate: oldRate,
+            new_rate: newRate,
+            preview: 0
+        }, function(response) {
+            if (response.success) {
+                $info.html('<span style="color: green;">Обновлено пользователей: ' + response.data.updated + '</span>');
+                $applyBtn.prop('disabled', true);
+                // Обновляем ставки в видимой таблице
+                $('#users-tbody tr').each(function() {
+                    var $cell = $(this).find('.edit-field[data-field="cashback_rate"]');
+                    var currentRate = $cell.text().trim();
+                    if (oldRate.toLowerCase() === 'all' || currentRate === parseFloat(oldRate).toFixed(2)) {
+                        $cell.text(parseFloat(newRate).toFixed(2));
+                    }
+                });
+            } else {
+                $info.html('<span style="color: red;">Ошибка: ' + escapeHtml(response.data.message) + '</span>');
+            }
+        }).fail(function() {
+            $info.html('<span style="color: red;">Ошибка соединения.</span>');
+        });
+    });
+
+    // Сброс кнопки "Применить" при изменении полей
+    $('#bulk-old-rate, #bulk-new-rate').on('input', function() {
+        $('#bulk-rate-apply').prop('disabled', true);
+        $('#bulk-rate-info').text('');
+    });
+
     // Обработка фильтра по статусу
     $('#filter-submit').on('click', function() {
         var status = $('#filter-status').val();
