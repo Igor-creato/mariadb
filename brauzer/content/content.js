@@ -664,14 +664,14 @@
             .cb-notification {
                 width: 360px;
                 max-width: calc(100vw - 40px);
-                background: #1a1d23;
+                background: #ffffff;
                 border: 1px solid rgba(231, 76, 60, 0.4);
                 border-radius: 14px;
-                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5),
-                            0 0 0 1px rgba(255, 255, 255, 0.05);
+                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15),
+                            0 0 0 1px rgba(0, 0, 0, 0.05);
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
                 font-size: 14px;
-                color: #e4e6ea;
+                color: #242424;
                 overflow: hidden;
                 transform: translateY(-20px);
                 opacity: 0;
@@ -707,7 +707,7 @@
                 align-items: center;
                 gap: 6px;
                 font-size: 11px;
-                color: #6b6f80;
+                color: #909090;
                 font-weight: 500;
                 text-transform: uppercase;
                 letter-spacing: 0.5px;
@@ -717,14 +717,14 @@
                 width: 24px; height: 24px;
                 display: flex; align-items: center; justify-content: center;
                 background: none; border: none;
-                color: #6b6f80; font-size: 18px;
+                color: #909090; font-size: 18px;
                 cursor: pointer; border-radius: 4px;
                 transition: all 0.2s;
                 line-height: 1; padding: 0;
             }
             .cb-close:hover {
-                background: rgba(255, 255, 255, 0.1);
-                color: #e4e6ea;
+                background: rgba(0, 0, 0, 0.06);
+                color: #242424;
             }
             .cb-body {
                 padding: 12px 14px;
@@ -737,7 +737,7 @@
                 display: flex; flex-direction: column; gap: 2px; flex: 1;
             }
             .cb-title {
-                font-size: 15px; font-weight: 600; color: #fff;
+                font-size: 15px; font-weight: 600; color: #242424;
             }
             .cb-value {
                 font-size: 18px; font-weight: 700; color: #e74c3c;
@@ -750,7 +750,7 @@
                 line-height: 1.4;
             }
             .cb-subtitle {
-                font-size: 12px; color: #8b8fa3;
+                font-size: 12px; color: #707070;
             }
             .cb-actions { padding: 0 14px 14px; }
             .cb-btn {
@@ -777,10 +777,10 @@
                 transform: translateY(-1px);
             }
             .cb-btn-login {
-                background: linear-gradient(135deg, #4f9cf7, #3b82d9);
+                background: #83b735;
             }
             .cb-btn-login:hover {
-                background: linear-gradient(135deg, #3b82d9, #2c6fbd);
+                background: #74a32f;
                 transform: translateY(-1px);
             }
             .cb-btn:active { transform: translateY(0); }
