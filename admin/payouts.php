@@ -464,13 +464,20 @@ class Cashback_Payouts_Admin
                                             <td><?php echo esc_html(date('Y-m-d H:i', strtotime($payout['created_at']))); ?></td>
                                             <td><?php echo esc_html(!empty($payout['updated_at']) ? date('Y-m-d H:i', strtotime($payout['updated_at'])) : ''); ?></td>
                                             <td>
+                                                <?php
+                                                $is_final_status = in_array($payout['status'], ['paid', 'failed', 'declined'], true);
+                                                ?>
                                                 <?php if ($payout['status'] === 'processing'): ?>
                                                     <a href="<?php echo esc_url(admin_url('admin.php?page=cashback-payouts&action=view&payout_id=' . $payout['id'])); ?>" class="button button-primary view-btn"><?php echo esc_html__('Просмотр', 'cashback-plugin'); ?></a>
                                                 <?php endif; ?>
-                                                <button class="button button-secondary edit-btn"><?php echo esc_html__('Редактировать', 'cashback-plugin'); ?></button>
+                                                <?php if ($is_final_status): ?>
+                                                    <span class="description"><?php echo esc_html__('Финальный статус', 'cashback-plugin'); ?></span>
+                                                <?php else: ?>
+                                                    <button class="button button-secondary edit-btn"><?php echo esc_html__('Редактировать', 'cashback-plugin'); ?></button>
+                                                    <button class="button button-primary save-btn" style="display:none;"><?php echo esc_html__('Сохранить', 'cashback-plugin'); ?></button>
+                                                    <button class="button button-default cancel-btn" style="display:none;"><?php echo esc_html__('Отмена', 'cashback-plugin'); ?></button>
+                                                <?php endif; ?>
                                                 <button class="button button-secondary verify-btn" title="<?php echo esc_attr__('Проверка консистентности баланса', 'cashback-plugin'); ?>"><?php echo esc_html__('Проверка', 'cashback-plugin'); ?></button>
-                                                <button class="button button-primary save-btn" style="display:none;"><?php echo esc_html__('Сохранить', 'cashback-plugin'); ?></button>
-                                                <button class="button button-default cancel-btn" style="display:none;"><?php echo esc_html__('Отмена', 'cashback-plugin'); ?></button>
                                             </td>
                                 </tr>
                             <?php endforeach; ?>
@@ -921,13 +928,18 @@ class Cashback_Payouts_Admin
                     || ($old_status !== 'failed' && $status === 'failed');
 
                 if ($needs_balance_update) {
+                    // Передаём user_id и amount из уже заблокированной payout row,
+                    // чтобы update_user_balance_on_* не делал повторный FOR UPDATE на payout
+                    $payout_user_id = (int) $payout_request['user_id'];
+                    $payout_amount = (string) $payout_request['total_amount'];
+
                     $balance_result = false;
                     if ($old_status !== 'paid' && $status === 'paid') {
-                        $balance_result = $this->update_user_balance_on_payout($payout_id, true);
+                        $balance_result = $this->update_user_balance_on_payout($payout_id, true, $payout_user_id, $payout_amount);
                     } elseif ($old_status !== 'declined' && $status === 'declined') {
-                        $balance_result = $this->update_user_balance_on_declined($payout_id, true);
+                        $balance_result = $this->update_user_balance_on_declined($payout_id, true, $payout_user_id, $payout_amount);
                     } elseif ($old_status !== 'failed' && $status === 'failed') {
-                        $balance_result = $this->update_user_balance_on_failed($payout_id, true);
+                        $balance_result = $this->update_user_balance_on_failed($payout_id, true, $payout_user_id, $payout_amount);
                     }
 
                     if (!$balance_result) {
@@ -1054,12 +1066,23 @@ class Cashback_Payouts_Admin
     }
 
     /**
-     * Обновление баланса пользователя при изменении статуса выплаты на "paid"
-     * 
-     * @param int $payout_id ID запроса на выплату
-     * @return bool Результат операции
+     * Обновление баланса пользователя при изменении статуса выплаты на "paid".
+     *
+     * Вызывается из handle_update_payout_request() ВНУТРИ транзакции,
+     * где payout row уже заблокирован FOR UPDATE. Поэтому:
+     * - Повторный FOR UPDATE на payout не нужен (уже заблокирован вызывающим)
+     * - Payout data передаётся через параметры, не перечитывается из БД
+     * - Balance row блокируется FOR UPDATE для эксклюзивного доступа
+     * - Оптимистичная version в WHERE не нужна (FOR UPDATE гарантирует эксклюзивность)
+     * - UPDATE использует атомарный SQL (pending - amount) вместо PHP-арифметики
+     *
+     * @param int    $payout_id      ID заявки (уже заблокирована вызывающим кодом)
+     * @param int    $user_id        ID пользователя из заблокированной payout row
+     * @param string $amount         Сумма из заблокированной payout row (string для DECIMAL)
+     * @param bool   $in_transaction Всегда true при вызове из handle_update_payout_request
+     * @return bool
      */
-    private function update_user_balance_on_payout(int $payout_id, bool $in_transaction = false): bool
+    private function update_user_balance_on_payout(int $payout_id, bool $in_transaction = false, int $user_id = 0, string $amount = ''): bool
     {
         global $wpdb;
 
@@ -1068,39 +1091,39 @@ class Cashback_Payouts_Admin
         }
 
         try {
-            // Получаем информацию о запросе на выплату с блокировкой строки
-            $payout_request = $wpdb->get_row(
-                $wpdb->prepare(
-                    "SELECT user_id, total_amount, status
-                     FROM {$this->table_name}
-                     WHERE id = %d
-                     FOR UPDATE",
-                    $payout_id
-                ),
-                ARRAY_A
-            );
+            // Если данные не переданы — читаем из БД (standalone вызов)
+            if ($user_id <= 0 || $amount === '') {
+                $payout_request = $wpdb->get_row(
+                    $wpdb->prepare(
+                        "SELECT user_id, total_amount, status
+                         FROM {$this->table_name}
+                         WHERE id = %d FOR UPDATE",
+                        $payout_id
+                    ),
+                    ARRAY_A
+                );
 
-            if (!$payout_request) {
-                throw new Exception("Не найден запрос на выплату с ID {$payout_id}");
-            }
-
-            // Идемпотентность: если статус уже 'paid', баланс уже был обновлён — это не ошибка
-            if ($payout_request['status'] === 'paid') {
-                $this->log_info("Идемпотентный вызов: баланс для выплаты {$payout_id} уже был обновлён (статус: paid)");
-                if (!$in_transaction) {
-                    $wpdb->query('COMMIT');
+                if (!$payout_request) {
+                    throw new Exception("Не найден запрос на выплату с ID {$payout_id}");
                 }
-                return true;
+
+                if ($payout_request['status'] === 'paid') {
+                    $this->log_info("Идемпотентный вызов: баланс для выплаты {$payout_id} уже обновлён (paid)");
+                    if (!$in_transaction) {
+                        $wpdb->query('COMMIT');
+                    }
+                    return true;
+                }
+
+                $user_id = (int) $payout_request['user_id'];
+                $amount = (string) $payout_request['total_amount'];
             }
 
-            $user_id = (int) $payout_request['user_id'];
-            $amount = $payout_request['total_amount'];
-
-            // Получаем текущий баланс пользователя с блокировкой строки
+            // Блокируем строку баланса — единственная блокировка, которая нужна
             $balance_table = $wpdb->prefix . 'cashback_user_balance';
             $current_balance = $wpdb->get_row(
                 $wpdb->prepare(
-                    "SELECT pending_balance, paid_balance, version FROM {$balance_table} WHERE user_id = %d FOR UPDATE",
+                    "SELECT pending_balance FROM {$balance_table} WHERE user_id = %d FOR UPDATE",
                     $user_id
                 ),
                 ARRAY_A
@@ -1110,61 +1133,51 @@ class Cashback_Payouts_Admin
                 throw new Exception("Не найден баланс для пользователя {$user_id}");
             }
 
-            // Проверяем, достаточно ли средств в pending_balance (bcmath для точной арифметики)
-            $pending_balance = $current_balance['pending_balance'];
-            if (bccomp($pending_balance, $amount, 2) < 0) {
-                throw new Exception("Недостаточно средств в pending_balance для пользователя {$user_id}. Требуется: {$amount}, доступно: {$pending_balance}");
+            if (bccomp($current_balance['pending_balance'], $amount, 2) < 0) {
+                throw new Exception("Недостаточно средств в pending_balance для пользователя {$user_id}. Требуется: {$amount}, доступно: {$current_balance['pending_balance']}");
             }
 
-            // Обновляем баланс: вычитаем из pending_balance и добавляем к paid_balance
-            $new_pending_balance = bcsub($pending_balance, $amount, 2);
-            $new_paid_balance = bcadd($current_balance['paid_balance'] ?? '0', $amount, 2);
-            $old_version = intval($current_balance['version']);
-
-            // Используем оптимистичную блокировку через version
-            $result = $wpdb->update(
-                $balance_table,
-                [
-                    'pending_balance' => $new_pending_balance,
-                    'paid_balance' => $new_paid_balance,
-                    'version' => $old_version + 1
-                ],
-                [
-                    'user_id' => $user_id,
-                    'version' => $old_version
-                ],
-                ['%s', '%s', '%d'],
-                ['%d', '%d']
-            );
+            // Атомарный UPDATE: SQL-арифметика вместо PHP bcsub/bcadd
+            // FOR UPDATE гарантирует эксклюзивность — version в WHERE не нужен
+            $result = $wpdb->query($wpdb->prepare(
+                "UPDATE {$balance_table}
+                 SET pending_balance = pending_balance - CAST(%s AS DECIMAL(18,2)),
+                     paid_balance = paid_balance + CAST(%s AS DECIMAL(18,2)),
+                     version = version + 1
+                 WHERE user_id = %d
+                   AND pending_balance >= CAST(%s AS DECIMAL(18,2))",
+                $amount,
+                $amount,
+                $user_id,
+                $amount
+            ));
 
             if ($result === false || $result === 0) {
-                throw new Exception("Ошибка обновления баланса пользователя {$user_id} или конфликт версий");
+                throw new Exception("Ошибка обновления баланса пользователя {$user_id}");
             }
 
-            // Запись в леджер: payout_complete (отрицательная сумма — списание из pending)
+            // Леджер: payout_complete
             $ledger_table = $wpdb->prefix . 'cashback_balance_ledger';
-            $ledger_amount = '-' . number_format(abs((float) $amount), 2, '.', '');
             $ledger_result = $wpdb->query($wpdb->prepare(
                 "INSERT INTO `{$ledger_table}`
                      (user_id, type, amount, payout_request_id, idempotency_key)
                  VALUES (%d, 'payout_complete', %s, %d, %s)
                  ON DUPLICATE KEY UPDATE id = id",
                 $user_id,
-                $ledger_amount,
+                '-' . $amount,
                 $payout_id,
                 'payout_complete_' . $payout_id
             ));
 
             if ($ledger_result === false) {
-                throw new Exception("Ошибка записи payout_complete в леджер для выплаты {$payout_id}: " . $wpdb->last_error);
+                throw new Exception("Ошибка записи payout_complete в леджер для выплаты {$payout_id}");
             }
 
             if (!$in_transaction) {
                 $wpdb->query('COMMIT');
             }
 
-            // Логируем изменение баланса
-            $this->log_info("Баланс пользователя {$user_id} обновлен. Выплачено: {$amount}, pending_balance: {$new_pending_balance}, paid_balance: {$new_paid_balance}");
+            $this->log_info("Баланс пользователя {$user_id} обновлен. Выплачено: {$amount}");
 
             return true;
         } catch (Exception $e) {
@@ -1184,12 +1197,16 @@ class Cashback_Payouts_Admin
     }
 
     /**
-     * Обновление баланса пользователя при изменении статуса выплаты на "declined"
+     * Обновление баланса пользователя при изменении статуса выплаты на "declined".
+     * pending → frozen.
      *
-     * @param int $payout_id ID запроса на выплату
-     * @return bool Результат операции
+     * @param int    $payout_id      ID заявки (уже заблокирована вызывающим кодом)
+     * @param bool   $in_transaction Транзакция уже открыта вызывающим
+     * @param int    $user_id        ID пользователя из заблокированной payout row
+     * @param string $amount         Сумма из заблокированной payout row
+     * @return bool
      */
-    private function update_user_balance_on_declined(int $payout_id, bool $in_transaction = false): bool
+    private function update_user_balance_on_declined(int $payout_id, bool $in_transaction = false, int $user_id = 0, string $amount = ''): bool
     {
         global $wpdb;
 
@@ -1198,39 +1215,37 @@ class Cashback_Payouts_Admin
         }
 
         try {
-            // Получаем информацию о запросе на выплату с блокировкой строки
-            $payout_request = $wpdb->get_row(
-                $wpdb->prepare(
-                    "SELECT user_id, total_amount, status
-                     FROM {$this->table_name}
-                     WHERE id = %d
-                     FOR UPDATE",
-                    $payout_id
-                ),
-                ARRAY_A
-            );
+            if ($user_id <= 0 || $amount === '') {
+                $payout_request = $wpdb->get_row(
+                    $wpdb->prepare(
+                        "SELECT user_id, total_amount, status
+                         FROM {$this->table_name}
+                         WHERE id = %d FOR UPDATE",
+                        $payout_id
+                    ),
+                    ARRAY_A
+                );
 
-            if (!$payout_request) {
-                throw new Exception("Не найден запрос на выплату с ID {$payout_id}");
-            }
-
-            // Идемпотентность: если статус уже 'declined', баланс уже был обновлён — это не ошибка
-            if ($payout_request['status'] === 'declined') {
-                $this->log_info("Идемпотентный вызов: баланс для выплаты {$payout_id} уже был обновлён (статус: declined)");
-                if (!$in_transaction) {
-                    $wpdb->query('COMMIT');
+                if (!$payout_request) {
+                    throw new Exception("Не найден запрос на выплату с ID {$payout_id}");
                 }
-                return true;
+
+                if ($payout_request['status'] === 'declined') {
+                    $this->log_info("Идемпотентный вызов: баланс для выплаты {$payout_id} уже обновлён (declined)");
+                    if (!$in_transaction) {
+                        $wpdb->query('COMMIT');
+                    }
+                    return true;
+                }
+
+                $user_id = (int) $payout_request['user_id'];
+                $amount = (string) $payout_request['total_amount'];
             }
 
-            $user_id = (int) $payout_request['user_id'];
-            $amount = $payout_request['total_amount'];
-
-            // Получаем текущий баланс пользователя с блокировкой строки
             $balance_table = $wpdb->prefix . 'cashback_user_balance';
             $current_balance = $wpdb->get_row(
                 $wpdb->prepare(
-                    "SELECT pending_balance, frozen_balance, version FROM {$balance_table} WHERE user_id = %d FOR UPDATE",
+                    "SELECT pending_balance FROM {$balance_table} WHERE user_id = %d FOR UPDATE",
                     $user_id
                 ),
                 ARRAY_A
@@ -1240,61 +1255,48 @@ class Cashback_Payouts_Admin
                 throw new Exception("Не найден баланс для пользователя {$user_id}");
             }
 
-            // Проверяем, достаточно ли средств в pending_balance (bcmath для точной арифметики)
-            $pending_balance = $current_balance['pending_balance'];
-            if (bccomp($pending_balance, $amount, 2) < 0) {
-                throw new Exception("Недостаточно средств в pending_balance для пользователя {$user_id}. Требуется: {$amount}, доступно: {$pending_balance}");
+            if (bccomp($current_balance['pending_balance'], $amount, 2) < 0) {
+                throw new Exception("Недостаточно средств в pending_balance для пользователя {$user_id}. Требуется: {$amount}, доступно: {$current_balance['pending_balance']}");
             }
 
-            // Обновляем баланс: вычитаем из pending_balance и добавляем к frozen_balance
-            $new_pending_balance = bcsub($pending_balance, $amount, 2);
-            $new_frozen_balance = bcadd($current_balance['frozen_balance'] ?? '0', $amount, 2);
-            $old_version = intval($current_balance['version']);
-
-            // Используем оптимистичную блокировку через version
-            $result = $wpdb->update(
-                $balance_table,
-                [
-                    'pending_balance' => $new_pending_balance,
-                    'frozen_balance' => $new_frozen_balance,
-                    'version' => $old_version + 1
-                ],
-                [
-                    'user_id' => $user_id,
-                    'version' => $old_version
-                ],
-                ['%s', '%s', '%d'],
-                ['%d', '%d']
-            );
+            $result = $wpdb->query($wpdb->prepare(
+                "UPDATE {$balance_table}
+                 SET pending_balance = pending_balance - CAST(%s AS DECIMAL(18,2)),
+                     frozen_balance = frozen_balance + CAST(%s AS DECIMAL(18,2)),
+                     version = version + 1
+                 WHERE user_id = %d
+                   AND pending_balance >= CAST(%s AS DECIMAL(18,2))",
+                $amount,
+                $amount,
+                $user_id,
+                $amount
+            ));
 
             if ($result === false || $result === 0) {
-                throw new Exception("Ошибка обновления баланса пользователя {$user_id} или конфликт версий");
+                throw new Exception("Ошибка обновления баланса пользователя {$user_id}");
             }
 
-            // Запись в леджер: payout_declined (отрицательная сумма — деньги из pending в frozen)
             $ledger_table = $wpdb->prefix . 'cashback_balance_ledger';
-            $ledger_amount = '-' . number_format(abs((float) $amount), 2, '.', '');
             $ledger_result = $wpdb->query($wpdb->prepare(
                 "INSERT INTO `{$ledger_table}`
                      (user_id, type, amount, payout_request_id, idempotency_key)
                  VALUES (%d, 'payout_declined', %s, %d, %s)
                  ON DUPLICATE KEY UPDATE id = id",
                 $user_id,
-                $ledger_amount,
+                '-' . $amount,
                 $payout_id,
                 'payout_declined_' . $payout_id
             ));
 
             if ($ledger_result === false) {
-                throw new Exception("Ошибка записи payout_declined в леджер для выплаты {$payout_id}: " . $wpdb->last_error);
+                throw new Exception("Ошибка записи payout_declined в леджер для выплаты {$payout_id}");
             }
 
             if (!$in_transaction) {
                 $wpdb->query('COMMIT');
             }
 
-            // Логируем изменение баланса
-            $this->log_info("Баланс пользователя {$user_id} обновлен при отклонении выплаты. Сумма: {$amount}, pending_balance: {$new_pending_balance}, frozen_balance: {$new_frozen_balance}");
+            $this->log_info("Баланс пользователя {$user_id} обновлен при отклонении. Сумма: {$amount}");
 
             return true;
         } catch (Exception $e) {
@@ -1314,59 +1316,59 @@ class Cashback_Payouts_Admin
     }
 
     /**
-     * Обновление баланса пользователя при изменении статуса выплаты на "failed"
-     * Возвращает средства из pending_balance в available_balance
+     * Обновление баланса пользователя при изменении статуса выплаты на "failed".
+     * Возвращает средства: pending → available. Устанавливает refunded_at.
      *
-     * @param int $payout_id ID запроса на выплату
-     * @return bool Результат операции
+     * @param int    $payout_id      ID заявки (уже заблокирована вызывающим кодом)
+     * @param bool   $in_transaction Транзакция уже открыта вызывающим
+     * @param int    $user_id        ID пользователя из заблокированной payout row
+     * @param string $amount         Сумма из заблокированной payout row
+     * @return bool
      */
-    private function update_user_balance_on_failed(int $payout_id, bool $in_transaction = false): bool
+    private function update_user_balance_on_failed(int $payout_id, bool $in_transaction = false, int $user_id = 0, string $amount = ''): bool
     {
         global $wpdb;
 
         if (!$in_transaction) {
-            // Начинаем транзакцию СРАЗУ для предотвращения race condition
             $wpdb->query('START TRANSACTION');
         }
 
         try {
-            // Получаем информацию о запросе на выплату с блокировкой строки (FOR UPDATE)
-            // Это предотвращает дублирование возврата при параллельных запросах
-            $payout_request = $wpdb->get_row(
-                $wpdb->prepare(
-                    "SELECT user_id, total_amount, status, refunded_at
-                     FROM {$this->table_name}
-                     WHERE id = %d
-                     FOR UPDATE",
-                    $payout_id
-                ),
-                ARRAY_A
-            );
+            $refunded_at_check = null;
 
-            if (!$payout_request) {
-                throw new Exception("Не найден запрос на выплату с ID {$payout_id}");
-            }
+            if ($user_id <= 0 || $amount === '') {
+                $payout_request = $wpdb->get_row(
+                    $wpdb->prepare(
+                        "SELECT user_id, total_amount, status, refunded_at
+                         FROM {$this->table_name}
+                         WHERE id = %d FOR UPDATE",
+                        $payout_id
+                    ),
+                    ARRAY_A
+                );
 
-            // Проверка на повторный возврат средств ВНУТРИ транзакции (защита от race condition)
-            if (!empty($payout_request['refunded_at'])) {
-                $this->log_error("Средства для заявки {$payout_id} уже были возвращены ранее: " . $payout_request['refunded_at']);
-                if (!$in_transaction) {
-                    $wpdb->query('ROLLBACK');
+                if (!$payout_request) {
+                    throw new Exception("Не найден запрос на выплату с ID {$payout_id}");
                 }
-                return false;
+
+                $refunded_at_check = $payout_request['refunded_at'] ?? null;
+                $user_id = (int) $payout_request['user_id'];
+                $amount = (string) $payout_request['total_amount'];
             }
 
-            $user_id = (int) $payout_request['user_id'];
-            $amount = $payout_request['total_amount'];
+            // Проверка на повторный возврат (идемпотентность)
+            if (!empty($refunded_at_check)) {
+                $this->log_info("Средства для заявки {$payout_id} уже были возвращены: {$refunded_at_check}");
+                if (!$in_transaction) {
+                    $wpdb->query('COMMIT');
+                }
+                return true;
+            }
 
-            // Получаем текущий баланс пользователя с блокировкой строки
             $balance_table = $wpdb->prefix . 'cashback_user_balance';
             $current_balance = $wpdb->get_row(
                 $wpdb->prepare(
-                    "SELECT pending_balance, available_balance, version
-                     FROM {$balance_table}
-                     WHERE user_id = %d
-                     FOR UPDATE",
+                    "SELECT pending_balance FROM {$balance_table} WHERE user_id = %d FOR UPDATE",
                     $user_id
                 ),
                 ARRAY_A
@@ -1376,38 +1378,28 @@ class Cashback_Payouts_Admin
                 throw new Exception("Не найден баланс для пользователя {$user_id}");
             }
 
-            // Проверяем, достаточно ли средств в pending_balance (bcmath для точной арифметики)
-            $pending_balance = $current_balance['pending_balance'];
-            if (bccomp($pending_balance, $amount, 2) < 0) {
-                throw new Exception("Недостаточно средств в pending_balance для пользователя {$user_id}. Требуется: {$amount}, доступно: {$pending_balance}");
+            if (bccomp($current_balance['pending_balance'], $amount, 2) < 0) {
+                throw new Exception("Недостаточно средств в pending_balance для пользователя {$user_id}. Требуется: {$amount}, доступно: {$current_balance['pending_balance']}");
             }
 
-            // Обновляем баланс: вычитаем из pending_balance и добавляем к available_balance
-            $new_pending_balance = bcsub($pending_balance, $amount, 2);
-            $new_available_balance = bcadd($current_balance['available_balance'] ?? '0', $amount, 2);
-            $old_version = intval($current_balance['version']);
-
-            // Используем оптимистичную блокировку через version
-            $result = $wpdb->update(
-                $balance_table,
-                [
-                    'pending_balance' => $new_pending_balance,
-                    'available_balance' => $new_available_balance,
-                    'version' => $old_version + 1
-                ],
-                [
-                    'user_id' => $user_id,
-                    'version' => $old_version
-                ],
-                ['%s', '%s', '%d'],
-                ['%d', '%d']
-            );
+            $result = $wpdb->query($wpdb->prepare(
+                "UPDATE {$balance_table}
+                 SET pending_balance = pending_balance - CAST(%s AS DECIMAL(18,2)),
+                     available_balance = available_balance + CAST(%s AS DECIMAL(18,2)),
+                     version = version + 1
+                 WHERE user_id = %d
+                   AND pending_balance >= CAST(%s AS DECIMAL(18,2))",
+                $amount,
+                $amount,
+                $user_id,
+                $amount
+            ));
 
             if ($result === false || $result === 0) {
-                throw new Exception("Ошибка обновления баланса пользователя {$user_id} или конфликт версий");
+                throw new Exception("Ошибка обновления баланса пользователя {$user_id}");
             }
 
-            // Обновляем запись заявки, устанавливаем refunded_at для предотвращения повторного возврата
+            // refunded_at — маркер идемпотентности для повторного вызова
             $refund_time = current_time('mysql');
             $update_result = $wpdb->update(
                 $this->table_name,
@@ -1424,30 +1416,28 @@ class Cashback_Payouts_Admin
                 throw new Exception("Ошибка обновления поля refunded_at для заявки {$payout_id}");
             }
 
-            // Запись в леджер: payout_cancel (положительная сумма — возврат в available)
+            // Леджер: payout_cancel (положительная сумма — возврат в available)
             $ledger_table = $wpdb->prefix . 'cashback_balance_ledger';
-            $ledger_amount = number_format(abs((float) $amount), 2, '.', '');
             $ledger_result = $wpdb->query($wpdb->prepare(
                 "INSERT INTO `{$ledger_table}`
                      (user_id, type, amount, payout_request_id, idempotency_key)
                  VALUES (%d, 'payout_cancel', %s, %d, %s)
                  ON DUPLICATE KEY UPDATE id = id",
                 $user_id,
-                $ledger_amount,
+                $amount,
                 $payout_id,
                 'payout_cancel_' . $payout_id
             ));
 
             if ($ledger_result === false) {
-                throw new Exception("Ошибка записи payout_cancel в леджер для выплаты {$payout_id}: " . $wpdb->last_error);
+                throw new Exception("Ошибка записи payout_cancel в леджер для выплаты {$payout_id}");
             }
 
             if (!$in_transaction) {
                 $wpdb->query('COMMIT');
             }
 
-            // Логируем успешное изменение баланса
-            $this->log_info("Баланс пользователя {$user_id} обновлен при failed-статусе. Возвращено: {$amount}, pending_balance: {$new_pending_balance}, available_balance: {$new_available_balance}, refunded_at: {$refund_time}");
+            $this->log_info("Баланс пользователя {$user_id} обновлен при failed. Возвращено: {$amount}, refunded_at: {$refund_time}");
 
             return true;
         } catch (Exception $e) {

@@ -1377,14 +1377,6 @@ class Mariadb_Plugin
             $iteration++;
         } while ($affected > 0 && $iteration < $max_iterations);
 
-        // Удаляем дубликаты, оставляя самую раннюю запись
-        $wpdb->query(
-            "DELETE w1 FROM `{$table}` w1
-             INNER JOIN `{$table}` w2
-             ON w1.payload_hash = w2.payload_hash
-             AND w1.id > w2.id"
-        );
-
         error_log(sprintf('[Cashback] Webhook payload_hash backfill complete. Updated %d records.', $null_count));
     }
 

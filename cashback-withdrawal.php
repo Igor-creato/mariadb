@@ -734,9 +734,36 @@ class CashbackWithdrawal
      * Allows multiple withdrawal requests (as long as balance permits),
      * but prevents race conditions during balance deduction.
      */
+    /**
+     * Process cashback withdrawal request.
+     *
+     * Архитектура (v2 — production-grade):
+     *
+     * 1. ИДЕМПОТЕНТНОСТЬ: клиент предоставляет idempotency_key (UUIDv4).
+     *    При retry тот же ключ → SELECT возвращает существующую заявку.
+     *    UNIQUE KEY в БД — последний рубеж защиты от дублей.
+     *
+     * 2. БЛОКИРОВКА: только InnoDB row-level lock (SELECT FOR UPDATE).
+     *    GET_LOCK удалён — он advisory, не участвует в транзакциях,
+     *    привязан к соединению, ненадёжен при connection pooling.
+     *
+     * 3. INSERT-FIRST: никаких SELECT-before-INSERT проверок.
+     *    reference_id генерируется, INSERT пробуется, при коллизии — retry.
+     *    UNIQUE KEY — единственный арбитр уникальности.
+     *
+     * 4. RATE LIMITING: по данным БД (COUNT за 24 часа), не transients.
+     *    Атомарно проверяется внутри транзакции с FOR UPDATE.
+     *
+     * 5. БАЛАНС: обновляется атомарным UPDATE с CHECK в WHERE.
+     *    Оптимистичная блокировка через version удалена — FOR UPDATE
+     *    уже гарантирует эксклюзивный доступ к строке.
+     *
+     * 6. ЛЕДЖЕР: пишется в той же транзакции. ON DUPLICATE KEY UPDATE id = id
+     *    обеспечивает идемпотентность записи.
+     */
     public function process_cashback_withdrawal()
     {
-        // === 1. Security: nonce and authentication ===
+        // === 1. Безопасность: nonce и аутентификация ===
         if (!wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'] ?? '')), 'cashback_withdrawal_submit_nonce')) {
             wp_send_json_error(__('Ошибка безопасности.', 'cashback-plugin'));
             return;
@@ -749,20 +776,19 @@ class CashbackWithdrawal
 
         $user_id = get_current_user_id();
 
-        // Проверяем, что пользователь имеет корректный ID
         if (!$user_id || $user_id <= 0) {
             wp_send_json_error(__('Некорректный идентификатор пользователя.', 'cashback-plugin'));
             return;
         }
 
-        // Проверка статуса "banned"
+        // Проверка бана (идемпотентная, без side effects)
         if (Cashback_User_Status::is_user_banned($user_id)) {
             $ban_info = Cashback_User_Status::get_ban_info($user_id);
             wp_send_json_error(Cashback_User_Status::get_banned_message($ban_info));
             return;
         }
 
-        // === 1.5. Antifraud: cooling period check (идемпотентно, до lock) ===
+        // === 1.5. Антифрод: cooling period (детерминистичная проверка, до транзакции) ===
         if (class_exists('Cashback_Fraud_Settings') && Cashback_Fraud_Settings::is_enabled()) {
             $cooling_days = Cashback_Fraud_Settings::get_new_account_cooling_days();
             if ($cooling_days > 0) {
@@ -783,64 +809,45 @@ class CashbackWithdrawal
             }
         }
 
-        // === 2. Защита от повторных запросов через GET_LOCK ===
+        // === 2. Валидация входных данных (до любых операций с БД) ===
         global $wpdb;
-        $lock_name = "user_withdrawal_{$user_id}";
-        $lock_acquired = $wpdb->get_var($wpdb->prepare(
-            "SELECT GET_LOCK(%s, 10)",
-            $lock_name
-        ));
 
-        if (!$lock_acquired) {
-            wp_send_json_error(__('Предыдущий запрос еще обрабатывается. Пожалуйста, подождите.', 'cashback-plugin'));
+        // 2.1. Idempotency key от клиента (ОБЯЗАТЕЛЕН)
+        // Клиент генерирует UUID при загрузке формы. При retry отправляет тот же UUID.
+        // Это единственный способ отличить retry от нового запроса.
+        $raw_idempotency_key = sanitize_text_field(wp_unslash($_POST['idempotency_key'] ?? ''));
+        if (!preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $raw_idempotency_key)) {
+            wp_send_json_error(__('Ошибка запроса. Обновите страницу и попробуйте снова.', 'cashback-plugin'));
             return;
         }
+        // Колонка idempotency_key — char(32) hex без дефисов
+        $idempotency_key = str_replace('-', '', strtolower($raw_idempotency_key));
 
-        // Гарантированное освобождение блокировки даже при fatal error / OOM / timeout
-        $lock_released = false;
-        $release_lock_fn = function () use ($wpdb, $lock_name, &$lock_released) {
-            if (!$lock_released) {
-                $lock_released = true;
-                $wpdb->query($wpdb->prepare("DO RELEASE_LOCK(%s)", $lock_name));
-            }
-        };
-        register_shutdown_function($release_lock_fn);
-
-        // === 2.0.1. Rate limiting: max 3 withdrawal requests per 24 hours ===
-        // Проверяем ВНУТРИ GET_LOCK для атомарности (два параллельных запроса
-        // не смогут оба прочитать count=0 до инкремента)
-        $rate_key = 'cb_withdrawal_rate_' . $user_id;
-        $rate_count = (int) get_transient($rate_key);
-        if ($rate_count >= 3) {
-            $lock_released = true; $wpdb->query($wpdb->prepare("DO RELEASE_LOCK(%s)", $lock_name));
-            wp_send_json_error(__('Слишком много заявок на вывод. Попробуйте через 24 часа.', 'cashback-plugin'));
-            return;
-        }
-
-        // === 2.1. Antifraud: record withdrawal event (ПОСЛЕ lock, чтобы избежать inflate при race condition) ===
-        if (class_exists('Cashback_Fraud_Collector')) {
-            Cashback_Fraud_Collector::record_withdrawal_event($user_id);
-        }
-
+        // 2.2. Сумма вывода — строгая валидация десятичного числа
         $withdrawal_amount = sanitize_text_field(wp_unslash($_POST['withdrawal_amount'] ?? '0'));
-        // Строгая валидация десятичного числа: только цифры, опциональная точка, до 2 знаков после
-        // is_numeric() принимает "1e10", "+100" и др. — опасно для bcmath и DECIMAL
         if (!preg_match('/^\d+(\.\d{1,2})?$/', $withdrawal_amount)) {
-            $lock_released = true; $wpdb->query($wpdb->prepare("DO RELEASE_LOCK(%s)", $lock_name));
             wp_send_json_error(__('Некорректная сумма вывода.', 'cashback-plugin'));
             return;
         }
 
-        // === 2.2. Server-generated idempotency key ===
-        // Ключ генерируется на сервере для исключения манипуляции клиентом.
-        $idempotency_key = cashback_generate_uuid7(false);
+        $withdrawal_str = $withdrawal_amount;
 
-        // === 3. Check if payout method and account are filled ===
+        if (bccomp($withdrawal_str, '0', 2) <= 0) {
+            wp_send_json_error(__('Сумма вывода должна быть положительной.', 'cashback-plugin'));
+            return;
+        }
+
+        $max_withdrawal_str = number_format((float) get_option('cashback_max_withdrawal_amount', 50000.00), 2, '.', '');
+        if (bccomp($withdrawal_str, $max_withdrawal_str, 2) > 0) {
+            wp_send_json_error(sprintf(__('Максимальная сумма вывода %s', 'cashback-plugin'), wc_price((float) $max_withdrawal_str)));
+            return;
+        }
+
+        // 2.3. Проверка реквизитов (без блокировок — только чтение)
         $payout_method = $this->get_payout_method($user_id);
         $payout_account = $this->get_payout_account($user_id);
 
         if (empty($payout_method) || empty($payout_account)) {
-            $lock_released = true; $wpdb->query($wpdb->prepare("DO RELEASE_LOCK(%s)", $lock_name)); // Снимаем блокировку
             wp_send_json_error(array(
                 'message' => __('Для вывода средств пожалуйста, заполните способ вывода и номер счета в вашем профиле.', 'cashback-plugin'),
                 'show_form' => true
@@ -848,13 +855,11 @@ class CashbackWithdrawal
             return;
         }
 
-        // === 3.1. Check if payout method and bank are active ===
         $user_payout_method_id = $this->get_user_payout_method_id($user_id);
         $user_bank_id = $this->get_user_bank_id($user_id);
 
         if ($user_payout_method_id > 0 && !$this->is_payout_method_active($user_payout_method_id)) {
             $method_name = $this->get_payout_method_name($user_payout_method_id);
-            $lock_released = true; $wpdb->query($wpdb->prepare("DO RELEASE_LOCK(%s)", $lock_name)); // Снимаем блокировку
             wp_send_json_error(array(
                 'message' => sprintf(__('Через %s сейчас выплаты не производятся, выберите другую', 'cashback-plugin'), $method_name),
                 'show_form' => true
@@ -864,7 +869,6 @@ class CashbackWithdrawal
 
         if ($user_bank_id > 0 && !$this->is_bank_active($user_bank_id)) {
             $bank_name = $this->get_bank_name($user_bank_id);
-            $lock_released = true; $wpdb->query($wpdb->prepare("DO RELEASE_LOCK(%s)", $lock_name)); // Снимаем блокировку
             wp_send_json_error(array(
                 'message' => sprintf(__('Через %s сейчас выплаты не производятся, выберите другой', 'cashback-plugin'), $bank_name),
                 'show_form' => true
@@ -872,90 +876,89 @@ class CashbackWithdrawal
             return;
         }
 
-        // === 4. Input validation (non-DB checks before transaction) ===
-        $max_withdrawal_str = number_format((float) get_option('cashback_max_withdrawal_amount', 50000.00), 2, '.', ''); // Максимальная сумма вывода (строка для bcmath)
-        $withdrawal_str = $withdrawal_amount; // Уже строка после sanitize_text_field
-
-        if (bccomp($withdrawal_str, '0', 2) <= 0) {
-            $lock_released = true; $wpdb->query($wpdb->prepare("DO RELEASE_LOCK(%s)", $lock_name));
-            wp_send_json_error(__('Сумма вывода должна быть положительной.', 'cashback-plugin'));
-            return;
-        }
-
-        if (bccomp($withdrawal_str, $max_withdrawal_str, 2) > 0) {
-            $lock_released = true; $wpdb->query($wpdb->prepare("DO RELEASE_LOCK(%s)", $lock_name));
-            wp_send_json_error(sprintf(__('Максимальная сумма вывода %s', 'cashback-plugin'), wc_price((float) $max_withdrawal_str)));
-            return;
-        }
-
-        // === 5. Atomic balance deduction with row-level locking ===
-        $table_balance = $wpdb->prefix . 'cashback_user_balance';
+        // === 3. Идемпотентная проверка ДО транзакции (fast path) ===
+        // Если заявка с этим ключом уже существует — возвращаем её данные.
+        // Это дешёвый SELECT по UNIQUE INDEX, избегаем открытия транзакции при retry.
         $table_requests = $wpdb->prefix . 'cashback_payout_requests';
-
-        // Генерируем уникальный публичный номер заявки ДО транзакции,
-        // чтобы SELECT-проверка видела актуальные данные (вне REPEATABLE READ snapshot)
-        $reference_id = $this->generate_unique_reference_id($wpdb, $table_requests);
-
-        // === 5.1. Early duplicate check — avoid locking balance row unnecessarily ===
-        $existing_request = $wpdb->get_row($wpdb->prepare(
-            "SELECT id, status FROM {$table_requests} WHERE idempotency_key = %s",
+        $existing = $wpdb->get_row($wpdb->prepare(
+            "SELECT id, reference_id, total_amount, status FROM {$table_requests} WHERE idempotency_key = %s",
             $idempotency_key
         ));
 
-        if ($existing_request) {
-            $lock_released = true; $wpdb->query($wpdb->prepare("DO RELEASE_LOCK(%s)", $lock_name));
-            wp_send_json_success(__('Заявка уже создана.', 'cashback-plugin'));
+        if ($existing) {
+            // Retry от клиента — заявка уже создана. Возвращаем успех с теми же данными.
+            wp_send_json_success(sprintf(
+                __('Заявка на вывод кэшбэка на сумму %s руб. успешно добавлена. Номер заявки: %s', 'cashback-plugin'),
+                number_format((float) $existing->total_amount, 2, '.', ' '),
+                $existing->reference_id
+            ));
             return;
         }
+
+        // === 4. Транзакция: атомарное создание заявки + списание баланса + леджер ===
+        $table_balance = $wpdb->prefix . 'cashback_user_balance';
+        $ledger_table = $wpdb->prefix . 'cashback_balance_ledger';
 
         $wpdb->query('START TRANSACTION');
 
         try {
-            // 🔒 CRITICAL: Lock the user's balance row to prevent race conditions
+            // 4.1. Блокируем строку баланса (FOR UPDATE — единственный механизм блокировки)
+            // Это сериализует все withdrawal-запросы одного пользователя.
+            // Другие запросы того же user_id будут ждать завершения транзакции.
             $user_balance = $wpdb->get_row($wpdb->prepare(
-                "SELECT available_balance, pending_balance, version
+                "SELECT available_balance, pending_balance
                 FROM {$table_balance}
                 WHERE user_id = %d FOR UPDATE",
                 $user_id
             ));
 
             if (!$user_balance) {
-                throw new Exception('User balance record not found');
+                throw new \Exception('User balance record not found');
             }
 
-            // === Balance-dependent validations under lock (prevents TOCTOU) ===
+            $balance_str = (string) $user_balance->available_balance;
+
+            // 4.2. Rate limiting по данным БД (атомарно внутри транзакции)
+            // FOR UPDATE на balance row уже сериализует запросы этого пользователя,
+            // поэтому COUNT здесь видит консистентное состояние.
+            $recent_requests_count = (int) $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM {$table_requests}
+                 WHERE user_id = %d AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)",
+                $user_id
+            ));
+
+            if ($recent_requests_count >= 3) {
+                $wpdb->query('ROLLBACK');
+                wp_send_json_error(__('Слишком много заявок на вывод. Попробуйте через 24 часа.', 'cashback-plugin'));
+                return;
+            }
+
+            // 4.3. Валидация баланса под блокировкой (исключает TOCTOU)
             $min_payout_amount = $this->get_min_payout_amount($user_id);
-            $available_balance = $user_balance->available_balance;
-            $balance_str = (string) $available_balance;
             $min_payout_str = (string) $min_payout_amount;
 
             if (bccomp($balance_str, $min_payout_str, 2) < 0) {
-                throw new Exception('balance_below_min');
+                throw new \Exception('balance_below_min');
             }
 
             if (bccomp($withdrawal_str, $min_payout_str, 2) < 0) {
-                throw new Exception('amount_below_min');
+                throw new \Exception('amount_below_min');
             }
 
             if (bccomp($withdrawal_str, $balance_str, 2) > 0) {
-                throw new Exception('Insufficient available balance after lock');
+                throw new \Exception('Insufficient available balance after lock');
             }
 
-            // Получаем информацию о способе вывода, аккаунте и банке из профиля пользователя
-            $payout_method = $this->get_payout_method($user_id);
-            $payout_account = $this->get_payout_account($user_id);
+            // 4.4. Собираем данные для заявки (внутри транзакции — снапшот консистентен)
             $bank_info = $this->get_user_bank_info($user_id);
-
-            // Получаем bank_id и bank_code для сохранения в заявку
-            $bank_id = $bank_info['id'] ?? null;
             $bank_code = $bank_info['bank_code'] ?? '';
-
-            // Получаем зашифрованные данные из профиля для снапшота в заявке
             $encryption_data = $this->get_user_encryption_data($user_id);
-
-            // 📝 АТОМАРНАЯ ОПЕРАЦИЯ: Создаем заявку на выплату с идемпотентным ключом
-            // UNIQUE KEY на idempotency_key гарантирует отсутствие дублей даже при повторных попытках
             $has_encrypted = !empty($encryption_data['encrypted_details']);
+
+            // 4.5. INSERT-FIRST с retry по reference_id коллизии
+            // reference_id генерируется здесь, не заранее — минимизирует окно коллизии.
+            // UNIQUE KEY на idempotency_key — финальная защита от дублей.
+            $reference_id = Mariadb_Plugin::generate_reference_id();
 
             $insert_data = array(
                 'user_id' => $user_id,
@@ -969,7 +972,6 @@ class CashbackWithdrawal
             );
             $insert_formats = array('%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s');
 
-            // Добавляем зашифрованные поля если доступны
             if ($has_encrypted) {
                 $insert_data['encrypted_details'] = $encryption_data['encrypted_details'];
                 $insert_data['masked_details'] = $encryption_data['masked_details'];
@@ -977,72 +979,68 @@ class CashbackWithdrawal
                 $insert_formats[] = '%s';
             }
 
-            // INSERT с автоматическим retry при коллизии reference_id
-            $max_insert_retries = 3;
             $inserted = false;
+            $max_insert_retries = 3;
 
-            for ($insert_attempt = 0; $insert_attempt < $max_insert_retries; $insert_attempt++) {
-                $result = $wpdb->insert(
-                    $table_requests,
-                    $insert_data,
-                    $insert_formats
-                );
+            for ($attempt = 0; $attempt < $max_insert_retries; $attempt++) {
+                $result = $wpdb->insert($table_requests, $insert_data, $insert_formats);
 
                 if ($result !== false) {
                     $inserted = true;
                     break;
                 }
 
+                $db_error = $wpdb->last_error;
+
                 // Коллизия reference_id — перегенерировать и повторить
-                if (strpos($wpdb->last_error, 'uk_reference_id') !== false) {
+                if (strpos($db_error, 'uk_reference_id') !== false || strpos($db_error, 'reference_id') !== false) {
                     $reference_id = Mariadb_Plugin::generate_reference_id();
                     $insert_data['reference_id'] = $reference_id;
                     continue;
                 }
 
-                // Дубликат idempotency — настоящий повтор заявки
-                if (
-                    strpos($wpdb->last_error, 'uk_idempotency') !== false ||
-                    strpos($wpdb->last_error, 'Duplicate entry') !== false
-                ) {
-                    throw new Exception('Duplicate payout request detected');
+                // Дубликат idempotency_key — параллельный запрос уже создал заявку
+                // (прошёл между нашим early check и INSERT)
+                if (strpos($db_error, 'uk_idempotency') !== false || strpos($db_error, 'idempotency_key') !== false) {
+                    throw new \Exception('Duplicate payout request detected');
                 }
 
-                // Иная ошибка БД — логируем детали отдельно, не включаем в Exception
-                // чтобы $wpdb->last_error (содержит SQL) не попал в catch-обработчик
-                error_log(sprintf('[CashbackWithdrawal] Insert failed for user %d: %s', $user_id, $wpdb->last_error));
-                throw new Exception('Failed to insert payout request');
+                // Неизвестная ошибка — логируем SQL error отдельно (не включаем в Exception)
+                error_log(sprintf('[CashbackWithdrawal] Insert failed for user %d: %s', $user_id, $db_error));
+                throw new \Exception('Failed to insert payout request');
             }
 
             if (!$inserted) {
-                throw new Exception('Failed to insert payout request after reference_id retries');
+                throw new \Exception('Failed to insert payout request after reference_id retries');
             }
 
             $payout_id = $wpdb->insert_id;
 
-            // 📝 Списываем с доступного баланса и добавляем в pending с оптимистичной блокировкой
-            // Делаем это ПОСЛЕ создания заявки для корректного rollback
-            $result = $wpdb->query($wpdb->prepare(
+            // 4.6. Атомарное списание баланса
+            // FOR UPDATE уже гарантирует эксклюзивный доступ — version не нужен.
+            // CHECK `available_balance >= amount` — defense in depth на уровне SQL.
+            $balance_result = $wpdb->query($wpdb->prepare(
                 "UPDATE {$table_balance}
                 SET available_balance = available_balance - CAST(%s AS DECIMAL(18,2)),
                     pending_balance = pending_balance + CAST(%s AS DECIMAL(18,2)),
                     version = version + 1
-                WHERE user_id = %d AND version = %d
+                WHERE user_id = %d
                   AND available_balance >= CAST(%s AS DECIMAL(18,2))",
                 $withdrawal_amount,
                 $withdrawal_amount,
                 $user_id,
-                $user_balance->version,
                 $withdrawal_amount
             ));
 
-            if ($result === false || $result === 0) {
-                throw new Exception('Failed to update user balance - version conflict');
+            if ($balance_result === false || $balance_result === 0) {
+                throw new \Exception('Failed to update user balance');
             }
 
-            // Запись в леджер: payout_hold (отрицательная — деньги перешли из available в pending)
-            $ledger_table = $wpdb->prefix . 'cashback_balance_ledger';
-            $ledger_amount = '-' . number_format(abs((float) $withdrawal_amount), 2, '.', '');
+            // 4.7. Запись в леджер (в той же транзакции)
+            // idempotency_key леджера детерминистичен: 'payout_hold_{payout_id}'
+            // ON DUPLICATE KEY UPDATE id = id — skip при повторе (невозможен в нормальном flow,
+            // но защищает при ручном replay)
+            $ledger_amount = '-' . $withdrawal_str;
             $ledger_result = $wpdb->query($wpdb->prepare(
                 "INSERT INTO `{$ledger_table}`
                      (user_id, type, amount, payout_request_id, idempotency_key)
@@ -1055,19 +1053,24 @@ class CashbackWithdrawal
             ));
 
             if ($ledger_result === false) {
-                throw new Exception('Failed to write payout_hold to ledger: ' . $wpdb->last_error);
+                throw new \Exception('Failed to write payout_hold to ledger');
             }
 
+            // 4.8. COMMIT — всё или ничего
             $commit_result = $wpdb->query('COMMIT');
             if ($commit_result === false) {
-                throw new Exception('COMMIT failed: ' . $wpdb->last_error);
+                throw new \Exception('COMMIT failed');
             }
 
-            // Инкрементируем rate limit только после успешного создания заявки
-            set_transient($rate_key, $rate_count + 1, DAY_IN_SECONDS);
+            // === 5. Post-commit side effects (не влияют на консистентность) ===
 
-            // Логирование успешной операции с идемпотентным ключом
-            $new_balance = bcsub((string) $user_balance->available_balance, (string) $withdrawal_amount, 2);
+            // Антифрод: запись события вывода (после коммита, чтобы не inflate при rollback)
+            if (class_exists('Cashback_Fraud_Collector')) {
+                Cashback_Fraud_Collector::record_withdrawal_event($user_id);
+            }
+
+            // Логирование
+            $new_balance = bcsub($balance_str, $withdrawal_str, 2);
             wc_get_logger()->info(sprintf(
                 'User %d withdrew %s. New balance: %s. Payout ID: %d. Reference: %s. Idempotency: %s',
                 $user_id,
@@ -1075,11 +1078,8 @@ class CashbackWithdrawal
                 $new_balance,
                 $payout_id,
                 $reference_id,
-                substr($idempotency_key, 0, 16) . '...'
+                $idempotency_key
             ));
-
-            // Освобождаем блокировку MariaDB
-            $lock_released = true; $wpdb->query($wpdb->prepare("DO RELEASE_LOCK(%s)", $lock_name));
 
             wp_send_json_success(sprintf(
                 __('Заявка на вывод кэшбэка на сумму %s руб. успешно добавлена. Номер заявки: %s', 'cashback-plugin'),
@@ -1090,17 +1090,20 @@ class CashbackWithdrawal
             $wpdb->query('ROLLBACK');
             $error_message = $e->getMessage();
 
-            // Освобождаем блокировку MariaDB
-            $lock_released = true; $wpdb->query($wpdb->prepare("DO RELEASE_LOCK(%s)", $lock_name));
-
-            // Log unexpected errors (skip expected validation exceptions)
-            $expected_errors = ['Insufficient available balance after lock', 'balance_below_min', 'amount_below_min', 'Duplicate payout request detected'];
+            // Логируем неожиданные ошибки (пропускаем ожидаемые валидационные)
+            $expected_errors = [
+                'Insufficient available balance after lock',
+                'balance_below_min',
+                'amount_below_min',
+                'Duplicate payout request detected',
+            ];
             if (!in_array($error_message, $expected_errors, true)) {
                 wc_get_logger()->error(sprintf(
-                    "CashbackWithdrawal error for user %d: %s. Amount: %f",
+                    'CashbackWithdrawal error for user %d: %s. Amount: %s. Idempotency: %s',
                     $user_id,
                     $error_message,
-                    $withdrawal_amount
+                    $withdrawal_amount,
+                    $idempotency_key
                 ));
             }
 
@@ -1113,48 +1116,29 @@ class CashbackWithdrawal
                 $min_amt = $this->get_min_payout_amount($user_id);
                 wp_send_json_error(sprintf(__('Введите сумму больше или равно %s', 'cashback-plugin'), wc_price($min_amt)));
             } elseif ($error_message === 'Duplicate payout request detected') {
-                wp_send_json_success(__('Заявка уже создана.', 'cashback-plugin'));
+                // Параллельный запрос с тем же ключом — найдём созданную заявку
+                $dup = $wpdb->get_row($wpdb->prepare(
+                    "SELECT reference_id, total_amount FROM {$table_requests} WHERE idempotency_key = %s",
+                    $idempotency_key
+                ));
+                if ($dup) {
+                    wp_send_json_success(sprintf(
+                        __('Заявка на вывод кэшбэка на сумму %s руб. успешно добавлена. Номер заявки: %s', 'cashback-plugin'),
+                        number_format((float) $dup->total_amount, 2, '.', ' '),
+                        $dup->reference_id
+                    ));
+                } else {
+                    wp_send_json_success(__('Заявка уже создана.', 'cashback-plugin'));
+                }
             } else {
                 wp_send_json_error(__('Ошибка при обработке запроса на вывод. Пожалуйста, попробуйте еще раз.', 'cashback-plugin'));
             }
         }
     }
 
-    /**
-     * Генерация уникального reference_id с проверкой коллизий
-     *
-     * @param wpdb   $wpdb  WordPress database object
-     * @param string $table Имя таблицы для проверки уникальности
-     * @return string Уникальный reference ID
-     * @throws \Exception Если не удалось сгенерировать уникальный ID после макс. попыток
-     */
-    private function generate_unique_reference_id($wpdb, string $table): string
-    {
-        $max_retries = 5;
-
-        for ($attempt = 0; $attempt < $max_retries; $attempt++) {
-            $reference_id = Mariadb_Plugin::generate_reference_id();
-
-            // Быстрая предварительная проверка (без блокировки)
-            $exists = $wpdb->get_var($wpdb->prepare(
-                "SELECT 1 FROM `{$table}` WHERE reference_id = %s LIMIT 1",
-                $reference_id
-            ));
-
-            if (!$exists) {
-                return $reference_id;
-            }
-
-            error_log(sprintf(
-                '[Cashback] Reference ID collision: %s (attempt %d/%d)',
-                $reference_id,
-                $attempt + 1,
-                $max_retries
-            ));
-        }
-
-        throw new \Exception('Failed to generate unique reference ID after ' . $max_retries . ' attempts');
-    }
+    // generate_unique_reference_id() удалён — TOCTOU-паттерн (SELECT before INSERT).
+    // reference_id генерируется внутри транзакции, коллизии обрабатываются retry на INSERT
+    // через UNIQUE KEY constraint. БД — единственный арбитр уникальности.
 
     /**
      * Enqueue custom styles and scripts
