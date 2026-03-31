@@ -972,7 +972,7 @@ class Mariadb_Plugin
             ENABLE
             DO DELETE FROM `{$safe_prefix}cashback_webhooks`
             WHERE received_at < NOW() - INTERVAL 6 MONTH
-            LIMIT 5000",
+            LIMIT 100000",
 
             // Событие ежедневно удаляет записи кликов старше 90 дней
             "CREATE EVENT IF NOT EXISTS `{$safe_prefix}cashback_ev_cleanup_click_log`
@@ -981,8 +981,8 @@ class Mariadb_Plugin
             ON COMPLETION NOT PRESERVE
             ENABLE
             DO DELETE FROM `{$safe_prefix}cashback_click_log`
-            WHERE created_at < NOW() - INTERVAL 90 DAY
-            LIMIT 5000",
+            WHERE created_at < NOW() - INTERVAL 6 MONTH
+            LIMIT 100000",
 
             // Событие ежедневно проверяет и помечает неактивные профили если неактивны больше 6 месяцев
             "CREATE EVENT IF NOT EXISTS `{$safe_prefix}cashback_ev_mark_inactive_profiles`
@@ -1608,8 +1608,8 @@ class Mariadb_Plugin
                    AND t.cashback IS NOT NULL
                    AND t.cashback > 0
                    AND t.spam_click = 0"
-                . $delay_sql // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
-                . ' FOR UPDATE',
+                    . $delay_sql // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+                    . ' FOR UPDATE',
                 ARRAY_A
             );
 
