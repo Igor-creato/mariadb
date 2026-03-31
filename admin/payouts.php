@@ -48,6 +48,7 @@ class Cashback_Payouts_Admin
         add_action('wp_ajax_update_payout_request', [$this, 'handle_update_payout_request']);
         add_action('wp_ajax_get_payout_request', [$this, 'handle_get_payout_request']);
         add_action('wp_ajax_decrypt_payout_details', [$this, 'handle_decrypt_payout_details']);
+        add_action('wp_ajax_verify_payout_balance', [$this, 'handle_verify_payout_balance']);
 
         // Подключение скриптов
         add_action('admin_enqueue_scripts', [$this, 'enqueue_admin_scripts']);
@@ -100,6 +101,7 @@ class Cashback_Payouts_Admin
             wp_localize_script('cashback-admin-payout-detail', 'cashbackPayoutDetailData', [
                 'updateNonce' => wp_create_nonce('update_payout_request_nonce'),
                 'decryptNonce' => wp_create_nonce('decrypt_payout_details_nonce'),
+                'verifyNonce' => wp_create_nonce('verify_payout_balance_nonce'),
                 'payoutId' => absint($_GET['payout_id']),
                 'ajaxurl' => admin_url('admin-ajax.php'),
                 'listUrl' => admin_url('admin.php?page=cashback-payouts'),
@@ -117,6 +119,7 @@ class Cashback_Payouts_Admin
                 'updateNonce' => wp_create_nonce('update_payout_request_nonce'),
                 'getNonce' => wp_create_nonce('get_payout_request_nonce'),
                 'decryptNonce' => wp_create_nonce('decrypt_payout_details_nonce'),
+                'verifyNonce' => wp_create_nonce('verify_payout_balance_nonce'),
                 'banks' => $this->get_all_banks(),
             ]);
         }
@@ -465,6 +468,7 @@ class Cashback_Payouts_Admin
                                                     <a href="<?php echo esc_url(admin_url('admin.php?page=cashback-payouts&action=view&payout_id=' . $payout['id'])); ?>" class="button button-primary view-btn"><?php echo esc_html__('Просмотр', 'cashback-plugin'); ?></a>
                                                 <?php endif; ?>
                                                 <button class="button button-secondary edit-btn"><?php echo esc_html__('Редактировать', 'cashback-plugin'); ?></button>
+                                                <button class="button button-secondary verify-btn" title="<?php echo esc_attr__('Проверка консистентности баланса', 'cashback-plugin'); ?>"><?php echo esc_html__('Проверка', 'cashback-plugin'); ?></button>
                                                 <button class="button button-primary save-btn" style="display:none;"><?php echo esc_html__('Сохранить', 'cashback-plugin'); ?></button>
                                                 <button class="button button-default cancel-btn" style="display:none;"><?php echo esc_html__('Отмена', 'cashback-plugin'); ?></button>
                                             </td>
@@ -755,6 +759,14 @@ class Cashback_Payouts_Admin
                                     <p>
                                         <label for="detail-fail-reason"><strong><?php echo esc_html__('Описание ошибки', 'cashback-plugin'); ?></strong></label><br>
                                         <textarea id="detail-fail-reason" class="widefat" rows="4"><?php echo esc_textarea($payout['fail_reason'] ?? ''); ?></textarea>
+                                    </p>
+
+                                    <p>
+                                        <button type="button" id="verify-detail-btn" class="button button-large widefat"
+                                                data-payout-id="<?php echo esc_attr((string)$payout_id); ?>">
+                                            <?php echo esc_html__('Проверить движения средств', 'cashback-plugin'); ?>
+                                        </button>
+                                        <span id="verify-detail-result" style="display:none; margin-top:6px;"></span>
                                     </p>
 
                                     <p>
@@ -1129,6 +1141,24 @@ class Cashback_Payouts_Admin
                 throw new Exception("Ошибка обновления баланса пользователя {$user_id} или конфликт версий");
             }
 
+            // Запись в леджер: payout_complete (отрицательная сумма — списание из pending)
+            $ledger_table = $wpdb->prefix . 'cashback_balance_ledger';
+            $ledger_amount = '-' . number_format(abs((float) $amount), 2, '.', '');
+            $ledger_result = $wpdb->query($wpdb->prepare(
+                "INSERT INTO `{$ledger_table}`
+                     (user_id, type, amount, payout_request_id, idempotency_key)
+                 VALUES (%d, 'payout_complete', %s, %d, %s)
+                 ON DUPLICATE KEY UPDATE id = id",
+                $user_id,
+                $ledger_amount,
+                $payout_id,
+                'payout_complete_' . $payout_id
+            ));
+
+            if ($ledger_result === false) {
+                throw new Exception("Ошибка записи payout_complete в леджер для выплаты {$payout_id}: " . $wpdb->last_error);
+            }
+
             if (!$in_transaction) {
                 $wpdb->query('COMMIT');
             }
@@ -1239,6 +1269,24 @@ class Cashback_Payouts_Admin
 
             if ($result === false || $result === 0) {
                 throw new Exception("Ошибка обновления баланса пользователя {$user_id} или конфликт версий");
+            }
+
+            // Запись в леджер: payout_declined (отрицательная сумма — деньги из pending в frozen)
+            $ledger_table = $wpdb->prefix . 'cashback_balance_ledger';
+            $ledger_amount = '-' . number_format(abs((float) $amount), 2, '.', '');
+            $ledger_result = $wpdb->query($wpdb->prepare(
+                "INSERT INTO `{$ledger_table}`
+                     (user_id, type, amount, payout_request_id, idempotency_key)
+                 VALUES (%d, 'payout_declined', %s, %d, %s)
+                 ON DUPLICATE KEY UPDATE id = id",
+                $user_id,
+                $ledger_amount,
+                $payout_id,
+                'payout_declined_' . $payout_id
+            ));
+
+            if ($ledger_result === false) {
+                throw new Exception("Ошибка записи payout_declined в леджер для выплаты {$payout_id}: " . $wpdb->last_error);
             }
 
             if (!$in_transaction) {
@@ -1374,6 +1422,24 @@ class Cashback_Payouts_Admin
 
             if ($update_result === false) {
                 throw new Exception("Ошибка обновления поля refunded_at для заявки {$payout_id}");
+            }
+
+            // Запись в леджер: payout_cancel (положительная сумма — возврат в available)
+            $ledger_table = $wpdb->prefix . 'cashback_balance_ledger';
+            $ledger_amount = number_format(abs((float) $amount), 2, '.', '');
+            $ledger_result = $wpdb->query($wpdb->prepare(
+                "INSERT INTO `{$ledger_table}`
+                     (user_id, type, amount, payout_request_id, idempotency_key)
+                 VALUES (%d, 'payout_cancel', %s, %d, %s)
+                 ON DUPLICATE KEY UPDATE id = id",
+                $user_id,
+                $ledger_amount,
+                $payout_id,
+                'payout_cancel_' . $payout_id
+            ));
+
+            if ($ledger_result === false) {
+                throw new Exception("Ошибка записи payout_cancel в леджер для выплаты {$payout_id}: " . $wpdb->last_error);
             }
 
             if (!$in_transaction) {
@@ -1786,6 +1852,231 @@ class Cashback_Payouts_Admin
         );
 
         return $banks ?: [];
+    }
+
+    /**
+     * AJAX: Проверка консистентности баланса пользователя для заявки на выплату.
+     *
+     * Проверяет:
+     * 1. Не идёт ли синхронизация (глобальный lock)
+     * 2. Совпадает ли ledger SUM с кэшем cashback_user_balance
+     * 3. Нет ли дублей, отрицательных балансов, payout без hold
+     *
+     * @return void
+     */
+    public function handle_verify_payout_balance(): void
+    {
+        if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'verify_payout_balance_nonce')) {
+            wp_send_json_error(['message' => __('Неверный nonce.', 'cashback-plugin')]);
+        }
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => __('Недостаточно прав.', 'cashback-plugin')]);
+        }
+
+        // Блокировка во время синхронизации
+        if (class_exists('Cashback_Lock') && Cashback_Lock::is_lock_active()) {
+            wp_send_json_error(['message' => __('Синхронизация в процессе, повторите позже.', 'cashback-plugin')]);
+        }
+
+        $payout_id = isset($_POST['payout_id']) ? absint(wp_unslash($_POST['payout_id'])) : 0;
+        if ($payout_id <= 0) {
+            wp_send_json_error(['message' => __('Некорректный ID выплаты.', 'cashback-plugin')]);
+        }
+
+        global $wpdb;
+
+        // Получаем user_id из заявки
+        $payout = $wpdb->get_row($wpdb->prepare(
+            "SELECT user_id, total_amount, status FROM {$this->table_name} WHERE id = %d",
+            $payout_id
+        ), ARRAY_A);
+
+        if (!$payout) {
+            wp_send_json_error(['message' => __('Заявка не найдена.', 'cashback-plugin')]);
+        }
+
+        $user_id = (int) $payout['user_id'];
+        $user = get_userdata($user_id);
+        $user_display = $user ? $user->user_login : "#{$user_id}";
+
+        // Запускаем проверку консистентности
+        $result = Mariadb_Plugin::validate_user_balance_consistency($user_id);
+
+        $ledger  = $result['details']['ledger'] ?? [];
+        $cache   = $result['details']['cache'] ?? [];
+        $counts  = $ledger['counts'] ?? [];
+
+        // Формируем сводку по балансу для отображения
+        $balance_summary = [
+            'available' => [
+                'label'  => __('Доступный баланс', 'cashback-plugin'),
+                'ledger' => $ledger['available'] ?? '0.00',
+                'cache'  => $cache['available_balance'] ?? '0.00',
+            ],
+            'pending' => [
+                'label'  => __('В обработке', 'cashback-plugin'),
+                'ledger' => $ledger['pending'] ?? '0.00',
+                'cache'  => $cache['pending_balance'] ?? '0.00',
+            ],
+            'paid' => [
+                'label'  => __('Выплачено', 'cashback-plugin'),
+                'ledger' => $ledger['paid'] ?? '0.00',
+                'cache'  => $cache['paid_balance'] ?? '0.00',
+            ],
+            'frozen' => [
+                'label'  => __('Заморожено', 'cashback-plugin'),
+                'ledger' => '—',
+                'cache'  => $cache['frozen_balance'] ?? '0.00',
+            ],
+        ];
+
+        // Сводка по операциям в леджере
+        $operations_summary = [];
+        $type_labels = [
+            'accrual'         => __('Начислений кэшбэка', 'cashback-plugin'),
+            'payout_hold'     => __('Заявок на вывод (заблокировано)', 'cashback-plugin'),
+            'payout_complete' => __('Выплачено', 'cashback-plugin'),
+            'payout_cancel'   => __('Возвратов (отмена заявки)', 'cashback-plugin'),
+            'payout_declined' => __('Заморожено (мошенничество)', 'cashback-plugin'),
+            'adjustment'      => __('Ручных корректировок', 'cashback-plugin'),
+        ];
+
+        $sums = $ledger['sums'] ?? [];
+        foreach ($type_labels as $type => $label) {
+            $sum = $sums[$type] ?? '0.00';
+            $cnt = $counts[$type] ?? 0;
+            if ($cnt > 0 || bccomp($sum, '0', 2) !== 0) {
+                $operations_summary[] = [
+                    'label' => $label,
+                    'count' => $cnt,
+                    'sum'   => number_format(abs((float)$sum), 2, '.', ' '),
+                ];
+            }
+        }
+
+        if ($result['consistent']) {
+            wp_send_json_success([
+                'status'             => 'ok',
+                'message'            => sprintf(
+                    __('Все движения средств пользователя %s проверены — расхождений не обнаружено.', 'cashback-plugin'),
+                    $user_display
+                ),
+                'balance_summary'    => $balance_summary,
+                'operations_summary' => $operations_summary,
+                'user_display'       => $user_display,
+            ]);
+        } else {
+            // Переводим технические issues в понятные русские описания
+            $human_issues = [];
+            foreach ($result['details']['issues'] as $issue) {
+                $human_issues[] = $this->translate_balance_issue($issue);
+            }
+
+            wp_send_json_success([
+                'status'             => 'mismatch',
+                'message'            => sprintf(
+                    __('Обнаружены расхождения в движениях средств пользователя %s', 'cashback-plugin'),
+                    $user_display
+                ),
+                'issues'             => $human_issues,
+                'balance_summary'    => $balance_summary,
+                'operations_summary' => $operations_summary,
+                'user_display'       => $user_display,
+            ]);
+        }
+    }
+
+    /**
+     * Перевод технического описания проблемы баланса в понятное русское сообщение.
+     *
+     * @param string $issue Техническое описание
+     * @return string Понятное описание на русском
+     */
+    private function translate_balance_issue(string $issue): string
+    {
+        // total balance mismatch
+        if (preg_match('/^total balance mismatch: ledger=([\d.\-]+), cache=([\d.\-]+)/', $issue, $m)) {
+            $diff = number_format(abs((float)$m[1] - (float)$m[2]), 2, '.', ' ');
+            return sprintf(
+                'Общая сумма средств не совпадает: по журналу операций %s ₽, по кэшу баланса %s ₽ (разница: %s ₽)',
+                number_format((float)$m[1], 2, '.', ' '),
+                number_format((float)$m[2], 2, '.', ' '),
+                $diff
+            );
+        }
+
+        // available_balance mismatch
+        if (preg_match('/^available_balance mismatch: ledger=([\d.\-]+), cache=([\d.\-]+)/', $issue, $m)) {
+            return sprintf(
+                'Доступный баланс не совпадает: расчётный %s ₽, в базе %s ₽',
+                number_format((float)$m[1], 2, '.', ' '),
+                number_format((float)$m[2], 2, '.', ' ')
+            );
+        }
+
+        // pending_balance mismatch
+        if (preg_match('/^pending_balance mismatch: ledger=([\d.\-]+), cache=([\d.\-]+)/', $issue, $m)) {
+            return sprintf(
+                'Баланс «в обработке» не совпадает: расчётный %s ₽, в базе %s ₽',
+                number_format((float)$m[1], 2, '.', ' '),
+                number_format((float)$m[2], 2, '.', ' ')
+            );
+        }
+
+        // frozen_balance mismatch (banned)
+        if (preg_match('/^frozen_balance mismatch \(banned\): ledger.*=([\d.\-]+), cache.*=([\d.\-]+)/', $issue, $m)) {
+            return sprintf(
+                'Замороженный баланс (пользователь забанен) не совпадает: расчётный %s ₽, в базе %s ₽',
+                number_format((float)$m[1], 2, '.', ' '),
+                number_format((float)$m[2], 2, '.', ' ')
+            );
+        }
+
+        // frozen_balance mismatch (regular)
+        if (preg_match('/^frozen_balance mismatch: ledger.*=([\d.\-]+), cache=([\d.\-]+)/', $issue, $m)) {
+            return sprintf(
+                'Замороженный баланс не совпадает: расчётный %s ₽, в базе %s ₽',
+                number_format((float)$m[1], 2, '.', ' '),
+                number_format((float)$m[2], 2, '.', ' ')
+            );
+        }
+
+        // paid_balance mismatch
+        if (preg_match('/^paid_balance mismatch: ledger=([\d.\-]+), cache=([\d.\-]+)/', $issue, $m)) {
+            return sprintf(
+                'Сумма выплат не совпадает: по журналу %s ₽, в базе %s ₽',
+                number_format((float)$m[1], 2, '.', ' '),
+                number_format((float)$m[2], 2, '.', ' ')
+            );
+        }
+
+        // duplicate accrual entries
+        if (preg_match('/^duplicate accrual entries: (\d+)/', $issue, $m)) {
+            return sprintf(
+                'Обнаружено %d дублированных начислений кэшбэка (одна транзакция начислена несколько раз)',
+                (int)$m[1]
+            );
+        }
+
+        // negative calculated available balance
+        if (preg_match('/^negative calculated available balance: ([\d.\-]+)/', $issue, $m)) {
+            return sprintf(
+                'Расчётный доступный баланс отрицательный: %s ₽ — возможно, списано больше, чем начислено',
+                number_format((float)$m[1], 2, '.', ' ')
+            );
+        }
+
+        // payout_complete without payout_hold
+        if (preg_match('/^payout_complete without payout_hold: (\d+)/', $issue, $m)) {
+            return sprintf(
+                'Обнаружено %d выплат без предварительной блокировки средств (payout без hold)',
+                (int)$m[1]
+            );
+        }
+
+        // Fallback: если паттерн не распознан
+        return $issue;
     }
 }
 

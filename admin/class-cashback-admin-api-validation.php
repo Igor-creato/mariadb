@@ -664,6 +664,11 @@ class Cashback_Admin_API_Validation
             wp_send_json_error(['message' => 'Недостаточно прав']);
         }
 
+        // Блокировка во время синхронизации — нельзя проверять пока sync + начисление идут
+        if (class_exists('Cashback_Lock') && Cashback_Lock::is_lock_active()) {
+            wp_send_json_error(['message' => 'Синхронизация в процессе, повторите позже']);
+        }
+
         // Rate limiting: максимум 10 запросов валидации в минуту
         $rate_key = 'cb_api_validate_rate_' . get_current_user_id();
         $rate_count = (int) get_transient($rate_key);

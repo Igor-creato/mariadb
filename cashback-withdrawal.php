@@ -1040,6 +1040,24 @@ class CashbackWithdrawal
                 throw new Exception('Failed to update user balance - version conflict');
             }
 
+            // Запись в леджер: payout_hold (отрицательная — деньги перешли из available в pending)
+            $ledger_table = $wpdb->prefix . 'cashback_balance_ledger';
+            $ledger_amount = '-' . number_format(abs((float) $withdrawal_amount), 2, '.', '');
+            $ledger_result = $wpdb->query($wpdb->prepare(
+                "INSERT INTO `{$ledger_table}`
+                     (user_id, type, amount, payout_request_id, idempotency_key)
+                 VALUES (%d, 'payout_hold', %s, %d, %s)
+                 ON DUPLICATE KEY UPDATE id = id",
+                $user_id,
+                $ledger_amount,
+                $payout_id,
+                'payout_hold_' . $payout_id
+            ));
+
+            if ($ledger_result === false) {
+                throw new Exception('Failed to write payout_hold to ledger: ' . $wpdb->last_error);
+            }
+
             $commit_result = $wpdb->query('COMMIT');
             if ($commit_result === false) {
                 throw new Exception('COMMIT failed: ' . $wpdb->last_error);

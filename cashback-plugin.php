@@ -391,6 +391,9 @@ class CashbackPlugin
         $this->require_file('includes/adapters/class-admitad-adapter.php');
         $this->require_file('includes/adapters/class-epn-adapter.php');
 
+        // Глобальный lock для атомарной синхронизации + начисления
+        $this->require_file('includes/class-cashback-lock.php');
+
         // API клиент и cron (синхронизация работает через WP Cron)
         $this->require_file('includes/class-cashback-api-client.php');
         $this->require_file('includes/class-cashback-api-migration.php');
@@ -466,6 +469,53 @@ class CashbackPlugin
             set_transient('cashback_flush_rewrite_rules', 1, 300);
 
             update_option('cashback_plugin_db_version', '1.1.0');
+        }
+
+        // Миграция 2: таблица cashback_balance_ledger (леджер баланса)
+        if (version_compare($db_version, '1.2.0', '<')) {
+            global $wpdb;
+            $charset_collate = $wpdb->get_charset_collate();
+            $ledger_table = $wpdb->prefix . 'cashback_balance_ledger';
+
+            $table_exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $ledger_table));
+            if (!$table_exists) {
+                $wpdb->query("CREATE TABLE IF NOT EXISTS `{$ledger_table}` (
+                    `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+                    `user_id` bigint(20) unsigned NOT NULL COMMENT 'ID пользователя',
+                    `type` enum('accrual','payout_hold','payout_complete','payout_cancel','payout_declined','adjustment') NOT NULL COMMENT 'Тип операции',
+                    `amount` decimal(18,2) NOT NULL COMMENT 'Сумма со знаком (+ начисление, - списание)',
+                    `transaction_id` bigint(20) unsigned DEFAULT NULL COMMENT 'ID транзакции (для accrual)',
+                    `payout_request_id` bigint(20) unsigned DEFAULT NULL COMMENT 'ID заявки на выплату',
+                    `idempotency_key` varchar(64) NOT NULL COMMENT 'Ключ идемпотентности (UNIQUE)',
+                    `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (`id`),
+                    UNIQUE KEY `uk_idempotency_key` (`idempotency_key`),
+                    KEY `idx_user_id` (`user_id`),
+                    KEY `idx_transaction_id` (`transaction_id`),
+                    KEY `idx_payout_request_id` (`payout_request_id`),
+                    KEY `idx_user_type` (`user_id`,`type`),
+                    KEY `idx_created_at` (`created_at`)
+                ) ENGINE=InnoDB {$charset_collate} COMMENT='Леджер баланса: единственный источник правды'");
+
+                if ($wpdb->last_error) {
+                    error_log('[Cashback Migration 1.2.0] Failed to create ledger table: ' . $wpdb->last_error);
+                } else {
+                    // FK constraints (не фатально)
+                    $wpdb->query("ALTER TABLE `{$ledger_table}`
+                        ADD CONSTRAINT `fk_ledger_user` FOREIGN KEY (`user_id`)
+                        REFERENCES `{$wpdb->prefix}users` (`ID`) ON DELETE RESTRICT");
+                    $wpdb->query("ALTER TABLE `{$ledger_table}`
+                        ADD CONSTRAINT `fk_ledger_transaction` FOREIGN KEY (`transaction_id`)
+                        REFERENCES `{$wpdb->prefix}cashback_transactions` (`id`) ON DELETE SET NULL");
+                    $wpdb->query("ALTER TABLE `{$ledger_table}`
+                        ADD CONSTRAINT `fk_ledger_payout` FOREIGN KEY (`payout_request_id`)
+                        REFERENCES `{$wpdb->prefix}cashback_payout_requests` (`id`) ON DELETE SET NULL");
+
+                    error_log('[Cashback Migration 1.2.0] Ledger table created successfully');
+                }
+            }
+
+            update_option('cashback_plugin_db_version', '1.2.0');
         }
     }
 

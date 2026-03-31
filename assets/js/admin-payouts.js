@@ -61,6 +61,7 @@
     initCancelButtons();
     initSaveButtons();
     initDecryptButtons();
+    initVerifyButtons();
   });
 
   /**
@@ -519,6 +520,105 @@
       row.find('.save-btn, .cancel-btn').hide();
       row.find('.edit-btn').show();
     });
+  }
+
+  /**
+   * Инициализация кнопок проверки баланса
+   */
+  function initVerifyButtons() {
+    $(document).on('click', '.verify-btn', function () {
+      const btn = $(this);
+      const row = btn.closest('tr');
+      const payoutId = row.data('payout-id');
+
+      if (!payoutId) {
+        return;
+      }
+
+      // Блокируем кнопку
+      const originalText = btn.text();
+      btn.prop('disabled', true).text('...');
+
+      const data = {
+        action: 'verify_payout_balance',
+        payout_id: payoutId,
+        nonce: cashbackPayoutsData.verifyNonce,
+      };
+
+      $.post(ajaxurl, data, function (response) {
+        btn.prop('disabled', false).text(originalText);
+
+        if (response.success) {
+          const result = response.data;
+          if (result.status === 'ok') {
+            // Успех — зелёное уведомление
+            showVerifyResult(row, 'ok', result.message);
+          } else {
+            // Расхождение — красное уведомление с деталями
+            let msg = result.message;
+            if (result.issues && result.issues.length > 0) {
+              msg += ':\n• ' + result.issues.join('\n• ');
+            }
+            showVerifyResult(row, 'mismatch', msg);
+          }
+        } else {
+          // Ошибка (sync в процессе, нет прав и т.д.)
+          alert(response.data.message || 'Ошибка проверки');
+        }
+      }).fail(function (jqXHR) {
+        btn.prop('disabled', false).text(originalText);
+        let errorMsg = 'Ошибка соединения';
+        if (jqXHR.status === 403) {
+          errorMsg = 'Ошибка 403: Доступ запрещён. Обновите страницу.';
+        } else if (jqXHR.status === 500) {
+          errorMsg = 'Ошибка 500: Внутренняя ошибка сервера.';
+        }
+        alert(errorMsg);
+      });
+    });
+  }
+
+  /**
+   * Показать результат проверки рядом со строкой
+   *
+   * @param {jQuery} row - Строка таблицы
+   * @param {string} status - 'ok' или 'mismatch'
+   * @param {string} message - Текст сообщения
+   */
+  function showVerifyResult(row, status, message) {
+    // Удаляем предыдущий результат
+    row.find('.verify-result').remove();
+
+    const badge = $('<span>')
+      .addClass('verify-result')
+      .css({
+        display: 'inline-block',
+        padding: '2px 8px',
+        'margin-left': '4px',
+        'border-radius': '3px',
+        'font-size': '12px',
+        'font-weight': 'bold',
+        color: '#fff',
+        'background-color': status === 'ok' ? '#46b450' : '#dc3232',
+        cursor: status === 'mismatch' ? 'pointer' : 'default',
+      })
+      .text(status === 'ok' ? 'OK' : 'Расхождение');
+
+    if (status === 'mismatch') {
+      badge.attr('title', message);
+      badge.on('click', function () {
+        alert(message);
+      });
+    }
+
+    row.find('.verify-btn').after(badge);
+
+    // Автоскрытие через 15 секунд
+    setTimeout(function () {
+      badge.fadeOut(function () {
+        $(this).remove();
+      });
+    }, 15000);
   }
 
   /**

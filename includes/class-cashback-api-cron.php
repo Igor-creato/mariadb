@@ -23,6 +23,9 @@ class Cashback_API_Cron
     /** @var string Интервал */
     const INTERVAL_NAME = 'cashback_every_2_hours';
 
+    /** @var int Таймаут ожидания глобального lock (секунды). 0 = не ждать для cron */
+    const LOCK_WAIT_TIMEOUT = 0;
+
     /**
      * Инициализация: регистрация хуков и расписания
      */
@@ -56,9 +59,12 @@ class Cashback_API_Cron
     }
 
     /**
-     * Запуск фоновой синхронизации
+     * Запуск фоновой синхронизации.
      *
-     * Вызывается WP Cron. Логирует результаты.
+     * АТОМАРНАЯ ОПЕРАЦИЯ: sync + начисление выполняются под глобальным lock.
+     * Во время sync все админские проверки баланса блокируются.
+     *
+     * Вызывается WP Cron или вручную из админки.
      */
     public static function run_sync(): void
     {
@@ -66,11 +72,21 @@ class Cashback_API_Cron
 
         error_log('Cashback API Cron: Starting background sync');
 
+        // ═══ ЗАХВАТ ГЛОБАЛЬНОГО LOCK ═══
+        // Без lock sync не запускается — это гарантирует:
+        // 1) Нет параллельного sync (cron + manual)
+        // 2) Нет админских проверок во время sync
+        // 3) Начисление атомарно с sync
+        if (!Cashback_Lock::acquire(self::LOCK_WAIT_TIMEOUT)) {
+            error_log('Cashback API Cron: Could not acquire global lock — another sync or operation is running');
+            return;
+        }
+
         try {
             $client  = Cashback_API_Client::get_instance();
             $results = $client->background_sync();
 
-            $elapsed = round(microtime(true) - $start, 2);
+            $elapsed_sync = round(microtime(true) - $start, 2);
 
             foreach ($results as $network => $result) {
                 if ($result['success']) {
@@ -84,7 +100,7 @@ class Cashback_API_Cron
                         $result['not_found'],
                         $result['insert_errors'] ?? 0,
                         $result['declined_stale'] ?? 0,
-                        $elapsed
+                        $elapsed_sync
                     ));
                 } else {
                     error_log(sprintf(
@@ -112,9 +128,21 @@ class Cashback_API_Cron
                 error_log('Cashback API Cron: auto_transfer exception — ' . $e->getMessage());
             }
 
-            // Начисляем кешбэк по транзакциям с funds_ready=1 (не ждём суточного MySQL Event)
+            // ═══ АТОМАРНОЕ НАЧИСЛЕНИЕ (ВНУТРИ LOCK) ═══
+            // Начисление НЕРАЗРЫВНО с sync — одна операция.
+            // process_ready_transactions проверяет наличие lock.
+            $accrual_result = null;
             try {
-                Mariadb_Plugin::process_ready_transactions();
+                $accrual_result = Mariadb_Plugin::process_ready_transactions();
+                if (!empty($accrual_result['errors'])) {
+                    error_log('Cashback API Cron: accrual errors — ' . implode('; ', $accrual_result['errors']));
+                } elseif ($accrual_result['processed'] > 0) {
+                    error_log(sprintf(
+                        'Cashback API Cron: accrual processed=%d, ledger_inserted=%d',
+                        $accrual_result['processed'],
+                        $accrual_result['ledger_inserted']
+                    ));
+                }
             } catch (Exception $e) {
                 error_log('Cashback API Cron: process_ready_transactions exception — ' . $e->getMessage());
             }
@@ -148,16 +176,22 @@ class Cashback_API_Cron
                 error_log('Cashback API Cron: campaign check exception — ' . $e->getMessage());
             }
 
+            $elapsed = round(microtime(true) - $start, 2);
+
             // Сохраняем результат последней синхронизации для отображения в админке
             update_option('cashback_last_sync_result', [
                 'timestamp'        => current_time('mysql'),
                 'elapsed'          => $elapsed,
                 'results'          => $results,
                 'auto_transferred' => $transfer_result,
+                'accrual'          => $accrual_result,
                 'campaign_check'   => $campaign_results,
             ]);
         } catch (Exception $e) {
             error_log('Cashback API Cron: Exception — ' . $e->getMessage());
+        } finally {
+            // ═══ ОСВОБОЖДЕНИЕ LOCK ═══
+            Cashback_Lock::release();
         }
     }
 
@@ -173,21 +207,32 @@ class Cashback_API_Cron
     }
 
     /**
-     * Ручной запуск синхронизации (из админки)
+     * Ручной запуск синхронизации (из админки).
+     *
+     * Использует глобальный lock — если sync уже идёт (cron), вернёт ошибку.
      *
      * @return array Результаты синхронизации
      */
     public static function manual_sync(): array
     {
-        if (get_transient('cb_api_sync_running')) {
-            return ['locked' => true];
+        // Проверяем lock через Cashback_Lock (заменяет transient)
+        if (Cashback_Lock::is_lock_active()) {
+            return ['locked' => true, 'message' => 'Синхронизация уже выполняется'];
         }
-        set_transient('cb_api_sync_running', 1, 5 * MINUTE_IN_SECONDS);
-        try {
-            self::run_sync();
-        } finally {
-            delete_transient('cb_api_sync_running');
+
+        // Запоминаем timestamp до sync для проверки что результат свежий
+        $before_sync = time();
+
+        // run_sync() сам захватывает и освобождает lock
+        self::run_sync();
+
+        $result = get_option('cashback_last_sync_result', []);
+
+        // Проверяем что sync реально отработал (lock мог не захватиться из-за race condition)
+        if (empty($result['timestamp']) || strtotime($result['timestamp']) < $before_sync) {
+            return ['locked' => true, 'message' => 'Не удалось запустить синхронизацию — повторите попытку'];
         }
-        return get_option('cashback_last_sync_result', []);
+
+        return $result;
     }
 }

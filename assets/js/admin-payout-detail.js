@@ -130,6 +130,7 @@
     initCopyButtons();
     initDecryptButton();
     initSaveButton();
+    initVerifyDetailButton();
   });
 
   /**
@@ -329,6 +330,153 @@
         .always(function () {
           btn.prop('disabled', false).text('Сохранить изменения');
         });
+    });
+  }
+  /**
+   * Форматирование суммы с пробелами
+   *
+   * @param {string} value
+   * @returns {string}
+   */
+  function formatAmount(value) {
+    const num = parseFloat(value);
+    if (isNaN(num)) {
+      return value;
+    }
+    return num.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽';
+  }
+
+  /**
+   * Построение HTML отчёта о проверке движений средств
+   *
+   * @param {Object} result
+   * @returns {string}
+   */
+  function buildVerifyReport(result) {
+    const isOk = result.status === 'ok';
+    const borderColor = isOk ? '#46b450' : '#dc3232';
+    const iconColor = isOk ? '#46b450' : '#dc3232';
+    const icon = isOk ? '&#10004;' : '&#10006;';
+
+    let html = '<div style="border:1px solid ' + borderColor + '; border-radius:4px; margin-top:8px; font-size:13px;">';
+
+    // Заголовок
+    html += '<div style="background:' + borderColor + '; color:#fff; padding:8px 10px; font-weight:bold;">';
+    html += '<span style="margin-right:6px;">' + icon + '</span>';
+    html += escapeHtml(result.message);
+    html += '</div>';
+
+    // Сводка по балансу
+    if (result.balance_summary) {
+      html += '<div style="padding:8px 10px; border-bottom:1px solid #e5e5e5;">';
+      html += '<strong>Баланс пользователя:</strong>';
+      html += '<table style="width:100%; margin-top:6px; border-collapse:collapse; font-size:12px;">';
+      html += '<tr style="background:#f9f9f9;"><th style="text-align:left; padding:4px 6px;"></th>';
+      html += '<th style="text-align:right; padding:4px 6px;">Расчётный</th>';
+      html += '<th style="text-align:right; padding:4px 6px;">В базе</th>';
+      html += '<th style="text-align:center; padding:4px 6px;"></th></tr>';
+
+      const fields = ['available', 'pending', 'paid', 'frozen'];
+      for (let i = 0; i < fields.length; i++) {
+        const key = fields[i];
+        const item = result.balance_summary[key];
+        if (!item) {
+          continue;
+        }
+
+        const ledgerVal = item.ledger;
+        const cacheVal = item.cache;
+        const match = ledgerVal === '—' || ledgerVal === cacheVal;
+        const rowColor = match ? '' : ' background:#fff3f3;';
+        const statusIcon = ledgerVal === '—' ? '' : (match ? '<span style="color:#46b450;">&#10004;</span>' : '<span style="color:#dc3232;">&#10006;</span>');
+
+        html += '<tr style="border-top:1px solid #eee;' + rowColor + '">';
+        html += '<td style="padding:4px 6px;">' + escapeHtml(item.label) + '</td>';
+        html += '<td style="text-align:right; padding:4px 6px;">' + (ledgerVal === '—' ? '—' : formatAmount(ledgerVal)) + '</td>';
+        html += '<td style="text-align:right; padding:4px 6px;">' + formatAmount(cacheVal) + '</td>';
+        html += '<td style="text-align:center; padding:4px 6px;">' + statusIcon + '</td>';
+        html += '</tr>';
+      }
+
+      html += '</table></div>';
+    }
+
+    // Операции
+    if (result.operations_summary && result.operations_summary.length > 0) {
+      html += '<div style="padding:8px 10px; border-bottom:1px solid #e5e5e5;">';
+      html += '<strong>Операции в журнале:</strong>';
+      html += '<table style="width:100%; margin-top:6px; border-collapse:collapse; font-size:12px;">';
+
+      for (let i = 0; i < result.operations_summary.length; i++) {
+        const op = result.operations_summary[i];
+        html += '<tr style="border-top:1px solid #eee;">';
+        html += '<td style="padding:3px 6px;">' + escapeHtml(op.label) + '</td>';
+        html += '<td style="text-align:center; padding:3px 6px; color:#666;">' + op.count + ' шт.</td>';
+        html += '<td style="text-align:right; padding:3px 6px; font-weight:500;">' + escapeHtml(op.sum) + ' ₽</td>';
+        html += '</tr>';
+      }
+
+      html += '</table></div>';
+    }
+
+    // Проблемы (если есть)
+    if (!isOk && result.issues && result.issues.length > 0) {
+      html += '<div style="padding:8px 10px; background:#fff8f8;">';
+      html += '<strong style="color:#dc3232;">Обнаруженные проблемы:</strong>';
+      html += '<ul style="margin:6px 0 0 0; padding-left:18px; color:#72150a;">';
+      for (let i = 0; i < result.issues.length; i++) {
+        html += '<li style="margin-bottom:4px;">' + escapeHtml(result.issues[i]) + '</li>';
+      }
+      html += '</ul></div>';
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  /**
+   * Инициализация кнопки проверки движений средств
+   */
+  function initVerifyDetailButton() {
+    $('#verify-detail-btn').on('click', function () {
+      const btn = $(this);
+      const payoutId = btn.data('payout-id');
+
+      if (!payoutId) {
+        return;
+      }
+
+      const originalText = btn.text();
+      btn.prop('disabled', true).text('Проверка...');
+
+      const resultContainer = $('#verify-detail-result');
+      resultContainer.hide().empty();
+
+      const data = {
+        action: 'verify_payout_balance',
+        payout_id: payoutId,
+        nonce: cashbackPayoutDetailData.verifyNonce,
+      };
+
+      $.post(cashbackPayoutDetailData.ajaxurl, data, function (response) {
+        btn.prop('disabled', false).text(originalText);
+
+        if (response.success) {
+          const reportHtml = buildVerifyReport(response.data);
+          resultContainer.html(reportHtml).show();
+        } else {
+          showNotice(response.data.message || 'Ошибка проверки', 'error');
+        }
+      }).fail(function (jqXHR) {
+        btn.prop('disabled', false).text(originalText);
+        let errorMsg = 'Ошибка соединения';
+        if (jqXHR.status === 403) {
+          errorMsg = 'Ошибка 403: Доступ запрещён. Обновите страницу.';
+        } else if (jqXHR.status === 500) {
+          errorMsg = 'Ошибка 500: Внутренняя ошибка сервера.';
+        }
+        showNotice(errorMsg, 'error');
+      });
     });
   }
 })(jQuery);

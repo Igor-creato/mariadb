@@ -54,6 +54,7 @@ function cashback_plugin_uninstall(): void
         "{$prefix}cashback_fraud_signals",
         "{$prefix}cashback_fraud_alerts",
         "{$prefix}cashback_user_fingerprints",
+        "{$prefix}cashback_balance_ledger",
         "{$prefix}cashback_payout_requests",
         "{$prefix}cashback_transactions",
         "{$prefix}cashback_unregistered_transactions",
@@ -170,6 +171,8 @@ function cashback_plugin_uninstall(): void
         'cashback_last_sync_result',
         // Migration flags
         'cashback_migrated_uuid_ascii',
+        // Global lock
+        'cashback_global_lock_active',
     ];
 
     foreach ($options as $option) {
