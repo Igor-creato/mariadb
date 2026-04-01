@@ -914,6 +914,12 @@ class Cashback_Users_Management_Admin
                 $wpdb->query('COMMIT');
             }
 
+            // Post-commit: если affiliate отключён, повторно заморозить affiliate-часть
+            // (разбан вернул всё frozen в available, нужно вернуть affiliate frozen)
+            if (class_exists('Cashback_Affiliate_Service')) {
+                Cashback_Affiliate_Service::re_freeze_after_unban($user_id);
+            }
+
             return true;
 
         } catch (Exception $e) {

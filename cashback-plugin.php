@@ -274,6 +274,12 @@ class CashbackPlugin
             Cashback_Fraud_DB::create_tables();
         }
 
+        // Создание таблиц affiliate-модуля (реферальная программа)
+        $this->require_file('affiliate/class-affiliate-db.php');
+        if (class_exists('Cashback_Affiliate_DB')) {
+            Cashback_Affiliate_DB::create_tables();
+        }
+
         // Планируем cron для антифрод-детекции (ежечасно)
         if (!wp_next_scheduled('cashback_fraud_detection_cron')) {
             wp_schedule_event(time(), 'hourly', 'cashback_fraud_detection_cron');
@@ -289,6 +295,7 @@ class CashbackPlugin
         add_rewrite_endpoint('cashback-history', EP_ROOT | EP_PAGES);
         add_rewrite_endpoint('history-payout', EP_ROOT | EP_PAGES);
         add_rewrite_endpoint('cashback-support', EP_ROOT | EP_PAGES);
+        add_rewrite_endpoint('cashback-affiliate', EP_ROOT | EP_PAGES);
 
         // Сбрасываем переписывание URL
         flush_rewrite_rules();
@@ -405,6 +412,12 @@ class CashbackPlugin
         // Шорткоды (доступны на фронтенде и в превью редактора)
         $this->require_file('includes/class-cashback-shortcodes.php');
 
+        // Affiliate module (реферальная программа)
+        $this->require_file('affiliate/class-affiliate-db.php');
+        $this->require_file('affiliate/class-affiliate-antifraud.php');
+        $this->require_file('affiliate/class-affiliate-service.php');
+        $this->require_file('affiliate/class-affiliate-frontend.php');
+
         // Admin-only файлы (is_admin() = true для admin pages, admin-ajax.php, REST через admin)
         if (is_admin()) {
             $this->require_file('admin/traits/AdminPaginationTrait.php');
@@ -419,6 +432,7 @@ class CashbackPlugin
             $this->require_file('support/admin-support.php');
             $this->require_file('antifraud/class-fraud-admin.php');
             $this->require_file('admin/class-cashback-admin-api-validation.php');
+            $this->require_file('affiliate/class-affiliate-admin.php');
         }
     }
 
@@ -581,6 +595,17 @@ class CashbackPlugin
         // Шорткоды
         if (class_exists('Cashback_Shortcodes')) {
             Cashback_Shortcodes::get_instance();
+        }
+
+        // Affiliate module (реферальная программа)
+        if (class_exists('Cashback_Affiliate_Service')) {
+            Cashback_Affiliate_Service::get_instance();
+        }
+        if (class_exists('Cashback_Affiliate_Frontend')) {
+            Cashback_Affiliate_Frontend::get_instance();
+        }
+        if (is_admin() && class_exists('Cashback_Affiliate_Admin')) {
+            new Cashback_Affiliate_Admin();
         }
     }
 

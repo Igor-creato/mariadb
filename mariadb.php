@@ -81,6 +81,7 @@ class Mariadb_Plugin
             $instance->migrate_add_webhook_processing_status();
             $instance->migrate_add_funds_ready();
             $instance->migrate_uuid_columns_to_ascii();
+            $instance->migrate_merge_affiliate_ledger();
             $instance->create_events();
             $instance->initialize_existing_users();
 
@@ -381,10 +382,12 @@ class Mariadb_Plugin
         $table_balance_ledger = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_balance_ledger` (
             `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
             `user_id` bigint(20) unsigned NOT NULL COMMENT 'ID пользователя',
-            `type` enum('accrual','payout_hold','payout_complete','payout_cancel','payout_declined','adjustment') NOT NULL COMMENT 'Тип операции',
+            `type` enum('accrual','payout_hold','payout_complete','payout_cancel','payout_declined','adjustment','affiliate_accrual','affiliate_reversal','affiliate_freeze','affiliate_unfreeze') NOT NULL COMMENT 'Тип операции',
             `amount` decimal(18,2) NOT NULL COMMENT 'Сумма со знаком (+ начисление, - списание)',
-            `transaction_id` bigint(20) unsigned DEFAULT NULL COMMENT 'ID транзакции (для accrual)',
+            `transaction_id` bigint(20) unsigned DEFAULT NULL COMMENT 'ID транзакции (для accrual/affiliate)',
             `payout_request_id` bigint(20) unsigned DEFAULT NULL COMMENT 'ID заявки на выплату',
+            `reference_type` varchar(50) DEFAULT NULL COMMENT 'Тип связанной сущности (accrual, payout, affiliate_accrual)',
+            `reference_id` bigint(20) unsigned DEFAULT NULL COMMENT 'ID связанной сущности',
             `idempotency_key` varchar(64) NOT NULL COMMENT 'Ключ идемпотентности (UNIQUE)',
             `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (`id`),
@@ -393,7 +396,9 @@ class Mariadb_Plugin
             KEY `idx_transaction_id` (`transaction_id`),
             KEY `idx_payout_request_id` (`payout_request_id`),
             KEY `idx_user_type` (`user_id`,`type`),
-            KEY `idx_created_at` (`created_at`)
+            KEY `idx_created_at` (`created_at`),
+            KEY `idx_reference` (`reference_type`,`reference_id`),
+            KEY `idx_user_created` (`user_id`,`created_at`)
         ) ENGINE=InnoDB {$charset_collate} COMMENT='Леджер баланса: единственный источник правды';";
 
         // Порядок создания: сначала справочники, потом зависимые таблицы
@@ -1683,6 +1688,25 @@ class Mariadb_Plugin
                     throw new \RuntimeException('Step 4 (update balance cache) failed: ' . $wpdb->last_error);
                 }
 
+                // ШАГ 4.5: Начисление партнёрских комиссий (affiliate module)
+                // NON-FATAL: ошибка affiliate не блокирует начисление кешбэка
+                if (class_exists('Cashback_Affiliate_DB')
+                    && Cashback_Affiliate_DB::is_module_enabled()
+                    && class_exists('Cashback_Affiliate_Service')
+                ) {
+                    try {
+                        $aff_result = Cashback_Affiliate_Service::process_affiliate_commissions($candidates, $batch_id);
+                        if (!empty($aff_result['errors'])) {
+                            foreach ($aff_result['errors'] as $aff_err) {
+                                $errors[] = '[Affiliate] ' . $aff_err;
+                            }
+                        }
+                    } catch (\Throwable $aff_e) {
+                        error_log('[Cashback] Affiliate commission error (non-fatal): ' . $aff_e->getMessage());
+                        $errors[] = '[Affiliate] ' . $aff_e->getMessage();
+                    }
+                }
+
                 // ШАГ 5: Переводим в финальный статус balance
                 // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                 $step5 = $wpdb->query($wpdb->prepare(
@@ -1741,12 +1765,16 @@ class Mariadb_Plugin
         ), ARRAY_A);
 
         $sums = [
-            'accrual'          => '0.00',
-            'payout_hold'      => '0.00',
-            'payout_complete'  => '0.00',
-            'payout_cancel'    => '0.00',
-            'payout_declined'  => '0.00',
-            'adjustment'       => '0.00',
+            'accrual'             => '0.00',
+            'payout_hold'         => '0.00',
+            'payout_complete'     => '0.00',
+            'payout_cancel'       => '0.00',
+            'payout_declined'     => '0.00',
+            'adjustment'          => '0.00',
+            'affiliate_accrual'   => '0.00',
+            'affiliate_reversal'  => '0.00',
+            'affiliate_freeze'    => '0.00',
+            'affiliate_unfreeze'  => '0.00',
         ];
         $counts = [];
         foreach ($ledger_sums as $row) {
@@ -1759,15 +1787,32 @@ class Mariadb_Plugin
         $abs_complete = bcmul($sums['payout_complete'], '-1', 2);
         $abs_declined = bcmul($sums['payout_declined'], '-1', 2);
 
-        // Расчётный available: accrual - |hold| + cancel + adjustment
+        // Affiliate contributions (все в одном леджере)
+        // affiliate_accrual (+), affiliate_reversal (-), affiliate_freeze (-), affiliate_unfreeze (+)
+        $aff_net = bcadd(
+            bcadd($sums['affiliate_accrual'], $sums['affiliate_reversal'], 2),
+            bcadd($sums['affiliate_freeze'], $sums['affiliate_unfreeze'], 2),
+            2
+        );
+        // affiliate_freeze — отрицательная сумма, |freeze| - unfreeze = замороженная affiliate часть
+        $aff_frozen = bcadd(bcmul($sums['affiliate_freeze'], '-1', 2), bcmul($sums['affiliate_unfreeze'], '-1', 2), 2);
+        if (bccomp($aff_frozen, '0', 2) < 0) {
+            $aff_frozen = '0.00';
+        }
+
+        // Расчётный available: accrual - |hold| + cancel + adjustment + affiliate_net
         // payout_hold отрицательный → bcadd с отрицательным = вычитание
         $ledger_available = bcadd(
             bcadd(
-                bcadd($sums['accrual'], $sums['payout_hold'], 2),
-                $sums['payout_cancel'],
+                bcadd(
+                    bcadd($sums['accrual'], $sums['payout_hold'], 2),
+                    $sums['payout_cancel'],
+                    2
+                ),
+                $sums['adjustment'],
                 2
             ),
-            $sums['adjustment'],
+            $aff_net,
             2
         );
 
@@ -1782,8 +1827,8 @@ class Mariadb_Plugin
         // Расчётный paid: |payout_complete| (только реально выплаченные)
         $ledger_paid = $abs_complete;
 
-        // Расчётный frozen (из леджера): |payout_declined|
-        $ledger_frozen = $abs_declined;
+        // Расчётный frozen (из леджера): |payout_declined| + affiliate frozen portion
+        $ledger_frozen = bcadd($abs_declined, $aff_frozen, 2);
 
         // 2. Кэш из cashback_user_balance
         $cache = $wpdb->get_row($wpdb->prepare(
@@ -2001,6 +2046,84 @@ class Mariadb_Plugin
         }
 
         update_option('cashback_migrated_uuid_ascii', true, false);
+    }
+
+    /**
+     * Миграция: объединение cashback_affiliate_ledger → cashback_balance_ledger.
+     *
+     * 1. Расширяет ENUM type affiliate-типами
+     * 2. Добавляет reference_type / reference_id
+     * 3. Переносит данные из cashback_affiliate_ledger (если есть)
+     * 4. Дропает старую таблицу cashback_affiliate_ledger
+     */
+    private function migrate_merge_affiliate_ledger(): void
+    {
+        global $wpdb;
+
+        if (get_option('cashback_migrated_affiliate_ledger', false)) {
+            return;
+        }
+
+        $prefix  = $wpdb->prefix;
+        $ledger  = "{$prefix}cashback_balance_ledger";
+        $old     = "{$prefix}cashback_affiliate_ledger";
+        $suppress = $wpdb->suppress_errors(true);
+
+        // 1. Расширяем ENUM (добавляем affiliate типы)
+        // ALTER TABLE MODIFY COLUMN — идемпотентно, если типы уже есть
+        $wpdb->query(
+            "ALTER TABLE `{$ledger}` MODIFY COLUMN `type`
+             enum('accrual','payout_hold','payout_complete','payout_cancel','payout_declined','adjustment',
+                  'affiliate_accrual','affiliate_reversal','affiliate_freeze','affiliate_unfreeze')
+             NOT NULL COMMENT 'Тип операции'"
+        );
+
+        // 2. Добавляем reference_type (если нет)
+        if (!$this->column_exists_in_table($ledger, 'reference_type')) {
+            $wpdb->query(
+                "ALTER TABLE `{$ledger}`
+                 ADD COLUMN `reference_type` varchar(50) DEFAULT NULL COMMENT 'Тип связанной сущности (accrual, payout, affiliate_accrual)' AFTER `payout_request_id`,
+                 ADD COLUMN `reference_id` bigint(20) unsigned DEFAULT NULL COMMENT 'ID связанной сущности' AFTER `reference_type`,
+                 ADD KEY `idx_reference` (`reference_type`,`reference_id`),
+                 ADD KEY `idx_user_created` (`user_id`,`created_at`)"
+            );
+        }
+
+        // 3. Переносим данные из старого affiliate ledger (если таблица существует)
+        $old_exists = $wpdb->get_var("SHOW TABLES LIKE '{$old}'");
+        if ($old_exists) {
+            // Миграция данных: INSERT IGNORE (идемпотентность через uk_idempotency_key)
+            $wpdb->query(
+                "INSERT IGNORE INTO `{$ledger}`
+                     (user_id, type, amount, transaction_id, reference_type, reference_id, idempotency_key, created_at)
+                 SELECT
+                     user_id,
+                     type,
+                     amount,
+                     transaction_id,
+                     CASE WHEN accrual_id IS NOT NULL THEN 'affiliate_accrual' ELSE NULL END,
+                     accrual_id,
+                     idempotency_key,
+                     created_at
+                 FROM `{$old}`"
+            );
+
+            if ($wpdb->last_error) {
+                error_log('[Cashback] migrate_merge_affiliate_ledger: data migration error: ' . $wpdb->last_error);
+            }
+
+            // 4. Удаляем FK constraints перед дропом (подавляем ошибки если нет)
+            $wpdb->query("ALTER TABLE `{$old}` DROP FOREIGN KEY `fk_aff_ledger_user`");
+            $wpdb->query("ALTER TABLE `{$old}` DROP FOREIGN KEY `fk_aff_ledger_tx`");
+            $wpdb->query("ALTER TABLE `{$old}` DROP FOREIGN KEY `fk_aff_ledger_accrual`");
+
+            // 5. Дропаем старую таблицу
+            $wpdb->query("DROP TABLE IF EXISTS `{$old}`");
+        }
+
+        $wpdb->suppress_errors($suppress);
+
+        update_option('cashback_migrated_affiliate_ledger', true, false);
     }
 
     /**

@@ -1,0 +1,949 @@
+<?php
+/**
+ * Affiliate Module — Core Service.
+ *
+ * Бизнес-логика: cookie, привязка рефералов, начисление комиссий,
+ * заморозка/разморозка при отключении от партнёрки.
+ */
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+class Cashback_Affiliate_Service
+{
+    /** @var self|null */
+    private static ?self $instance = null;
+
+    /** Имя cookie с реферальными данными */
+    const COOKIE_NAME     = 'cashback_ref';
+    const COOKIE_SIG_NAME = 'cashback_ref_sig';
+
+    public static function get_instance(): self
+    {
+        if (null === self::$instance) {
+            self::$instance = new self();
+        }
+        return self::$instance;
+    }
+
+    private function __construct()
+    {
+        if (!Cashback_Affiliate_DB::is_module_enabled()) {
+            return;
+        }
+
+        // Обработка реферальной cookie при визите
+        add_action('template_redirect', [$this, 'handle_referral_visit'], 5);
+
+        // Привязка реферала при регистрации (после Mariadb_Plugin::user_register, приоритет 10)
+        add_action('user_register', [$this, 'bind_referral_on_registration'], 20);
+    }
+
+    /* ═══════════════════════════════════════
+     *  COOKIE — установка и чтение
+     * ═══════════════════════════════════════ */
+
+    /**
+     * Обработка визита с ?ref={user_id}.
+     * Устанавливает HMAC-подписанную cookie, логирует клик.
+     */
+    public function handle_referral_visit(): void
+    {
+        if (!isset($_GET['ref'])) {
+            return;
+        }
+
+        $referrer_id = absint($_GET['ref']);
+        if ($referrer_id < 1) {
+            return;
+        }
+
+        // Не ставим cookie для залогиненного пользователя который и есть реферер
+        if (is_user_logged_in() && get_current_user_id() === $referrer_id) {
+            return;
+        }
+
+        // Проверяем что реферер валиден
+        if (!Cashback_Affiliate_Antifraud::is_valid_referrer($referrer_id)) {
+            return;
+        }
+
+        $click_id = cashback_generate_uuid7(false);
+        $ip       = class_exists('Cashback_Encryption')
+            ? Cashback_Encryption::get_client_ip()
+            : ($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
+
+        // Логирование клика
+        $this->log_click($click_id, $referrer_id, $ip);
+
+        // Установка cookie (last click wins)
+        $this->set_referral_cookie($referrer_id, $click_id);
+    }
+
+    /**
+     * Установка HMAC-подписанной cookie.
+     */
+    private function set_referral_cookie(int $referrer_id, string $click_id): void
+    {
+        $payload = wp_json_encode([
+            'r' => $referrer_id,
+            'c' => $click_id,
+            't' => time(),
+        ]);
+
+        $signature = $this->compute_cookie_hmac($payload);
+        $ttl       = Cashback_Affiliate_DB::get_cookie_ttl_days();
+        $expire    = time() + ($ttl * DAY_IN_SECONDS);
+        $secure    = is_ssl();
+        $path      = COOKIEPATH ?: '/';
+        $domain    = COOKIE_DOMAIN ?: '';
+
+        // Безопасные параметры: HttpOnly, SameSite=Lax
+        setcookie(self::COOKIE_NAME, $payload, [
+            'expires'  => $expire,
+            'path'     => $path,
+            'domain'   => $domain,
+            'secure'   => $secure,
+            'httponly'  => true,
+            'samesite' => 'Lax',
+        ]);
+
+        setcookie(self::COOKIE_SIG_NAME, $signature, [
+            'expires'  => $expire,
+            'path'     => $path,
+            'domain'   => $domain,
+            'secure'   => $secure,
+            'httponly'  => true,
+            'samesite' => 'Lax',
+        ]);
+    }
+
+    /**
+     * Чтение и верификация cookie.
+     *
+     * @return array{referrer_id: int, click_id: string, timestamp: int}|null
+     */
+    public static function read_referral_cookie(): ?array
+    {
+        if (empty($_COOKIE[self::COOKIE_NAME]) || empty($_COOKIE[self::COOKIE_SIG_NAME])) {
+            return null;
+        }
+
+        $payload   = $_COOKIE[self::COOKIE_NAME];
+        $signature = $_COOKIE[self::COOKIE_SIG_NAME];
+
+        // Верификация HMAC
+        $expected = self::compute_cookie_hmac_static($payload);
+        if (!hash_equals($expected, $signature)) {
+            return null;
+        }
+
+        $data = json_decode($payload, true);
+        if (!is_array($data) || !isset($data['r'], $data['c'], $data['t'])) {
+            return null;
+        }
+
+        $referrer_id = (int) $data['r'];
+        $click_id    = sanitize_text_field($data['c']);
+        $timestamp   = (int) $data['t'];
+
+        // Проверка формата click_id (32 hex)
+        if (!ctype_xdigit($click_id) || strlen($click_id) !== 32) {
+            return null;
+        }
+
+        // Проверка TTL
+        $ttl = Cashback_Affiliate_DB::get_cookie_ttl_days();
+        if (time() - $timestamp > $ttl * DAY_IN_SECONDS) {
+            return null;
+        }
+
+        return [
+            'referrer_id' => $referrer_id,
+            'click_id'    => $click_id,
+            'timestamp'   => $timestamp,
+        ];
+    }
+
+    /**
+     * Удаление реферальных cookie.
+     */
+    public static function clear_referral_cookie(): void
+    {
+        $path   = COOKIEPATH ?: '/';
+        $domain = COOKIE_DOMAIN ?: '';
+
+        setcookie(self::COOKIE_NAME, '', [
+            'expires'  => time() - YEAR_IN_SECONDS,
+            'path'     => $path,
+            'domain'   => $domain,
+            'secure'   => is_ssl(),
+            'httponly'  => true,
+            'samesite' => 'Lax',
+        ]);
+
+        setcookie(self::COOKIE_SIG_NAME, '', [
+            'expires'  => time() - YEAR_IN_SECONDS,
+            'path'     => $path,
+            'domain'   => $domain,
+            'secure'   => is_ssl(),
+            'httponly'  => true,
+            'samesite' => 'Lax',
+        ]);
+    }
+
+    /**
+     * HMAC-SHA256 подпись cookie payload.
+     */
+    private function compute_cookie_hmac(string $payload): string
+    {
+        return self::compute_cookie_hmac_static($payload);
+    }
+
+    private static function compute_cookie_hmac_static(string $payload): string
+    {
+        $key = defined('CB_ENCRYPTION_KEY') ? CB_ENCRYPTION_KEY : 'fallback-not-secure';
+        return hash_hmac('sha256', $payload, $key);
+    }
+
+    /* ═══════════════════════════════════════
+     *  КЛИКИ — логирование
+     * ═══════════════════════════════════════ */
+
+    /**
+     * Запись клика в cashback_affiliate_clicks.
+     */
+    private function log_click(string $click_id, int $referrer_id, string $ip): void
+    {
+        global $wpdb;
+
+        $user_agent  = isset($_SERVER['HTTP_USER_AGENT'])
+            ? mb_substr(sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])), 0, 512)
+            : null;
+        $referer_url = isset($_SERVER['HTTP_REFERER'])
+            ? esc_url_raw(wp_unslash($_SERVER['HTTP_REFERER']))
+            : null;
+        $landing_url = isset($_SERVER['REQUEST_URI'])
+            ? esc_url_raw(home_url(wp_unslash($_SERVER['REQUEST_URI'])))
+            : null;
+
+        $wpdb->insert(
+            $wpdb->prefix . 'cashback_affiliate_clicks',
+            [
+                'click_id'    => $click_id,
+                'referrer_id' => $referrer_id,
+                'ip_address'  => $ip,
+                'user_agent'  => $user_agent,
+                'referer_url' => $referer_url,
+                'landing_url' => $landing_url,
+            ],
+            ['%s', '%d', '%s', '%s', '%s', '%s']
+        );
+    }
+
+    /* ═══════════════════════════════════════
+     *  ПРИВЯЗКА — при регистрации
+     * ═══════════════════════════════════════ */
+
+    /**
+     * Привязка реферала при регистрации пользователя.
+     * Вызывается из user_register hook (priority 20).
+     */
+    public function bind_referral_on_registration(int $user_id): void
+    {
+        if (!Cashback_Affiliate_DB::is_module_enabled()) {
+            return;
+        }
+
+        $cookie = self::read_referral_cookie();
+        if (!$cookie) {
+            // Убеждаемся что профиль есть (без реферера)
+            Cashback_Affiliate_DB::ensure_profile($user_id);
+            return;
+        }
+
+        $referrer_id = $cookie['referrer_id'];
+        $click_id    = $cookie['click_id'];
+        $ip          = class_exists('Cashback_Encryption')
+            ? Cashback_Encryption::get_client_ip()
+            : ($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
+
+        // Антифрод проверки
+        $check = Cashback_Affiliate_Antifraud::validate_referral(
+            $referrer_id,
+            $user_id,
+            $ip,
+            $click_id
+        );
+
+        // Создаём профиль в любом случае
+        Cashback_Affiliate_DB::ensure_profile($user_id);
+
+        if (!$check['allowed']) {
+            self::clear_referral_cookie();
+            return;
+        }
+
+        global $wpdb;
+        $table = $wpdb->prefix . 'cashback_affiliate_profiles';
+
+        // Атомарная привязка (UPDATE WHERE referred_by_user_id IS NULL — immutable)
+        $updated = $wpdb->query($wpdb->prepare(
+            "UPDATE `{$table}`
+             SET referred_by_user_id = %d,
+                 referral_click_id   = %s,
+                 referred_at         = NOW()
+             WHERE user_id = %d AND referred_by_user_id IS NULL",
+            $referrer_id,
+            $click_id,
+            $user_id
+        ));
+
+        if ($updated) {
+            // Обновляем клик — записываем ID зарегистрированного пользователя
+            $wpdb->update(
+                $wpdb->prefix . 'cashback_affiliate_clicks',
+                [
+                    'registered_user_id' => $user_id,
+                    'registered_at'      => current_time('mysql'),
+                ],
+                ['click_id' => $click_id],
+                ['%d', '%s'],
+                ['%s']
+            );
+
+            // Убеждаемся что у реферера тоже есть профиль
+            Cashback_Affiliate_DB::ensure_profile($referrer_id);
+
+            // Аудит
+            if (class_exists('Cashback_Encryption')) {
+                Cashback_Encryption::write_audit_log(
+                    'affiliate_referral_bound',
+                    0,
+                    'user',
+                    $user_id,
+                    [
+                        'referrer_id' => $referrer_id,
+                        'click_id'    => $click_id,
+                    ]
+                );
+            }
+        }
+
+        self::clear_referral_cookie();
+    }
+
+    /* ═══════════════════════════════════════
+     *  КОМИССИИ — начисление (batch)
+     * ═══════════════════════════════════════ */
+
+    /**
+     * Batch-начисление партнёрских комиссий.
+     * Вызывается ВНУТРИ process_ready_transactions() под глобальным lock.
+     *
+     * @param array  $candidates [{id, user_id, cashback}, ...]
+     * @param string $batch_id   UUID батча
+     * @return array{inserted: int, amount: string, errors: string[]}
+     */
+    public static function process_affiliate_commissions(array $candidates, string $batch_id): array
+    {
+        global $wpdb;
+        $prefix = $wpdb->prefix;
+
+        $result = ['inserted' => 0, 'amount' => '0.00', 'errors' => []];
+
+        if (empty($candidates)) {
+            return $result;
+        }
+
+        if (!Cashback_Affiliate_DB::is_module_enabled()) {
+            return $result;
+        }
+
+        // Собираем уникальные user_id из кандидатов
+        $user_ids = array_unique(array_column($candidates, 'user_id'));
+        if (empty($user_ids)) {
+            return $result;
+        }
+
+        // Находим у кого из этих пользователей есть активный реферер
+        $id_placeholders = implode(',', array_fill(0, count($user_ids), '%d'));
+        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+        $referrals = $wpdb->get_results($wpdb->prepare(
+            "SELECT ap.user_id, ap.referred_by_user_id
+             FROM `{$prefix}cashback_affiliate_profiles` ap
+             INNER JOIN `{$prefix}cashback_affiliate_profiles` rp
+                 ON rp.user_id = ap.referred_by_user_id
+                 AND rp.affiliate_status = 'active'
+             INNER JOIN `{$prefix}cashback_user_profile` up
+                 ON up.user_id = ap.referred_by_user_id
+                 AND up.status != 'banned'
+             WHERE ap.user_id IN ({$id_placeholders})
+               AND ap.referred_by_user_id IS NOT NULL",
+            ...$user_ids
+        ), ARRAY_A);
+
+        if (empty($referrals)) {
+            return $result;
+        }
+
+        // Карта: referred_user_id → referrer_id
+        $referral_map = [];
+        foreach ($referrals as $row) {
+            $referral_map[(int) $row['user_id']] = (int) $row['referred_by_user_id'];
+        }
+
+        // Кешируем ставки рефереров
+        $referrer_ids   = array_unique(array_values($referral_map));
+        $rates_cache    = self::batch_get_rates($referrer_ids);
+        $global_rate    = Cashback_Affiliate_DB::get_global_rate();
+
+        // Формируем accruals и ledger entries
+        $accrual_values = [];
+        $accrual_args   = [];
+        $ledger_values  = [];
+        $ledger_args    = [];
+        $balance_deltas = []; // referrer_id → total commission
+
+        foreach ($candidates as $tx) {
+            $user_id  = (int) $tx['user_id'];
+            $tx_id    = (int) $tx['id'];
+            $cashback = (float) $tx['cashback'];
+
+            if (!isset($referral_map[$user_id]) || $cashback <= 0) {
+                continue;
+            }
+
+            $referrer_id     = $referral_map[$user_id];
+            $rate            = $rates_cache[$referrer_id] ?? $global_rate;
+            $commission      = round($cashback * (float) $rate / 100, 2);
+            $idempotency_key = 'aff_accrual_' . $tx_id;
+
+            if ($commission <= 0) {
+                continue;
+            }
+
+            // Reference ID с retry при коллизии (в batch просто генерируем уникальные)
+            $reference_id = Cashback_Affiliate_DB::generate_affiliate_reference_id();
+
+            // Accrual
+            $accrual_values[] = '(%s, %d, %d, %d, %s, %s, %s, %s, %s)';
+            $accrual_args[]   = $reference_id;
+            $accrual_args[]   = $referrer_id;
+            $accrual_args[]   = $user_id;
+            $accrual_args[]   = $tx_id;
+            $accrual_args[]   = number_format($cashback, 2, '.', '');
+            $accrual_args[]   = number_format((float) $rate, 2, '.', '');
+            $accrual_args[]   = number_format($commission, 2, '.', '');
+            $accrual_args[]   = 'available';
+            $accrual_args[]   = $idempotency_key;
+
+            // Ledger (единый cashback_balance_ledger)
+            $ledger_values[] = '(%d, %s, %s, %d, %s, %d, %s)';
+            $ledger_args[]   = $referrer_id;
+            $ledger_args[]   = 'affiliate_accrual';
+            $ledger_args[]   = number_format($commission, 2, '.', '');
+            $ledger_args[]   = $tx_id;
+            $ledger_args[]   = 'affiliate_accrual';  // reference_type
+            $ledger_args[]   = $tx_id;               // reference_id = transaction_id
+            $ledger_args[]   = $idempotency_key;
+
+            // Balance delta
+            if (!isset($balance_deltas[$referrer_id])) {
+                $balance_deltas[$referrer_id] = 0.0;
+            }
+            $balance_deltas[$referrer_id] += $commission;
+        }
+
+        if (empty($accrual_values)) {
+            return $result;
+        }
+
+        try {
+            // INSERT IGNORE accruals (идемпотентно)
+            $accrual_sql = implode(', ', $accrual_values);
+            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+            $accrual_result = $wpdb->query($wpdb->prepare(
+                "INSERT INTO `{$prefix}cashback_affiliate_accruals`
+                     (reference_id, referrer_id, referred_user_id, transaction_id,
+                      cashback_amount, commission_rate, commission_amount, status, idempotency_key)
+                 VALUES {$accrual_sql}
+                 ON DUPLICATE KEY UPDATE id = id",
+                ...$accrual_args
+            ));
+
+            if ($accrual_result === false) {
+                throw new \RuntimeException('Affiliate accruals INSERT failed: ' . $wpdb->last_error);
+            }
+
+            // INSERT IGNORE в единый ledger (идемпотентно)
+            $ledger_sql = implode(', ', $ledger_values);
+            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+            $ledger_result = $wpdb->query($wpdb->prepare(
+                "INSERT INTO `{$prefix}cashback_balance_ledger`
+                     (user_id, type, amount, transaction_id, reference_type, reference_id, idempotency_key)
+                 VALUES {$ledger_sql}
+                 ON DUPLICATE KEY UPDATE id = id",
+                ...$ledger_args
+            ));
+
+            if ($ledger_result === false) {
+                throw new \RuntimeException('Affiliate balance_ledger INSERT failed: ' . $wpdb->last_error);
+            }
+
+            // Обновляем balance cache рефереров
+            $total_commission = 0.0;
+            foreach ($balance_deltas as $referrer_id => $delta) {
+                $balance_update = $wpdb->query($wpdb->prepare(
+                    "INSERT INTO `{$prefix}cashback_user_balance`
+                         (user_id, available_balance, version)
+                     VALUES (%d, %s, 0)
+                     ON DUPLICATE KEY UPDATE
+                         available_balance = available_balance + CAST(%s AS DECIMAL(18,2)),
+                         version = version + 1",
+                    $referrer_id,
+                    number_format($delta, 2, '.', ''),
+                    number_format($delta, 2, '.', '')
+                ));
+
+                if ($balance_update === false) {
+                    $result['errors'][] = "Balance update failed for referrer {$referrer_id}: " . $wpdb->last_error;
+                }
+                $total_commission += $delta;
+            }
+
+            $result['inserted'] = count($accrual_values);
+            $result['amount']   = number_format($total_commission, 2, '.', '');
+
+        } catch (\Throwable $e) {
+            $result['errors'][] = $e->getMessage();
+            error_log('[Affiliate] process_affiliate_commissions error: ' . $e->getMessage());
+        }
+
+        return $result;
+    }
+
+    /**
+     * Batch-получение ставок рефереров.
+     *
+     * @param int[] $referrer_ids
+     * @return array<int, string> referrer_id → rate
+     */
+    private static function batch_get_rates(array $referrer_ids): array
+    {
+        global $wpdb;
+        $prefix = $wpdb->prefix;
+
+        if (empty($referrer_ids)) {
+            return [];
+        }
+
+        $placeholders = implode(',', array_fill(0, count($referrer_ids), '%d'));
+        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT user_id, affiliate_rate
+             FROM `{$prefix}cashback_affiliate_profiles`
+             WHERE user_id IN ({$placeholders}) AND affiliate_rate IS NOT NULL",
+            ...$referrer_ids
+        ), ARRAY_A);
+
+        $rates = [];
+        foreach ($rows as $row) {
+            $rates[(int) $row['user_id']] = $row['affiliate_rate'];
+        }
+
+        return $rates;
+    }
+
+    /* ═══════════════════════════════════════
+     *  ЗАМОРОЗКА / РАЗМОРОЗКА
+     * ═══════════════════════════════════════ */
+
+    /**
+     * Заморозка партнёрских начислений при отключении от программы.
+     * Кешбэк остаётся доступным, замораживается только affiliate-часть.
+     *
+     * @param int $user_id  Пользователь
+     * @param int $admin_id Администратор, выполняющий действие
+     * @return bool
+     */
+    public static function freeze_affiliate_balance(int $user_id, int $admin_id): bool
+    {
+        global $wpdb;
+        $prefix = $wpdb->prefix;
+
+        try {
+            $wpdb->query('START TRANSACTION');
+
+            // Lock affiliate profile
+            $profile = $wpdb->get_row($wpdb->prepare(
+                "SELECT affiliate_status, affiliate_frozen_amount
+                 FROM `{$prefix}cashback_affiliate_profiles`
+                 WHERE user_id = %d FOR UPDATE",
+                $user_id
+            ), ARRAY_A);
+
+            if (!$profile || $profile['affiliate_status'] !== 'active') {
+                $wpdb->query('ROLLBACK');
+                return false;
+            }
+
+            // Считаем net affiliate balance из единого леджера
+            $net_affiliate = $wpdb->get_var($wpdb->prepare(
+                "SELECT COALESCE(SUM(amount), 0)
+                 FROM `{$prefix}cashback_balance_ledger`
+                 WHERE user_id = %d
+                   AND type IN ('affiliate_accrual','affiliate_reversal','affiliate_freeze','affiliate_unfreeze')",
+                $user_id
+            ));
+            $net_affiliate = (float) $net_affiliate;
+
+            // Lock balance row
+            $balance = $wpdb->get_row($wpdb->prepare(
+                "SELECT available_balance, frozen_balance
+                 FROM `{$prefix}cashback_user_balance`
+                 WHERE user_id = %d FOR UPDATE",
+                $user_id
+            ), ARRAY_A);
+
+            if (!$balance) {
+                $wpdb->query('ROLLBACK');
+                return false;
+            }
+
+            // Заморозить можно не больше чем available_balance и не больше чем net affiliate
+            $freeze_amount = max(0.0, min($net_affiliate, (float) $balance['available_balance']));
+
+            if ($freeze_amount > 0) {
+                $idemp_key = 'aff_freeze_' . $user_id . '_' . time();
+
+                // Запись в единый balance ledger
+                $wpdb->query($wpdb->prepare(
+                    "INSERT INTO `{$prefix}cashback_balance_ledger`
+                         (user_id, type, amount, reference_type, idempotency_key)
+                     VALUES (%d, 'affiliate_freeze', %s, 'affiliate_freeze', %s)
+                     ON DUPLICATE KEY UPDATE id = id",
+                    $user_id,
+                    number_format(-$freeze_amount, 2, '.', ''),
+                    $idemp_key
+                ));
+
+                // Обновляем balance cache
+                $wpdb->query($wpdb->prepare(
+                    "UPDATE `{$prefix}cashback_user_balance`
+                     SET available_balance = available_balance - CAST(%s AS DECIMAL(18,2)),
+                         frozen_balance    = frozen_balance + CAST(%s AS DECIMAL(18,2)),
+                         version = version + 1
+                     WHERE user_id = %d AND available_balance >= CAST(%s AS DECIMAL(18,2))",
+                    number_format($freeze_amount, 2, '.', ''),
+                    number_format($freeze_amount, 2, '.', ''),
+                    $user_id,
+                    number_format($freeze_amount, 2, '.', '')
+                ));
+            }
+
+            // Обновляем affiliate profile
+            $wpdb->query($wpdb->prepare(
+                "UPDATE `{$prefix}cashback_affiliate_profiles`
+                 SET affiliate_status = 'disabled',
+                     affiliate_frozen_amount = %s,
+                     disabled_at = NOW()
+                 WHERE user_id = %d",
+                number_format($freeze_amount, 2, '.', ''),
+                $user_id
+            ));
+
+            // Помечаем все available accruals как frozen
+            $wpdb->query($wpdb->prepare(
+                "UPDATE `{$prefix}cashback_affiliate_accruals`
+                 SET status = 'frozen'
+                 WHERE referrer_id = %d AND status = 'available'",
+                $user_id
+            ));
+
+            $wpdb->query('COMMIT');
+
+            // Audit log (post-commit)
+            if (class_exists('Cashback_Encryption')) {
+                Cashback_Encryption::write_audit_log(
+                    'affiliate_disabled',
+                    $admin_id,
+                    'user',
+                    $user_id,
+                    ['frozen_amount' => number_format($freeze_amount, 2, '.', '')]
+                );
+            }
+
+            return true;
+
+        } catch (\Throwable $e) {
+            $wpdb->query('ROLLBACK');
+            error_log('[Affiliate] freeze_affiliate_balance error: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Разморозка партнёрских начислений при включении обратно в программу.
+     *
+     * @param int $user_id  Пользователь
+     * @param int $admin_id Администратор
+     * @return bool
+     */
+    public static function unfreeze_affiliate_balance(int $user_id, int $admin_id): bool
+    {
+        global $wpdb;
+        $prefix = $wpdb->prefix;
+
+        try {
+            $wpdb->query('START TRANSACTION');
+
+            // Lock affiliate profile
+            $profile = $wpdb->get_row($wpdb->prepare(
+                "SELECT affiliate_status, affiliate_frozen_amount
+                 FROM `{$prefix}cashback_affiliate_profiles`
+                 WHERE user_id = %d FOR UPDATE",
+                $user_id
+            ), ARRAY_A);
+
+            if (!$profile || $profile['affiliate_status'] !== 'disabled') {
+                $wpdb->query('ROLLBACK');
+                return false;
+            }
+
+            // Проверяем что пользователь не забанен
+            $user_status = $wpdb->get_var($wpdb->prepare(
+                "SELECT status FROM `{$prefix}cashback_user_profile`
+                 WHERE user_id = %d LIMIT 1",
+                $user_id
+            ));
+            if ($user_status === 'banned') {
+                $wpdb->query('ROLLBACK');
+                return false;
+            }
+
+            $frozen_amount = (float) $profile['affiliate_frozen_amount'];
+
+            if ($frozen_amount > 0) {
+                // Lock balance
+                $balance = $wpdb->get_row($wpdb->prepare(
+                    "SELECT frozen_balance FROM `{$prefix}cashback_user_balance`
+                     WHERE user_id = %d FOR UPDATE",
+                    $user_id
+                ), ARRAY_A);
+
+                // Размораживаем не больше чем есть в frozen
+                $unfreeze_amount = min($frozen_amount, (float) ($balance['frozen_balance'] ?? 0));
+
+                if ($unfreeze_amount > 0) {
+                    $idemp_key = 'aff_unfreeze_' . $user_id . '_' . time();
+
+                    // Запись в единый balance ledger
+                    $wpdb->query($wpdb->prepare(
+                        "INSERT INTO `{$prefix}cashback_balance_ledger`
+                             (user_id, type, amount, reference_type, idempotency_key)
+                         VALUES (%d, 'affiliate_unfreeze', %s, 'affiliate_unfreeze', %s)
+                         ON DUPLICATE KEY UPDATE id = id",
+                        $user_id,
+                        number_format($unfreeze_amount, 2, '.', ''),
+                        $idemp_key
+                    ));
+
+                    // Обновляем balance
+                    $wpdb->query($wpdb->prepare(
+                        "UPDATE `{$prefix}cashback_user_balance`
+                         SET frozen_balance    = frozen_balance - CAST(%s AS DECIMAL(18,2)),
+                             available_balance = available_balance + CAST(%s AS DECIMAL(18,2)),
+                             version = version + 1
+                         WHERE user_id = %d AND frozen_balance >= CAST(%s AS DECIMAL(18,2))",
+                        number_format($unfreeze_amount, 2, '.', ''),
+                        number_format($unfreeze_amount, 2, '.', ''),
+                        $user_id,
+                        number_format($unfreeze_amount, 2, '.', '')
+                    ));
+                }
+            }
+
+            // Обновляем affiliate profile
+            $wpdb->query($wpdb->prepare(
+                "UPDATE `{$prefix}cashback_affiliate_profiles`
+                 SET affiliate_status = 'active',
+                     affiliate_frozen_amount = 0.00,
+                     disabled_at = NULL
+                 WHERE user_id = %d",
+                $user_id
+            ));
+
+            // Помечаем frozen accruals обратно как available
+            $wpdb->query($wpdb->prepare(
+                "UPDATE `{$prefix}cashback_affiliate_accruals`
+                 SET status = 'available'
+                 WHERE referrer_id = %d AND status = 'frozen'",
+                $user_id
+            ));
+
+            $wpdb->query('COMMIT');
+
+            // Audit log
+            if (class_exists('Cashback_Encryption')) {
+                Cashback_Encryption::write_audit_log(
+                    'affiliate_enabled',
+                    $admin_id,
+                    'user',
+                    $user_id,
+                    ['unfrozen_amount' => number_format($frozen_amount, 2, '.', '')]
+                );
+            }
+
+            return true;
+
+        } catch (\Throwable $e) {
+            $wpdb->query('ROLLBACK');
+            error_log('[Affiliate] unfreeze_affiliate_balance error: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Повторная заморозка affiliate-части после разбана, если affiliate_status=disabled.
+     * Вызывается из users-management.php handle_user_unban().
+     */
+    public static function re_freeze_after_unban(int $user_id): void
+    {
+        global $wpdb;
+        $prefix = $wpdb->prefix;
+
+        $profile = $wpdb->get_row($wpdb->prepare(
+            "SELECT affiliate_status, affiliate_frozen_amount
+             FROM `{$prefix}cashback_affiliate_profiles`
+             WHERE user_id = %d LIMIT 1",
+            $user_id
+        ), ARRAY_A);
+
+        if (!$profile || $profile['affiliate_status'] !== 'disabled') {
+            return;
+        }
+
+        $frozen_amount = (float) $profile['affiliate_frozen_amount'];
+        if ($frozen_amount <= 0) {
+            return;
+        }
+
+        // После разбана всё frozen ушло в available через триггер.
+        // Нужно вернуть affiliate-часть обратно в frozen.
+        $balance = $wpdb->get_row($wpdb->prepare(
+            "SELECT available_balance FROM `{$prefix}cashback_user_balance`
+             WHERE user_id = %d LIMIT 1",
+            $user_id
+        ), ARRAY_A);
+
+        $available     = (float) ($balance['available_balance'] ?? 0);
+        $re_freeze     = min($frozen_amount, $available);
+
+        if ($re_freeze > 0) {
+            $idemp_key = 'aff_refreeze_' . $user_id . '_' . time();
+
+            $wpdb->query($wpdb->prepare(
+                "INSERT INTO `{$prefix}cashback_balance_ledger`
+                     (user_id, type, amount, reference_type, idempotency_key)
+                 VALUES (%d, 'affiliate_freeze', %s, 'affiliate_freeze', %s)
+                 ON DUPLICATE KEY UPDATE id = id",
+                $user_id,
+                number_format(-$re_freeze, 2, '.', ''),
+                $idemp_key
+            ));
+
+            $wpdb->query($wpdb->prepare(
+                "UPDATE `{$prefix}cashback_user_balance`
+                 SET available_balance = available_balance - CAST(%s AS DECIMAL(18,2)),
+                     frozen_balance    = frozen_balance + CAST(%s AS DECIMAL(18,2)),
+                     version = version + 1
+                 WHERE user_id = %d AND available_balance >= CAST(%s AS DECIMAL(18,2))",
+                number_format($re_freeze, 2, '.', ''),
+                number_format($re_freeze, 2, '.', ''),
+                $user_id,
+                number_format($re_freeze, 2, '.', '')
+            ));
+        }
+    }
+
+    /* ═══════════════════════════════════════
+     *  HELPERS
+     * ═══════════════════════════════════════ */
+
+    /**
+     * Эффективная ставка реферера (индивидуальная или глобальная).
+     */
+    public static function get_effective_rate(int $referrer_id): string
+    {
+        global $wpdb;
+
+        $rate = $wpdb->get_var($wpdb->prepare(
+            "SELECT affiliate_rate
+             FROM `{$wpdb->prefix}cashback_affiliate_profiles`
+             WHERE user_id = %d LIMIT 1",
+            $referrer_id
+        ));
+
+        if ($rate !== null) {
+            return $rate;
+        }
+
+        return Cashback_Affiliate_DB::get_global_rate();
+    }
+
+    /**
+     * Реферальная ссылка пользователя.
+     */
+    public static function get_referral_link(int $user_id): string
+    {
+        return add_query_arg('ref', $user_id, home_url('/'));
+    }
+
+    /**
+     * Статистика реферера для фронтенда.
+     *
+     * @return array{total_referrals: int, total_earned: string, total_available: string, total_frozen: string}
+     */
+    public static function get_referrer_stats(int $user_id): array
+    {
+        global $wpdb;
+        $prefix = $wpdb->prefix;
+
+        $total_referrals = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*)
+             FROM `{$prefix}cashback_affiliate_profiles`
+             WHERE referred_by_user_id = %d",
+            $user_id
+        ));
+
+        $total_earned = $wpdb->get_var($wpdb->prepare(
+            "SELECT COALESCE(SUM(commission_amount), 0)
+             FROM `{$prefix}cashback_affiliate_accruals`
+             WHERE referrer_id = %d",
+            $user_id
+        )) ?: '0.00';
+
+        $total_available = $wpdb->get_var($wpdb->prepare(
+            "SELECT COALESCE(SUM(commission_amount), 0)
+             FROM `{$prefix}cashback_affiliate_accruals`
+             WHERE referrer_id = %d AND status = 'available'",
+            $user_id
+        )) ?: '0.00';
+
+        $total_frozen = $wpdb->get_var($wpdb->prepare(
+            "SELECT COALESCE(SUM(commission_amount), 0)
+             FROM `{$prefix}cashback_affiliate_accruals`
+             WHERE referrer_id = %d AND status = 'frozen'",
+            $user_id
+        )) ?: '0.00';
+
+        return [
+            'total_referrals' => $total_referrals,
+            'total_earned'    => $total_earned,
+            'total_available' => $total_available,
+            'total_frozen'    => $total_frozen,
+        ];
+    }
+}

@@ -51,6 +51,12 @@ function cashback_plugin_uninstall(): void
 
     // List of tables to drop
     $tables = [
+        // Affiliate module (drop first — FK dependencies)
+        // cashback_affiliate_ledger удалён — данные мигрированы в cashback_balance_ledger
+        "{$prefix}cashback_affiliate_accruals",
+        "{$prefix}cashback_affiliate_clicks",
+        "{$prefix}cashback_affiliate_profiles",
+        // Antifraud
         "{$prefix}cashback_fraud_signals",
         "{$prefix}cashback_fraud_alerts",
         "{$prefix}cashback_user_fingerprints",
@@ -171,8 +177,14 @@ function cashback_plugin_uninstall(): void
         'cashback_last_sync_result',
         // Migration flags
         'cashback_migrated_uuid_ascii',
+        'cashback_migrated_affiliate_ledger',
         // Global lock
         'cashback_global_lock_active',
+        // Affiliate module
+        'cashback_affiliate_module_enabled',
+        'cashback_affiliate_global_rate',
+        'cashback_affiliate_cookie_ttl',
+        'cashback_affiliate_rules_url',
     ];
 
     foreach ($options as $option) {
