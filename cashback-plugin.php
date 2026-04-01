@@ -196,6 +196,17 @@ class CashbackPlugin
      */
     public function activate()
     {
+        // Проверка обязательного расширения BCMath (используется для точных вычислений с балансами)
+        if (!extension_loaded('bcmath')) {
+            wp_die(
+                '<h1>Ошибка активации плагина</h1>' .
+                    '<p><strong>Cashback Plugin:</strong> Требуется PHP-расширение <code>bcmath</code>. ' .
+                    'Установите его и повторите активацию.</p>',
+                'Ошибка активации плагина',
+                ['back_link' => true]
+            );
+        }
+
         // Подключаем утилиту шифрования (используется в миграции при активации)
         $this->require_file('includes/class-cashback-encryption.php');
 
@@ -271,17 +282,6 @@ class CashbackPlugin
         // Планируем cron для очистки старых fingerprints (ежедневно)
         if (!wp_next_scheduled('cashback_fraud_cleanup_cron')) {
             wp_schedule_event(time(), 'daily', 'cashback_fraud_cleanup_cron');
-        }
-
-        // --- API Валидация: cron фоновой синхронизации ---
-        $this->require_file('includes/adapters/interface-cashback-network-adapter.php');
-        $this->require_file('includes/adapters/abstract-cashback-network-adapter.php');
-        $this->require_file('includes/adapters/class-admitad-adapter.php');
-        $this->require_file('includes/adapters/class-epn-adapter.php');
-        $this->require_file('includes/class-cashback-api-client.php');
-        $this->require_file('includes/class-cashback-api-cron.php');
-        if (class_exists('Cashback_API_Cron')) {
-            Cashback_API_Cron::init();
         }
 
         // Регистрируем endpoints перед flush, т.к. init хук ещё не сработал

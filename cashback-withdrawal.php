@@ -918,6 +918,23 @@ class CashbackWithdrawal
 
             $balance_str = (string) $user_balance->available_balance;
 
+            // 4.1.1. Повторная проверка бана ВНУТРИ транзакции (после блокировки баланса).
+            // Race condition: админ банит пользователя между первой проверкой бана (до транзакции)
+            // и SELECT FOR UPDATE на баланс. Бан-триггер обновляет balance, но если withdrawal
+            // захватил FOR UPDATE первым, триггер заблокирован и бан ещё не применён.
+            // Читаем статус профиля здесь — под защитой транзакции.
+            $profile_table = $wpdb->prefix . 'cashback_user_profile';
+            $user_status = $wpdb->get_var($wpdb->prepare(
+                "SELECT status FROM {$profile_table} WHERE user_id = %d",
+                $user_id
+            ));
+            if ($user_status === 'banned') {
+                $wpdb->query('ROLLBACK');
+                $ban_info = Cashback_User_Status::get_ban_info($user_id);
+                wp_send_json_error(Cashback_User_Status::get_banned_message($ban_info));
+                return;
+            }
+
             // 4.2. Rate limiting по данным БД (атомарно внутри транзакции)
             // FOR UPDATE на balance row уже сериализует запросы этого пользователя,
             // поэтому COUNT здесь видит консистентное состояние.
