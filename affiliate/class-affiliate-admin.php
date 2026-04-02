@@ -15,6 +15,8 @@ class Cashback_Affiliate_Admin
     use AdminPaginationTrait;
 
     const PER_PAGE = 20;
+    const LABEL_PAGE_TITLE = 'Партнёрская программа';
+    const MSG_NO_PERMISSION = 'Недостаточно прав.';
 
     public function __construct()
     {
@@ -32,8 +34,8 @@ class Cashback_Affiliate_Admin
     {
         add_submenu_page(
             'cashback-overview',
-            __('Партнёрская программа', 'cashback-plugin'),
-            __('Партнёрская программа', 'cashback-plugin'),
+            __(self::LABEL_PAGE_TITLE, 'cashback-plugin'),
+            __(self::LABEL_PAGE_TITLE, 'cashback-plugin'),
             'manage_options',
             'cashback-affiliate',
             [$this, 'render_page']
@@ -86,13 +88,13 @@ class Cashback_Affiliate_Admin
     public function render_page(): void
     {
         if (!current_user_can('manage_options')) {
-            wp_die(esc_html__('Недостаточно прав.', 'cashback-plugin'));
+            wp_die(esc_html__(self::MSG_NO_PERMISSION, 'cashback-plugin'));
         }
 
         $enabled = Cashback_Affiliate_DB::is_module_enabled();
 
         echo '<div class="wrap cashback-affiliate-admin">';
-        echo '<h1>' . esc_html__('Партнёрская программа', 'cashback-plugin') . '</h1>';
+        echo '<h1>' . esc_html__(self::LABEL_PAGE_TITLE, 'cashback-plugin') . '</h1>';
 
         // Toggle module
         echo '<div class="cashback-affiliate-toggle">';
@@ -204,64 +206,14 @@ class Cashback_Affiliate_Admin
 
     private function render_accruals_tab(): void
     {
-        global $wpdb;
-        $prefix = $wpdb->prefix;
-
-        $current_page = max(1, absint($_GET['paged'] ?? 1));
-        $per_page     = self::PER_PAGE;
-
-        // Фильтры
         $filter_status = isset($_GET['status']) ? sanitize_text_field(wp_unslash($_GET['status'])) : '';
         $filter_search = isset($_GET['s']) ? sanitize_text_field(wp_unslash($_GET['s'])) : '';
 
-        $where_clauses = [];
-        $where_args    = [];
-
-        if ($filter_status && in_array($filter_status, ['available', 'frozen', 'paid'], true)) {
-            $where_clauses[] = 'a.status = %s';
-            $where_args[]    = $filter_status;
-        }
-
-        if ($filter_search) {
-            $where_clauses[] = '(a.reference_id LIKE %s OR u1.display_name LIKE %s OR u2.display_name LIKE %s)';
-            $like            = '%' . $wpdb->esc_like($filter_search) . '%';
-            $where_args[]    = $like;
-            $where_args[]    = $like;
-            $where_args[]    = $like;
-        }
-
-        $where_sql = !empty($where_clauses) ? 'WHERE ' . implode(' AND ', $where_clauses) : '';
-
-        // Count
-        $count_sql = "SELECT COUNT(*) FROM `{$prefix}cashback_affiliate_accruals` a
-                      LEFT JOIN `{$wpdb->users}` u1 ON u1.ID = a.referrer_id
-                      LEFT JOIN `{$wpdb->users}` u2 ON u2.ID = a.referred_user_id
-                      {$where_sql}";
-
-        if (!empty($where_args)) {
-            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
-            $total = (int) $wpdb->get_var($wpdb->prepare($count_sql, ...$where_args));
-        } else {
-            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
-            $total = (int) $wpdb->get_var($count_sql);
-        }
-
-        $total_pages  = max(1, (int) ceil($total / $per_page));
-        $current_page = min($current_page, $total_pages);
-        $offset       = ($current_page - 1) * $per_page;
-
-        // Data
-        $data_sql = "SELECT a.*, u1.display_name AS referrer_name, u2.display_name AS referred_name
-                     FROM `{$prefix}cashback_affiliate_accruals` a
-                     LEFT JOIN `{$wpdb->users}` u1 ON u1.ID = a.referrer_id
-                     LEFT JOIN `{$wpdb->users}` u2 ON u2.ID = a.referred_user_id
-                     {$where_sql}
-                     ORDER BY a.created_at DESC
-                     LIMIT %d OFFSET %d";
-
-        $all_args = array_merge($where_args, [$per_page, $offset]);
-        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
-        $accruals = $wpdb->get_results($wpdb->prepare($data_sql, ...$all_args), ARRAY_A);
+        $query_result  = $this->query_accruals($filter_status, $filter_search);
+        $accruals      = $query_result['rows'];
+        $current_page  = $query_result['current_page'];
+        $total         = $query_result['total'];
+        $total_pages   = $query_result['total_pages'];
 
         // Filters UI
         echo '<div class="tablenav top">';
@@ -297,24 +249,7 @@ class Cashback_Affiliate_Admin
         if (empty($accruals)) {
             echo '<tr><td colspan="8">' . esc_html__('Начислений нет.', 'cashback-plugin') . '</td></tr>';
         } else {
-            $status_labels = [
-                'available' => '<span class="aff-status aff-status-available">Доступно</span>',
-                'frozen'    => '<span class="aff-status aff-status-frozen">Заморожено</span>',
-                'paid'      => '<span class="aff-status aff-status-paid">Выплачено</span>',
-            ];
-
-            foreach ($accruals as $row) {
-                echo '<tr>';
-                echo '<td><code>' . esc_html($row['reference_id']) . '</code></td>';
-                echo '<td>' . esc_html($row['referrer_name'] ?: '#' . $row['referrer_id']) . '</td>';
-                echo '<td>' . esc_html($row['referred_name'] ?: '#' . $row['referred_user_id']) . '</td>';
-                echo '<td>' . esc_html(number_format((float) $row['cashback_amount'], 2, '.', ' ')) . ' ₽</td>';
-                echo '<td>' . esc_html($row['commission_rate']) . '%</td>';
-                echo '<td><strong>' . esc_html(number_format((float) $row['commission_amount'], 2, '.', ' ')) . ' ₽</strong></td>';
-                echo '<td>' . ($status_labels[$row['status']] ?? esc_html($row['status'])) . '</td>';
-                echo '<td>' . esc_html(wp_date('d.m.Y H:i', strtotime($row['created_at']))) . '</td>';
-                echo '</tr>';
-            }
+            $this->render_accrual_rows($accruals);
         }
 
         echo '</tbody></table>';
@@ -322,7 +257,7 @@ class Cashback_Affiliate_Admin
         // Pagination
         $this->render_pagination([
             'total_items'  => $total,
-            'per_page'     => $per_page,
+            'per_page'     => self::PER_PAGE,
             'current_page' => $current_page,
             'total_pages'  => $total_pages,
             'page_slug'    => 'cashback-affiliate',
@@ -332,6 +267,91 @@ class Cashback_Affiliate_Admin
                 's'      => $filter_search,
             ],
         ]);
+    }
+
+    /**
+     * Запрос начислений с фильтрацией и пагинацией.
+     *
+     * @return array{rows: array, total: int, current_page: int, total_pages: int}
+     */
+    private function query_accruals(string $filter_status, string $filter_search): array
+    {
+        global $wpdb;
+        $prefix   = $wpdb->prefix;
+        $per_page = self::PER_PAGE;
+
+        $where_clauses = [];
+        $where_args    = [];
+
+        if ($filter_status && in_array($filter_status, ['available', 'frozen', 'paid'], true)) {
+            $where_clauses[] = 'a.status = %s';
+            $where_args[]    = $filter_status;
+        }
+
+        if ($filter_search) {
+            $where_clauses[] = '(a.reference_id LIKE %s OR u1.display_name LIKE %s OR u2.display_name LIKE %s)';
+            $like            = '%' . $wpdb->esc_like($filter_search) . '%';
+            $where_args[]    = $like;
+            $where_args[]    = $like;
+            $where_args[]    = $like;
+        }
+
+        $where_sql = !empty($where_clauses) ? 'WHERE ' . implode(' AND ', $where_clauses) : '';
+
+        $joins = "LEFT JOIN `{$wpdb->users}` u1 ON u1.ID = a.referrer_id
+                  LEFT JOIN `{$wpdb->users}` u2 ON u2.ID = a.referred_user_id";
+
+        $count_sql = "SELECT COUNT(*) FROM `{$prefix}cashback_affiliate_accruals` a {$joins} {$where_sql}";
+
+        if (!empty($where_args)) {
+            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+            $total = (int) $wpdb->get_var($wpdb->prepare($count_sql, ...$where_args));
+        } else {
+            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+            $total = (int) $wpdb->get_var($count_sql);
+        }
+
+        $current_page = max(1, absint($_GET['paged'] ?? 1));
+        $total_pages  = max(1, (int) ceil($total / $per_page));
+        $current_page = min($current_page, $total_pages);
+        $offset       = ($current_page - 1) * $per_page;
+
+        $data_sql = "SELECT a.*, u1.display_name AS referrer_name, u2.display_name AS referred_name
+                     FROM `{$prefix}cashback_affiliate_accruals` a {$joins}
+                     {$where_sql}
+                     ORDER BY a.created_at DESC
+                     LIMIT %d OFFSET %d";
+
+        $all_args = array_merge($where_args, [$per_page, $offset]);
+        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+        $rows = $wpdb->get_results($wpdb->prepare($data_sql, ...$all_args), ARRAY_A);
+
+        return compact('rows', 'total', 'current_page', 'total_pages');
+    }
+
+    /**
+     * Рендер строк таблицы начислений.
+     */
+    private function render_accrual_rows(array $accruals): void
+    {
+        $status_labels = [
+            'available' => '<span class="aff-status aff-status-available">Доступно</span>',
+            'frozen'    => '<span class="aff-status aff-status-frozen">Заморожено</span>',
+            'paid'      => '<span class="aff-status aff-status-paid">Выплачено</span>',
+        ];
+
+        foreach ($accruals as $row) {
+            echo '<tr>';
+            echo '<td><code>' . esc_html($row['reference_id']) . '</code></td>';
+            echo '<td>' . esc_html($row['referrer_name'] ?: '#' . $row['referrer_id']) . '</td>';
+            echo '<td>' . esc_html($row['referred_name'] ?: '#' . $row['referred_user_id']) . '</td>';
+            echo '<td>' . esc_html(number_format((float) $row['cashback_amount'], 2, '.', ' ')) . ' ₽</td>';
+            echo '<td>' . esc_html($row['commission_rate']) . '%</td>';
+            echo '<td><strong>' . esc_html(number_format((float) $row['commission_amount'], 2, '.', ' ')) . ' ₽</strong></td>';
+            echo '<td>' . ($status_labels[$row['status']] ?? esc_html($row['status'])) . '</td>';
+            echo '<td>' . esc_html(wp_date('d.m.Y H:i', strtotime($row['created_at']))) . '</td>';
+            echo '</tr>';
+        }
     }
 
     /* ═══════════════════════════════════════
@@ -502,7 +522,7 @@ class Cashback_Affiliate_Admin
             return;
         }
         if (!current_user_can('manage_options')) {
-            wp_send_json_error(['message' => 'Недостаточно прав.']);
+            wp_send_json_error(['message' => self::MSG_NO_PERMISSION]);
             return;
         }
 
@@ -529,7 +549,7 @@ class Cashback_Affiliate_Admin
             return;
         }
         if (!current_user_can('manage_options')) {
-            wp_send_json_error(['message' => 'Недостаточно прав.']);
+            wp_send_json_error(['message' => self::MSG_NO_PERMISSION]);
             return;
         }
 
@@ -561,7 +581,7 @@ class Cashback_Affiliate_Admin
             return;
         }
         if (!current_user_can('manage_options')) {
-            wp_send_json_error(['message' => 'Недостаточно прав.']);
+            wp_send_json_error(['message' => self::MSG_NO_PERMISSION]);
             return;
         }
 
@@ -642,7 +662,7 @@ class Cashback_Affiliate_Admin
             return;
         }
         if (!current_user_can('manage_options')) {
-            wp_send_json_error(['message' => 'Недостаточно прав.']);
+            wp_send_json_error(['message' => self::MSG_NO_PERMISSION]);
             return;
         }
 

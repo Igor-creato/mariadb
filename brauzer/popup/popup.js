@@ -375,7 +375,7 @@ function formatDate(dateStr) {
     if (!dateStr) return '';
     try {
         const date = new Date(dateStr);
-        if (isNaN(date.getTime())) return '';
+        if (Number.isNaN(date.getTime())) return '';
         return date.toLocaleDateString('ru-RU', {
             day:   '2-digit',
             month: '2-digit',
