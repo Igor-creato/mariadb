@@ -86,8 +86,13 @@ class Cashback_Affiliate_Service
         $this->set_referral_cookie($referrer_id, $click_id);
 
         // Серверный fallback: transient по IP на случай если cookie недоступна
-        // (другой браузер, инкогнито, cookie заблокированы)
         $this->store_referral_transient($referrer_id, $click_id, $ip);
+
+        // 302 редирект без ?ref — гарантирует что браузер обработает Set-Cookie
+        // и очищает URL от параметра (не пошарят случайно)
+        $clean_url = remove_query_arg('ref');
+        wp_safe_redirect($clean_url, 302);
+        exit;
     }
 
     /**
@@ -179,68 +184,6 @@ class Cashback_Affiliate_Service
         ];
     }
 
-    /* ═══════════════════════════════════════
-     *  СЕРВЕРНЫЙ FALLBACK — transient по IP
-     * ═══════════════════════════════════════ */
-
-    /**
-     * Сохранение реферальных данных в transient (fallback при отсутствии cookie).
-     * Ключ: IP адрес посетителя. TTL: 48 часов.
-     */
-    private function store_referral_transient(int $referrer_id, string $click_id, string $ip): void
-    {
-        $key = self::get_referral_transient_key($ip);
-        set_transient($key, [
-            'referrer_id' => $referrer_id,
-            'click_id'    => $click_id,
-            'timestamp'   => time(),
-        ], 2 * DAY_IN_SECONDS);
-    }
-
-    /**
-     * Чтение реферальных данных из transient (fallback).
-     *
-     * @return array{referrer_id: int, click_id: string, timestamp: int}|null
-     */
-    private static function read_referral_transient(string $ip): ?array
-    {
-        $key  = self::get_referral_transient_key($ip);
-        $data = get_transient($key);
-
-        if (!is_array($data) || !isset($data['referrer_id'], $data['click_id'], $data['timestamp'])) {
-            return null;
-        }
-
-        // Проверяем TTL (cookie_ttl из настроек)
-        $ttl = Cashback_Affiliate_DB::get_cookie_ttl_days();
-        if (time() - (int) $data['timestamp'] > $ttl * DAY_IN_SECONDS) {
-            delete_transient($key);
-            return null;
-        }
-
-        return [
-            'referrer_id' => (int) $data['referrer_id'],
-            'click_id'    => (string) $data['click_id'],
-            'timestamp'   => (int) $data['timestamp'],
-        ];
-    }
-
-    /**
-     * Удаление реферального transient.
-     */
-    private static function clear_referral_transient(string $ip): void
-    {
-        delete_transient(self::get_referral_transient_key($ip));
-    }
-
-    /**
-     * Ключ transient: хеш IP для предсказуемой длины.
-     */
-    private static function get_referral_transient_key(string $ip): string
-    {
-        return 'cb_ref_' . substr(md5($ip), 0, 16);
-    }
-
     /**
      * Удаление реферальных cookie.
      */
@@ -266,6 +209,69 @@ class Cashback_Affiliate_Service
             'httponly'  => true,
             'samesite' => 'Lax',
         ]);
+    }
+
+    /* ═══════════════════════════════════════
+     *  СЕРВЕРНЫЙ FALLBACK — transient по IP
+     * ═══════════════════════════════════════ */
+
+    /**
+     * Сохранение реферальных данных в transient (fallback при отсутствии cookie).
+     * Ключ: IP адрес посетителя. TTL синхронизирован с cookie_ttl из настроек.
+     */
+    private function store_referral_transient(int $referrer_id, string $click_id, string $ip): void
+    {
+        $key = self::get_referral_transient_key($ip);
+        $ttl = Cashback_Affiliate_DB::get_cookie_ttl_days();
+        set_transient($key, [
+            'referrer_id' => $referrer_id,
+            'click_id'    => $click_id,
+            'timestamp'   => time(),
+        ], $ttl * DAY_IN_SECONDS);
+    }
+
+    /**
+     * Чтение реферальных данных из transient (fallback).
+     *
+     * @return array{referrer_id: int, click_id: string, timestamp: int}|null
+     */
+    private static function read_referral_transient(string $ip): ?array
+    {
+        $key  = self::get_referral_transient_key($ip);
+        $data = get_transient($key);
+
+        if (!is_array($data) || !isset($data['referrer_id'], $data['click_id'], $data['timestamp'])) {
+            return null;
+        }
+
+        // Проверка TTL cookie (transient TTL может быть длиннее)
+        $ttl = Cashback_Affiliate_DB::get_cookie_ttl_days();
+        if (time() - $data['timestamp'] > $ttl * DAY_IN_SECONDS) {
+            delete_transient($key);
+            return null;
+        }
+
+        return [
+            'referrer_id' => (int) $data['referrer_id'],
+            'click_id'    => sanitize_text_field($data['click_id']),
+            'timestamp'   => (int) $data['timestamp'],
+        ];
+    }
+
+    /**
+     * Удаление реферального transient.
+     */
+    private static function clear_referral_transient(string $ip): void
+    {
+        delete_transient(self::get_referral_transient_key($ip));
+    }
+
+    /**
+     * Ключ transient: sha256 от IP (безопасный формат ключа).
+     */
+    private static function get_referral_transient_key(string $ip): string
+    {
+        return 'cb_aff_ref_' . substr(hash('sha256', $ip), 0, 16);
     }
 
     /**
@@ -415,6 +421,7 @@ class Cashback_Affiliate_Service
                     [
                         'referrer_id' => $referrer_id,
                         'click_id'    => $click_id,
+                        'source'      => $source,
                     ]
                 );
             }
