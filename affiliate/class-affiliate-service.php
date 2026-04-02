@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Affiliate Module — Core Service.
  *
@@ -148,8 +149,8 @@ class Cashback_Affiliate_Service
             return null;
         }
 
-        $payload   = $_COOKIE[self::COOKIE_NAME];
-        $signature = $_COOKIE[self::COOKIE_SIG_NAME];
+        $payload   = wp_unslash($_COOKIE[self::COOKIE_NAME]);
+        $signature = wp_unslash($_COOKIE[self::COOKIE_SIG_NAME]);
 
         // Верификация HMAC
         $expected = self::compute_cookie_hmac_static($payload);
@@ -373,7 +374,9 @@ class Cashback_Affiliate_Service
         if (!$check['allowed']) {
             error_log(sprintf(
                 '[Affiliate] bind_referral BLOCKED: user=%d, referrer=%d, reason=%s',
-                $user_id, $referrer_id, $check['reason']
+                $user_id,
+                $referrer_id,
+                $check['reason']
             ));
             self::clear_referral_cookie();
             self::clear_referral_transient($ip);
@@ -612,7 +615,6 @@ class Cashback_Affiliate_Service
 
             $result['inserted'] = count($accrual_values);
             $result['amount']   = number_format($total_commission, 2, '.', '');
-
         } catch (\Throwable $e) {
             $result['errors'][] = $e->getMessage();
             error_log('[Affiliate] process_affiliate_commissions error: ' . $e->getMessage());
@@ -773,7 +775,6 @@ class Cashback_Affiliate_Service
             }
 
             return true;
-
         } catch (\Throwable $e) {
             $wpdb->query('ROLLBACK');
             error_log('[Affiliate] freeze_affiliate_balance error: ' . $e->getMessage());
@@ -894,7 +895,6 @@ class Cashback_Affiliate_Service
             }
 
             return true;
-
         } catch (\Throwable $e) {
             $wpdb->query('ROLLBACK');
             error_log('[Affiliate] unfreeze_affiliate_balance error: ' . $e->getMessage());
