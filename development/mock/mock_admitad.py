@@ -939,4 +939,4 @@ if __name__ == "__main__":
     print(f"Панель управления:  http://localhost:{port}/")
     print(f"Debug matching:     http://localhost:{port}/manage/debug/matching/")
     print(f"{'='*55}\n")
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(host="127.0.0.1", port=port, debug=True)

@@ -375,13 +375,14 @@ function formatDate(dateStr) {
     if (!dateStr) return '';
     try {
         const date = new Date(dateStr);
+        if (isNaN(date.getTime())) return '';
         return date.toLocaleDateString('ru-RU', {
             day:   '2-digit',
             month: '2-digit',
             year:  'numeric',
         });
     } catch {
-        return dateStr;
+        return '';
     }
 }
 
@@ -404,7 +405,7 @@ function getStatusLabel(status) {
         declined:  'Отклонён',
         hold:      'Проверка',
     };
-    return map[status] || status;
+    return map[status] || 'Неизвестно';
 }
 
 function escapeHtml(text) {

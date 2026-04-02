@@ -2,7 +2,7 @@
 $m = new mysqli('localhost', 'root', '', 'kash-back', 3307);
 $r = $m->query("SELECT option_value FROM wp_options WHERE option_name = 'rewrite_rules'");
 $row = $r->fetch_assoc();
-$rules = unserialize($row['option_value']);
+$rules = unserialize($row['option_value'], ['allowed_classes' => false]);
 if (!$rules) {
     echo "REWRITE RULES EMPTY OR FALSE\n";
 } else {
