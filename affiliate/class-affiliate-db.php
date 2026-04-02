@@ -55,6 +55,19 @@ class Cashback_Affiliate_DB
     }
 
     /**
+     * Включена ли антифрод-проверка при привязке рефералов.
+     */
+    public static function is_antifraud_enabled(): bool
+    {
+        return (bool) get_option('cashback_affiliate_antifraud_enabled', 1);
+    }
+
+    public static function set_antifraud_enabled(bool $enabled): void
+    {
+        update_option('cashback_affiliate_antifraud_enabled', $enabled ? 1 : 0);
+    }
+
+    /**
      * URL страницы правил партнёрской программы.
      */
     public static function get_rules_page_url(): string

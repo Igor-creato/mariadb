@@ -28,7 +28,7 @@ class Cashback_Affiliate_Antifraud
      */
     public static function validate_referral(int $referrer_id, int $new_user_id, string $ip, string $click_id): array
     {
-        // 1. Self-referral
+        // 1. Self-referral (всегда проверяем, даже с выключенным антифродом)
         if (self::is_self_referral($referrer_id, $new_user_id)) {
             self::log_suspicious('self_referral', $new_user_id, [
                 'referrer_id' => $referrer_id,
@@ -37,14 +37,19 @@ class Cashback_Affiliate_Antifraud
             return ['allowed' => false, 'reason' => 'self_referral'];
         }
 
-        // 2. Реферер существует и активен
+        // 2. Реферер существует и активен (всегда проверяем)
         if (!self::is_valid_referrer($referrer_id)) {
             return ['allowed' => false, 'reason' => 'invalid_referrer'];
         }
 
-        // 3. У пользователя уже есть реферер
+        // 3. У пользователя уже есть реферер (всегда проверяем)
         if (self::already_has_referrer($new_user_id)) {
             return ['allowed' => false, 'reason' => 'already_referred'];
+        }
+
+        // Если антифрод отключён — пропускаем проверки IP и тайминга
+        if (!Cashback_Affiliate_DB::is_antifraud_enabled()) {
+            return ['allowed' => true, 'reason' => null];
         }
 
         // 4. IP совпадение

@@ -151,9 +151,10 @@ class Cashback_Affiliate_Admin
 
     private function render_settings_tab(): void
     {
-        $global_rate = Cashback_Affiliate_DB::get_global_rate();
-        $cookie_ttl  = Cashback_Affiliate_DB::get_cookie_ttl_days();
-        $rules_url   = Cashback_Affiliate_DB::get_rules_page_url();
+        $global_rate       = Cashback_Affiliate_DB::get_global_rate();
+        $cookie_ttl        = Cashback_Affiliate_DB::get_cookie_ttl_days();
+        $rules_url         = Cashback_Affiliate_DB::get_rules_page_url();
+        $antifraud_enabled = Cashback_Affiliate_DB::is_antifraud_enabled();
 
         echo '<form id="affiliate-settings-form" class="cashback-affiliate-form">';
 
@@ -178,6 +179,16 @@ class Cashback_Affiliate_Admin
         echo '<th><label for="aff-rules-url">' . esc_html__('Страница правил', 'cashback-plugin') . '</label></th>';
         echo '<td><input type="url" id="aff-rules-url" name="rules_url" value="' . esc_attr($rules_url) . '" class="regular-text">';
         echo '<p class="description">' . esc_html__('URL страницы с правилами партнёрской программы.', 'cashback-plugin') . '</p></td>';
+        echo '</tr>';
+
+        // Антифрод
+        echo '<tr>';
+        echo '<th><label for="aff-antifraud-enabled">' . esc_html__('Антифрод-проверка', 'cashback-plugin') . '</label></th>';
+        echo '<td><label>';
+        echo '<input type="checkbox" id="aff-antifraud-enabled" name="antifraud_enabled" value="1" ' . checked($antifraud_enabled, true, false) . '>';
+        echo ' ' . esc_html__('Включить антифрод при привязке рефералов', 'cashback-plugin');
+        echo '</label>';
+        echo '<p class="description">' . esc_html__('Проверка совпадения IP, подозрительного тайминга. Отключите для тестирования. Проверки self-referral, валидности реферера и дубликатов работают всегда.', 'cashback-plugin') . '</p></td>';
         echo '</tr>';
 
         echo '</table>';
@@ -531,6 +542,8 @@ class Cashback_Affiliate_Admin
         if (isset($_POST['rules_url'])) {
             Cashback_Affiliate_DB::set_rules_page_url(sanitize_text_field(wp_unslash($_POST['rules_url'])));
         }
+        // antifraud_enabled: checkbox — если не передан, значит выключен
+        Cashback_Affiliate_DB::set_antifraud_enabled(!empty($_POST['antifraud_enabled']));
 
         wp_send_json_success(['message' => __('Настройки сохранены.', 'cashback-plugin')]);
     }

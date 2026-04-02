@@ -185,6 +185,7 @@ function cashback_plugin_uninstall(): void
         'cashback_affiliate_global_rate',
         'cashback_affiliate_cookie_ttl',
         'cashback_affiliate_rules_url',
+        'cashback_affiliate_antifraud_enabled',
     ];
 
     foreach ($options as $option) {
@@ -221,6 +222,7 @@ function cashback_plugin_uninstall(): void
         'cb_bank_search_rate_', 'cb_balance_rate_', 'cb_load_ticket_rate_',
         'cb_close_ticket_rate_', 'cb_hist_page_rate_', 'cb_payout_page_rate_',
         'cb_api_sync_rate_', 'cb_api_validate_rate_', 'cb_fraud_scan_rate_',
+        'cb_ref_',
     ];
     $where_parts = [];
     $values = [];

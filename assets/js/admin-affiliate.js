@@ -34,11 +34,12 @@
         var $btn = $('#affiliate-save-settings').prop('disabled', true);
 
         $.post(data.ajaxurl, {
-            action:     'affiliate_save_settings',
-            nonce:      data.settingsNonce,
-            global_rate: $('#aff-global-rate').val(),
-            cookie_ttl:  $('#aff-cookie-ttl').val(),
-            rules_url:   $('#aff-rules-url').val()
+            action:            'affiliate_save_settings',
+            nonce:             data.settingsNonce,
+            global_rate:       $('#aff-global-rate').val(),
+            cookie_ttl:        $('#aff-cookie-ttl').val(),
+            rules_url:         $('#aff-rules-url').val(),
+            antifraud_enabled: $('#aff-antifraud-enabled').is(':checked') ? 1 : 0
         }, function (resp) {
             $btn.prop('disabled', false);
             if (resp.success) {
