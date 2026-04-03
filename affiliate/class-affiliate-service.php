@@ -443,10 +443,9 @@ class Cashback_Affiliate_Service
      * Вызывается ВНУТРИ process_ready_transactions() под глобальным lock.
      *
      * @param array  $candidates [{id, user_id, cashback}, ...]
-     * @param string $batch_id   UUID батча
      * @return array{inserted: int, amount: string, errors: string[]}
      */
-    public static function process_affiliate_commissions(array $candidates, string $batch_id): array
+    public static function process_affiliate_commissions(array $candidates): array
     {
         global $wpdb;
         $prefix = $wpdb->prefix;

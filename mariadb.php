@@ -1695,7 +1695,7 @@ class Mariadb_Plugin
                     && class_exists('Cashback_Affiliate_Service')
                 ) {
                     try {
-                        $aff_result = Cashback_Affiliate_Service::process_affiliate_commissions($candidates, $batch_id);
+                        $aff_result = Cashback_Affiliate_Service::process_affiliate_commissions($candidates);
                         if (!empty($aff_result['errors'])) {
                             foreach ($aff_result['errors'] as $aff_err) {
                                 $errors[] = '[Affiliate] ' . $aff_err;
