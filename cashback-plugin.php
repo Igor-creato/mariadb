@@ -141,6 +141,7 @@ register_activation_hook(__FILE__, 'cashback_check_requirements');
  */
 class CashbackPlugin
 {
+    private const ACTIVATION_ERROR_TITLE = 'Ошибка активации плагина';
 
     /**
      * Конструктор класса
@@ -199,10 +200,10 @@ class CashbackPlugin
         // Проверка обязательного расширения BCMath (используется для точных вычислений с балансами)
         if (!extension_loaded('bcmath')) {
             wp_die(
-                '<h1>Ошибка активации плагина</h1>' .
+                '<h1>' . self::ACTIVATION_ERROR_TITLE . '</h1>' .
                     '<p><strong>Cashback Plugin:</strong> Требуется PHP-расширение <code>bcmath</code>. ' .
                     'Установите его и повторите активацию.</p>',
-                'Ошибка активации плагина',
+                self::ACTIVATION_ERROR_TITLE,
                 ['back_link' => true]
             );
         }
@@ -225,18 +226,18 @@ class CashbackPlugin
                 error_log('Stack trace: ' . $e->getTraceAsString());
                 // Показываем пользователю
                 wp_die(
-                    '<h1>Ошибка активации плагина</h1>' .
+                    '<h1>' . self::ACTIVATION_ERROR_TITLE . '</h1>' .
                         '<p><strong>Cashback Plugin:</strong> ' . esc_html($e->getMessage()) . '</p>' .
                         '<p>Проверьте логи ошибок для получения дополнительной информации.</p>',
-                    'Ошибка активации плагина',
+                    self::ACTIVATION_ERROR_TITLE,
                     array('back_link' => true)
                 );
             }
         } else {
             wp_die(
-                '<h1>Ошибка активации плагина</h1>' .
+                '<h1>' . self::ACTIVATION_ERROR_TITLE . '</h1>' .
                     '<p><strong>Cashback Plugin:</strong> Класс Mariadb_Plugin не найден.</p>',
-                'Ошибка активации плагина',
+                self::ACTIVATION_ERROR_TITLE,
                 array('back_link' => true)
             );
         }
