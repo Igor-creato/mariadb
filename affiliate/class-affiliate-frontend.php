@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Affiliate Module — Frontend (WooCommerce My Account).
  *
@@ -175,7 +176,7 @@ class Cashback_Affiliate_Frontend
 
         echo '<div class="cashback-affiliate-stat">';
         echo '<span class="stat-value">' . esc_html(number_format_i18n((float) $stats['total_available'], 2)) . ' ₽</span>';
-        echo '<span class="stat-label">' . esc_html__('Доступно', 'cashback-plugin') . '</span>';
+        echo '<span class="stat-label">' . esc_html__('Зачилен на баланс', 'cashback-plugin') . '</span>';
         echo '</div>';
 
         echo '<div class="cashback-affiliate-stat">';
@@ -253,7 +254,7 @@ class Cashback_Affiliate_Frontend
         echo '</tr></thead><tbody>';
 
         $status_labels = [
-            'available' => __('Доступно', 'cashback-plugin'),
+            'available' => __('Зачислен на баланс', 'cashback-plugin'),
             'frozen'    => __('Заморожено', 'cashback-plugin'),
             'paid'      => __('Выплачено', 'cashback-plugin'),
         ];

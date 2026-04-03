@@ -17,6 +17,7 @@ class Cashback_Affiliate_Admin
     const PER_PAGE = 20;
     const LABEL_PAGE_TITLE = 'Партнёрская программа';
     const MSG_NO_PERMISSION = 'Недостаточно прав.';
+    const MSG_INVALID_NONCE = 'Неверный nonce.';
 
     public function __construct()
     {
@@ -354,6 +355,46 @@ class Cashback_Affiliate_Admin
         }
     }
 
+    /**
+     * Рендер строк таблицы партнёров.
+     */
+    private function render_partner_rows(array $partners, string $global_rate): void
+    {
+        foreach ($partners as $row) {
+            $rate_display = $row['affiliate_rate'] !== null
+                ? esc_html($row['affiliate_rate']) . '%'
+                : esc_html($global_rate) . '% <em>(' . esc_html__('глоб.', 'cashback-plugin') . ')</em>';
+
+            $is_active = $row['affiliate_status'] === 'active';
+            $status_html = $is_active
+                ? '<span class="aff-status aff-status-available">' . esc_html__('Активен', 'cashback-plugin') . '</span>'
+                : '<span class="aff-status aff-status-frozen">' . esc_html__('Отключён', 'cashback-plugin') . '</span>';
+
+            echo '<tr data-user-id="' . esc_attr($row['user_id']) . '">';
+            echo '<td>' . esc_html($row['display_name']) . ' <small>(#' . esc_html($row['user_id']) . ')</small></td>';
+            echo '<td>' . esc_html($row['user_email']) . '</td>';
+            echo '<td>' . $rate_display . '</td>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+            echo '<td>' . esc_html($row['referral_count']) . '</td>';
+            echo '<td>' . esc_html(number_format((float) $row['total_earned'], 2, '.', ' ')) . ' ₽</td>';
+            echo '<td>' . $status_html . '</td>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+            echo '<td>';
+
+            echo '<button type="button" class="button button-small aff-edit-rate" data-user-id="' . esc_attr($row['user_id']) . '" data-rate="' . esc_attr($row['affiliate_rate'] ?? '') . '">'
+                . esc_html__('Ставка', 'cashback-plugin') . '</button> ';
+
+            if ($is_active) {
+                echo '<button type="button" class="button button-small aff-disable-partner" data-user-id="' . esc_attr($row['user_id']) . '">'
+                    . esc_html__('Отключить', 'cashback-plugin') . '</button>';
+            } else {
+                echo '<button type="button" class="button button-small button-primary aff-enable-partner" data-user-id="' . esc_attr($row['user_id']) . '">'
+                    . esc_html__('Подключить', 'cashback-plugin') . '</button>';
+            }
+
+            echo '</td>';
+            echo '</tr>';
+        }
+    }
+
     /* ═══════════════════════════════════════
      *  ВКЛАДКА: ПАРТНЁРЫ
      * ═══════════════════════════════════════ */
@@ -452,41 +493,7 @@ class Cashback_Affiliate_Admin
         if (empty($partners)) {
             echo '<tr><td colspan="7">' . esc_html__('Партнёров нет.', 'cashback-plugin') . '</td></tr>';
         } else {
-            foreach ($partners as $row) {
-                $rate_display = $row['affiliate_rate'] !== null
-                    ? esc_html($row['affiliate_rate']) . '%'
-                    : esc_html($global_rate) . '% <em>(' . esc_html__('глоб.', 'cashback-plugin') . ')</em>';
-
-                $is_active = $row['affiliate_status'] === 'active';
-                $status_html = $is_active
-                    ? '<span class="aff-status aff-status-available">' . esc_html__('Активен', 'cashback-plugin') . '</span>'
-                    : '<span class="aff-status aff-status-frozen">' . esc_html__('Отключён', 'cashback-plugin') . '</span>';
-
-                echo '<tr data-user-id="' . esc_attr($row['user_id']) . '">';
-                echo '<td>' . esc_html($row['display_name']) . ' <small>(#' . esc_html($row['user_id']) . ')</small></td>';
-                echo '<td>' . esc_html($row['user_email']) . '</td>';
-                echo '<td>' . $rate_display . '</td>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
-                echo '<td>' . esc_html($row['referral_count']) . '</td>';
-                echo '<td>' . esc_html(number_format((float) $row['total_earned'], 2, '.', ' ')) . ' ₽</td>';
-                echo '<td>' . $status_html . '</td>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
-                echo '<td>';
-
-                // Кнопка изменения ставки
-                echo '<button type="button" class="button button-small aff-edit-rate" data-user-id="' . esc_attr($row['user_id']) . '" data-rate="' . esc_attr($row['affiliate_rate'] ?? '') . '">'
-                    . esc_html__('Ставка', 'cashback-plugin') . '</button> ';
-
-                // Кнопка включения/отключения
-                if ($is_active) {
-                    echo '<button type="button" class="button button-small aff-disable-partner" data-user-id="' . esc_attr($row['user_id']) . '">'
-                        . esc_html__('Отключить', 'cashback-plugin') . '</button>';
-                } else {
-                    echo '<button type="button" class="button button-small button-primary aff-enable-partner" data-user-id="' . esc_attr($row['user_id']) . '">'
-                        . esc_html__('Подключить', 'cashback-plugin') . '</button>';
-                }
-
-                echo '</td>';
-                echo '</tr>';
-            }
+            $this->render_partner_rows($partners, $global_rate);
         }
 
         echo '</tbody></table>';
@@ -518,7 +525,7 @@ class Cashback_Affiliate_Admin
             sanitize_text_field(wp_unslash($_POST['nonce'] ?? '')),
             'affiliate_toggle_module_nonce'
         )) {
-            wp_send_json_error(['message' => 'Неверный nonce.']);
+            wp_send_json_error(['message' => self::MSG_INVALID_NONCE]);
             return;
         }
         if (!current_user_can('manage_options')) {
@@ -545,7 +552,7 @@ class Cashback_Affiliate_Admin
             sanitize_text_field(wp_unslash($_POST['nonce'] ?? '')),
             'affiliate_save_settings_nonce'
         )) {
-            wp_send_json_error(['message' => 'Неверный nonce.']);
+            wp_send_json_error(['message' => self::MSG_INVALID_NONCE]);
             return;
         }
         if (!current_user_can('manage_options')) {
@@ -577,7 +584,7 @@ class Cashback_Affiliate_Admin
             sanitize_text_field(wp_unslash($_POST['nonce'] ?? '')),
             'affiliate_update_partner_nonce'
         )) {
-            wp_send_json_error(['message' => 'Неверный nonce.']);
+            wp_send_json_error(['message' => self::MSG_INVALID_NONCE]);
             return;
         }
         if (!current_user_can('manage_options')) {
@@ -597,55 +604,65 @@ class Cashback_Affiliate_Admin
 
         switch ($action) {
             case 'set_rate':
-                $rate = isset($_POST['rate']) && $_POST['rate'] !== ''
-                    ? max(0, min(100, (float) $_POST['rate']))
-                    : null;
-
-                $wpdb->update(
-                    $wpdb->prefix . 'cashback_affiliate_profiles',
-                    ['affiliate_rate' => $rate !== null ? number_format($rate, 2, '.', '') : null],
-                    ['user_id' => $user_id],
-                    [$rate !== null ? '%s' : null],
-                    ['%d']
-                );
-
-                // Если rate=null, нужен прямой запрос для SET NULL
-                if ($rate === null) {
-                    $wpdb->query($wpdb->prepare(
-                        "UPDATE `{$wpdb->prefix}cashback_affiliate_profiles`
-                         SET affiliate_rate = NULL
-                         WHERE user_id = %d",
-                        $user_id
-                    ));
-                }
-
-                wp_send_json_success(['message' => __('Ставка обновлена.', 'cashback-plugin')]);
+                $this->update_partner_rate($user_id);
                 break;
-
             case 'disable':
-                $admin_id = get_current_user_id();
-                $result   = Cashback_Affiliate_Service::freeze_affiliate_balance($user_id, $admin_id);
-
-                if ($result) {
-                    wp_send_json_success(['message' => __('Партнёр отключён, средства заморожены.', 'cashback-plugin')]);
-                } else {
-                    wp_send_json_error(['message' => __('Не удалось отключить партнёра.', 'cashback-plugin')]);
-                }
+                $this->toggle_partner_status($user_id, false);
                 break;
-
             case 'enable':
-                $admin_id = get_current_user_id();
-                $result   = Cashback_Affiliate_Service::unfreeze_affiliate_balance($user_id, $admin_id);
-
-                if ($result) {
-                    wp_send_json_success(['message' => __('Партнёр подключён, средства разморожены.', 'cashback-plugin')]);
-                } else {
-                    wp_send_json_error(['message' => __('Не удалось подключить партнёра.', 'cashback-plugin')]);
-                }
+                $this->toggle_partner_status($user_id, true);
                 break;
-
             default:
                 wp_send_json_error(['message' => 'Неизвестное действие.']);
+        }
+    }
+
+    private function update_partner_rate(int $user_id): void
+    {
+        global $wpdb;
+
+        $rate = isset($_POST['rate']) && $_POST['rate'] !== ''
+            ? max(0, min(100, (float) $_POST['rate']))
+            : null;
+
+        if ($rate !== null) {
+            $wpdb->update(
+                $wpdb->prefix . 'cashback_affiliate_profiles',
+                ['affiliate_rate' => number_format($rate, 2, '.', '')],
+                ['user_id' => $user_id],
+                ['%s'],
+                ['%d']
+            );
+        } else {
+            $wpdb->query($wpdb->prepare(
+                "UPDATE `{$wpdb->prefix}cashback_affiliate_profiles`
+                 SET affiliate_rate = NULL
+                 WHERE user_id = %d",
+                $user_id
+            ));
+        }
+
+        wp_send_json_success(['message' => __('Ставка обновлена.', 'cashback-plugin')]);
+    }
+
+    private function toggle_partner_status(int $user_id, bool $enable): void
+    {
+        $admin_id = get_current_user_id();
+
+        $result = $enable
+            ? Cashback_Affiliate_Service::unfreeze_affiliate_balance($user_id, $admin_id)
+            : Cashback_Affiliate_Service::freeze_affiliate_balance($user_id, $admin_id);
+
+        if ($result) {
+            $msg = $enable
+                ? __('Партнёр подключён, средства разморожены.', 'cashback-plugin')
+                : __('Партнёр отключён, средства заморожены.', 'cashback-plugin');
+            wp_send_json_success(['message' => $msg]);
+        } else {
+            $msg = $enable
+                ? __('Не удалось подключить партнёра.', 'cashback-plugin')
+                : __('Не удалось отключить партнёра.', 'cashback-plugin');
+            wp_send_json_error(['message' => $msg]);
         }
     }
 
@@ -658,7 +675,7 @@ class Cashback_Affiliate_Admin
             sanitize_text_field(wp_unslash($_POST['nonce'] ?? '')),
             'affiliate_get_partner_details_nonce'
         )) {
-            wp_send_json_error(['message' => 'Неверный nonce.']);
+            wp_send_json_error(['message' => self::MSG_INVALID_NONCE]);
             return;
         }
         if (!current_user_can('manage_options')) {
