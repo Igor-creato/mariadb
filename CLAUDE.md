@@ -443,6 +443,7 @@ development/
 | `encrypted_details` | BLOB | AES-256-GCM зашифрованные реквизиты |
 | `masked_details` | TEXT | Маскированные реквизиты (JSON) |
 | `details_hash` | CHAR(64) | SHA-256 хеш для антифрода |
+| `partner_token` | CHAR(32) | Криптографический токен для партнёрских ссылок (вместо user_id) |
 | `bank_id` | BIGINT FK | → cashback_banks.id (SET NULL) |
 | `cashback_rate` | DECIMAL(5,2) | Индивидуальная ставка (0-100%, default 60) |
 | `is_verified` | TINYINT(1) | 1 = реквизиты подтверждены |
@@ -931,7 +932,7 @@ public static function generate_reference_id(): string
 
 - Каждый внешний товар привязан к `cashback_affiliate_networks` через `_affiliate_network_id` (post_meta)
 - Сеть определяет шаблон параметров через `cashback_affiliate_network_params`
-- Автоматическая подстановка: `user` → user_id, `uuid` → click_id
+- Автоматическая подстановка: `user` → partner_token (криптографически стойкий, 128 бит), `uuid` → click_id
 
 #### Rate Limiting (двухуровневый)
 

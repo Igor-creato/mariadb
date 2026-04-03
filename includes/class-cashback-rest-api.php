@@ -1081,6 +1081,12 @@ HTML;
             return $base_url;
         }
 
+        // Получаем partner_token (криптографически стойкий, вместо user_id)
+        $partner_token = null;
+        if ($user_id > 0) {
+            $partner_token = Mariadb_Plugin::get_partner_token($user_id);
+        }
+
         $params = [];
         foreach ($merged as $param) {
             if (empty($param['key']) || empty($param['value'])) {
@@ -1090,7 +1096,8 @@ HTML;
             $param_type = strtolower(trim($param['value']));
 
             if ($param_type === 'user') {
-                $params[$param['key']] = $user_id > 0 ? (string) $user_id : 'unregistered';
+                // partner_token вместо user_id — защита от IDOR и перебора
+                $params[$param['key']] = $partner_token !== null ? $partner_token : 'unregistered';
             } elseif ($param_type === 'uuid') {
                 $params[$param['key']] = $click_id;
             } else {

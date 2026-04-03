@@ -736,11 +736,16 @@ class Cashback_API_Client
         $date_end = (new DateTime())->format('d.m.Y');
 
         // ─── Запрос к API ───
-        // api_user_field = 'subid2' (user_id передаётся в subid2 при генерации ссылки)
+        // api_user_field = 'subid2' (partner_token передаётся в subid2 при генерации ссылки)
         // api_click_field = 'subid1' (click_id передаётся в subid1 — ключ матчинга)
         $user_field = $network['api_user_field'] ?? 'subid2';
+
+        // В партнёрских ссылках используется partner_token (не user_id)
+        $partner_token = Mariadb_Plugin::get_partner_token($user_id);
+        $api_user_value = $partner_token !== null ? $partner_token : (string) $user_id;
+
         $api_params = [
-            $user_field  => (string) $user_id,
+            $user_field  => $api_user_value,
             'date_start' => $date_start,
             'date_end'   => $date_end,
         ];
@@ -1027,7 +1032,7 @@ class Cashback_API_Client
                 $local_tx   = $local_by_click_id[$m['click_id']] ?? null;
                 $orig_subid = $local_tx['original_cpa_subid'] ?? null;
 
-                if ($orig_subid !== null && $orig_subid !== (string) $user_id) {
+                if ($orig_subid !== null && $orig_subid !== $api_user_value && $orig_subid !== (string) $user_id) {
                     $transferred_missing[$orig_subid][$key] = $m;
                 }
             }
@@ -1738,8 +1743,10 @@ class Cashback_API_Client
             }
 
             // ─── Batch-проверка существования пользователей для INSERT ───
+            // subid может содержать partner_token (hex, 32 chars) или legacy user_id (numeric)
             $user_field = $config['api_user_field'] ?? 'subid';
             $potential_user_ids = [];
+            $potential_tokens = [];
 
             foreach ($api_actions as $action) {
                 $cid = (string) ($action[$click_field] ?? '');
@@ -1753,7 +1760,18 @@ class Cashback_API_Client
                     $uid = (string) ($action[$user_field] ?? '');
                     if (is_numeric($uid) && (int) $uid > 0) {
                         $potential_user_ids[] = (int) $uid;
+                    } elseif (preg_match('/^[0-9a-f]{32}$/', $uid)) {
+                        $potential_tokens[] = $uid;
                     }
+                }
+            }
+
+            // Batch-резолв partner_token → user_id
+            $token_to_user = [];
+            if (!empty($potential_tokens)) {
+                $token_to_user = Mariadb_Plugin::resolve_partner_tokens_batch($potential_tokens);
+                foreach ($token_to_user as $resolved_uid) {
+                    $potential_user_ids[] = $resolved_uid;
                 }
             }
 
@@ -2081,15 +2099,26 @@ class Cashback_API_Client
         $status_map   = $config['status_map'] ?? [];
         $network_name = $config['name'] ?? $slug;
 
-        // 1. Определяем user_id
+        // 1. Определяем user_id (subid может содержать partner_token или legacy user_id)
         $raw_user_id = (string) ($action[$user_field] ?? '');
 
         $is_unregistered = strtolower($raw_user_id) === 'unregistered'
-            || !is_numeric($raw_user_id)
-            || (int) $raw_user_id === 0;
+            || $raw_user_id === ''
+            || $raw_user_id === '0';
+
+        // 1a. Попытка разрешить partner_token → user_id (новый формат)
+        if (!$is_unregistered && !is_numeric($raw_user_id)) {
+            $resolved_user_id = Mariadb_Plugin::resolve_partner_token($raw_user_id);
+            if ($resolved_user_id !== null) {
+                $raw_user_id = (string) $resolved_user_id;
+            } else {
+                // Не числовой и не валидный токен → unregistered
+                $is_unregistered = true;
+            }
+        }
 
         // 2. Для зарегистрированных — проверяем существование WP-пользователя
-        if (!$is_unregistered) {
+        if (!$is_unregistered && is_numeric($raw_user_id)) {
             if (!isset($existing_user_ids[(int) $raw_user_id])) {
                 $is_unregistered = true;
             }

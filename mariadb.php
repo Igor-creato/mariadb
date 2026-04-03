@@ -82,6 +82,7 @@ class Mariadb_Plugin
             $instance->migrate_add_funds_ready();
             $instance->migrate_uuid_columns_to_ascii();
             $instance->migrate_merge_affiliate_ledger();
+            $instance->migrate_add_partner_token();
             $instance->create_events();
             $instance->initialize_existing_users();
 
@@ -337,10 +338,12 @@ class Mariadb_Plugin
             `status` enum('active','noactive','banned','deleted') NOT NULL DEFAULT 'active' COMMENT 'Статус профиля',
             `banned_at` datetime DEFAULT NULL COMMENT 'Дата и время блокировки',
             `ban_reason` text DEFAULT NULL COMMENT 'Причина блокировки',
+            `partner_token` char(32) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL COMMENT 'Криптографический токен для партнёрских ссылок (вместо user_id)',
             `last_active_at` datetime DEFAULT NULL COMMENT 'Дата и времени последней активности',
             `created_at` datetime DEFAULT current_timestamp(),
             `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp(),
             PRIMARY KEY (`user_id`),
+            UNIQUE KEY `uk_partner_token` (`partner_token`),
             KEY `idx_active_check` (`status`,`last_active_at`,`created_at`),
             KEY `idx_payout_method` (`payout_method_id`),
             KEY `idx_bank_id` (`bank_id`),
@@ -1092,9 +1095,11 @@ class Mariadb_Plugin
         try {
             // INSERT IGNORE атомарно игнорирует дубли по PRIMARY KEY (user_id)
             // Защита от race condition
+            $partner_token = self::generate_partner_token();
             $result = $wpdb->query($wpdb->prepare(
-                "INSERT IGNORE INTO {$table_name} (user_id, status, created_at) VALUES (%d, 'active', NOW())",
-                $user_id
+                "INSERT IGNORE INTO {$table_name} (user_id, partner_token, status, created_at) VALUES (%d, %s, 'active', NOW())",
+                $user_id,
+                $partner_token
             ));
 
             // $result = 0 если запись уже существовала (игнорирована)
@@ -2140,6 +2145,245 @@ class Mariadb_Plugin
             $table,
             $column
         ));
+    }
+
+    // =========================================================================
+    // Partner Token — замена user_id в партнёрских ссылках
+    // =========================================================================
+
+    /**
+     * Генерация криптографически стойкого partner_token.
+     *
+     * 32 hex символа = 128 бит энтропии (random_bytes).
+     * URL-safe, ASCII-only, совместим с любыми CPA subid полями.
+     *
+     * @return string 32-символьный hex токен.
+     */
+    public static function generate_partner_token(): string
+    {
+        return bin2hex(random_bytes(16));
+    }
+
+    /**
+     * Получение partner_token для пользователя.
+     *
+     * Если токен ещё не сгенерирован — создаёт его атомарно (race-condition safe).
+     *
+     * @param int $user_id ID пользователя WordPress.
+     *
+     * @return string|null Partner token или null если пользователь не найден в профиле.
+     */
+    public static function get_partner_token(int $user_id): ?string
+    {
+        global $wpdb;
+
+        if ($user_id <= 0) {
+            return null;
+        }
+
+        $table = $wpdb->prefix . 'cashback_user_profile';
+
+        // Быстрый путь: токен уже есть
+        $token = $wpdb->get_var($wpdb->prepare(
+            "SELECT partner_token FROM `{$table}` WHERE user_id = %d",
+            $user_id
+        ));
+
+        if (!empty($token)) {
+            return $token;
+        }
+
+        // Проверяем, существует ли профиль вообще
+        $profile_exists = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM `{$table}` WHERE user_id = %d",
+            $user_id
+        ));
+
+        if (!$profile_exists) {
+            return null;
+        }
+
+        // Генерируем новый токен с защитой от коллизий (UNIQUE KEY)
+        $max_retries = 5;
+        for ($attempt = 0; $attempt < $max_retries; $attempt++) {
+            $new_token = self::generate_partner_token();
+
+            // Атомарное обновление: только если partner_token ещё NULL
+            $updated = $wpdb->query($wpdb->prepare(
+                "UPDATE `{$table}` SET partner_token = %s WHERE user_id = %d AND partner_token IS NULL",
+                $new_token,
+                $user_id
+            ));
+
+            if ($updated === false && strpos($wpdb->last_error, 'Duplicate') !== false) {
+                // Коллизия UNIQUE KEY — повторяем с новым токеном
+                continue;
+            }
+
+            if ($updated === 0) {
+                // Другой процесс уже установил токен — читаем его
+                return $wpdb->get_var($wpdb->prepare(
+                    "SELECT partner_token FROM `{$table}` WHERE user_id = %d",
+                    $user_id
+                ));
+            }
+
+            return $new_token;
+        }
+
+        error_log('[Cashback] Failed to generate unique partner_token for user #' . $user_id . ' after ' . $max_retries . ' attempts');
+        return null;
+    }
+
+    /**
+     * Разрешение partner_token → user_id.
+     *
+     * @param string $token Partner token из CPA subid.
+     *
+     * @return int|null User ID или null если токен не найден.
+     */
+    public static function resolve_partner_token(string $token): ?int
+    {
+        global $wpdb;
+
+        // Валидация формата: строго 32 hex символа
+        if (!preg_match('/^[0-9a-f]{32}$/', $token)) {
+            return null;
+        }
+
+        $table = $wpdb->prefix . 'cashback_user_profile';
+
+        $user_id = $wpdb->get_var($wpdb->prepare(
+            "SELECT user_id FROM `{$table}` WHERE partner_token = %s LIMIT 1",
+            $token
+        ));
+
+        return $user_id !== null ? (int) $user_id : null;
+    }
+
+    /**
+     * Batch-разрешение partner_token → user_id для массива токенов.
+     *
+     * @param array $tokens Массив partner_token строк.
+     *
+     * @return array Ассоциативный массив [token => user_id].
+     */
+    public static function resolve_partner_tokens_batch(array $tokens): array
+    {
+        global $wpdb;
+
+        if (empty($tokens)) {
+            return [];
+        }
+
+        // Фильтруем валидные hex-токены
+        $valid_tokens = array_filter($tokens, function (string $t): bool {
+            return preg_match('/^[0-9a-f]{32}$/', $t) === 1;
+        });
+
+        if (empty($valid_tokens)) {
+            return [];
+        }
+
+        $valid_tokens = array_unique(array_values($valid_tokens));
+        $table = $wpdb->prefix . 'cashback_user_profile';
+        $placeholders = implode(',', array_fill(0, count($valid_tokens), '%s'));
+
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT partner_token, user_id FROM `{$table}` WHERE partner_token IN ({$placeholders})",
+            ...$valid_tokens
+        ), ARRAY_A);
+
+        $map = [];
+        foreach ($rows as $row) {
+            $map[$row['partner_token']] = (int) $row['user_id'];
+        }
+
+        return $map;
+    }
+
+    /**
+     * Миграция: добавление колонки partner_token в cashback_user_profile.
+     * Бэкфилл существующих записей криптографически стойкими токенами.
+     */
+    private function migrate_add_partner_token(): void
+    {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'cashback_user_profile';
+
+        // Шаг 1: Проверяем наличие колонки
+        if (!$this->column_exists_in_table($table, 'partner_token')) {
+            $wpdb->query(
+                "ALTER TABLE `{$table}`
+                 ADD COLUMN `partner_token` char(32) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL
+                 COMMENT 'Криптографический токен для партнёрских ссылок (вместо user_id)'
+                 AFTER `details_hash`"
+            );
+
+            if ($wpdb->last_error) {
+                error_log('[Cashback] Failed to add partner_token column: ' . $wpdb->last_error);
+                return;
+            }
+
+            // Добавляем UNIQUE индекс
+            $wpdb->query("ALTER TABLE `{$table}` ADD UNIQUE KEY `uk_partner_token` (`partner_token`)");
+
+            if ($wpdb->last_error) {
+                error_log('[Cashback] Failed to add partner_token unique index: ' . $wpdb->last_error);
+            }
+        }
+
+        // Шаг 2: Бэкфилл записей с NULL partner_token
+        $batch_size = 100;
+        $max_retries = 5;
+
+        do {
+            $rows = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT user_id FROM `{$table}` WHERE partner_token IS NULL LIMIT %d",
+                    $batch_size
+                )
+            );
+
+            if (empty($rows)) {
+                break;
+            }
+
+            foreach ($rows as $row) {
+                $updated = false;
+
+                for ($attempt = 0; $attempt < $max_retries; $attempt++) {
+                    $token = self::generate_partner_token();
+                    $result = $wpdb->query($wpdb->prepare(
+                        "UPDATE `{$table}` SET partner_token = %s WHERE user_id = %d AND partner_token IS NULL",
+                        $token,
+                        $row->user_id
+                    ));
+
+                    if ($result !== false && $result > 0) {
+                        $updated = true;
+                        break;
+                    }
+
+                    if ($result === 0) {
+                        // Другой процесс уже заполнил
+                        $updated = true;
+                        break;
+                    }
+
+                    // Duplicate key — повторяем
+                    if (strpos($wpdb->last_error, 'Duplicate') === false) {
+                        error_log('[Cashback] Failed to set partner_token for user #' . $row->user_id . ': ' . $wpdb->last_error);
+                        break;
+                    }
+                }
+
+                if (!$updated) {
+                    error_log('[Cashback] Could not generate unique partner_token for user #' . $row->user_id . ' after ' . $max_retries . ' attempts');
+                }
+            }
+        } while (!empty($rows));
     }
 }
 

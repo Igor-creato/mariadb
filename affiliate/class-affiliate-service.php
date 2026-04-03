@@ -51,7 +51,7 @@ class Cashback_Affiliate_Service
      * ═══════════════════════════════════════ */
 
     /**
-     * Обработка визита с ?ref={user_id}.
+     * Обработка визита с ?ref={partner_token}.
      * Устанавливает HMAC-подписанную cookie, логирует клик.
      */
     public function handle_referral_visit(): void
@@ -60,7 +60,18 @@ class Cashback_Affiliate_Service
             return;
         }
 
-        $referrer_id = absint($_GET['ref']);
+        $ref_raw = sanitize_text_field(wp_unslash($_GET['ref']));
+
+        // Разрешение: partner_token (32 hex) → user_id, с fallback на legacy числовой ID
+        if (preg_match('/^[0-9a-f]{32}$/', $ref_raw)) {
+            $referrer_id = Mariadb_Plugin::resolve_partner_token($ref_raw);
+            if ($referrer_id === null) {
+                return;
+            }
+        } else {
+            $referrer_id = absint($ref_raw);
+        }
+
         if ($referrer_id < 1) {
             return;
         }
@@ -994,7 +1005,12 @@ class Cashback_Affiliate_Service
      */
     public static function get_referral_link(int $user_id): string
     {
-        return add_query_arg('ref', $user_id, home_url('/'));
+        $token = Mariadb_Plugin::get_partner_token($user_id);
+
+        // Fallback на user_id только если профиль не существует (не должно быть в норме)
+        $ref_value = $token !== null ? $token : (string) $user_id;
+
+        return add_query_arg('ref', $ref_value, home_url('/'));
     }
 
     /**

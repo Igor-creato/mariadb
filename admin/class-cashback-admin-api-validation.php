@@ -1212,6 +1212,14 @@ class Cashback_Admin_API_Validation
         // Генерация idempotency_key (детерминистический — один action_id+network = один ключ)
         $idempotency_key = hash('sha256', 'api_add_' . $action_id . '_' . $network);
 
+        // Разрешение partner_token → user_id (subid может содержать токен вместо числового ID)
+        if ($user_id !== 'unregistered' && !is_numeric($user_id) && preg_match('/^[0-9a-f]{32}$/', $user_id)) {
+            $resolved = Mariadb_Plugin::resolve_partner_token($user_id);
+            if ($resolved !== null) {
+                $user_id = (string) $resolved;
+            }
+        }
+
         // Определение таблицы
         $is_unregistered = $user_id === 'unregistered' || !is_numeric($user_id) || (int) $user_id === 0;
         $table = $wpdb->prefix . ($is_unregistered ? 'cashback_unregistered_transactions' : 'cashback_transactions');
