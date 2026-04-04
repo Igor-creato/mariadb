@@ -80,8 +80,10 @@ class WC_Affiliate_URL_Params
         add_action('wp_enqueue_scripts', [$this, 'enqueue_frontend_scripts']);
         add_action('admin_enqueue_scripts', [$this, 'enqueue_admin_scripts']);
 
-        // Server-side redirect endpoint для логирования кликов
-        add_action('template_redirect', [$this, 'handle_click_redirect']);
+        // Server-side redirect endpoint для логирования кликов.
+        // Приоритет 1: перехватить ДО темы и WooCommerce, иначе single product template
+        // перезапишет нашу промежуточную страницу.
+        add_action('template_redirect', [$this, 'handle_click_redirect'], 1);
 
         // Отображение кэшбэка на карточках товаров и странице товара
         add_filter('woocommerce_get_price_html', [$this, 'append_cashback_to_price'], 10, 2);
@@ -878,9 +880,11 @@ class WC_Affiliate_URL_Params
 
             // Авторизованные: промежуточная страница с 5-секундным счётчиком,
             // чтобы браузерное расширение зафиксировало активацию кешбэка.
+            // URL через home_url() — НЕ через permalink товара, иначе WooCommerce
+            // перехватывает запрос как single product page и ломает standalone HTML.
             $activation_page_url = add_query_arg(
                 ['cashback_go' => '1', 'click_id' => $click_id],
-                get_permalink($product_id) ?: home_url('/')
+                home_url('/')
             );
             wp_redirect($activation_page_url, 302);
             exit;
@@ -905,15 +909,17 @@ class WC_Affiliate_URL_Params
     /**
      * Промежуточная страница активации кэшбэка.
      *
-     * Вызывается когда браузер приходит на product_permalink?cashback_go=1&click_id={id}.
+     * Полностью standalone HTML — без wp_head()/wp_footer(), без шаблонов темы.
+     * Это исключает конфликты с JS/CSS темы и WooCommerce single product template.
+     *
+     * Вызывается когда браузер приходит на ?cashback_go=1&click_id={id}.
      * К этому моменту клик уже записан в cashback_click_log.
      *
-     * Рендерит HTML-страницу (НЕ 302 redirect), чтобы:
      * 1. Content script расширения прочитал data-cb-activation и уведомил service worker
      * 2. Service worker сохранил активацию до перехода на партнёрский сайт
      * 3. Иконка расширения стала зелёной к моменту загрузки магазина
      *
-     * Без расширения: автоматический redirect через JavaScript за 1.5 секунды.
+     * Без расширения: автоматический redirect через JavaScript за 5 секунд.
      *
      * @since 4.1.0
      *
@@ -968,6 +974,12 @@ class WC_Affiliate_URL_Params
             exit;
         }
 
+        // Название магазина из post_title
+        $store_name = '';
+        if (!empty($click['product_id'])) {
+            $store_name = get_the_title((int) $click['product_id']);
+        }
+
         // Домен магазина из _store_domain meta (не из affiliate URL)
         $store_domain = '';
         if (!empty($click['product_id'])) {
@@ -978,191 +990,260 @@ class WC_Affiliate_URL_Params
         }
 
         // JSON для браузерного расширения (content script читает data-cb-activation)
-        $activation_data = wp_json_encode([
+        $activation_data = esc_attr((string) wp_json_encode([
             'domain'   => $store_domain,
             'click_id' => $click_id,
-        ]);
+        ]));
 
         $safe_redirect_url = esc_url($affiliate_url);
-        $safe_js_url       = esc_js($affiliate_url);
+        // wp_json_encode() для JS-контекста: экранирует кавычки и спецсимволы,
+        // но НЕ кодирует & в &amp; (в отличие от esc_js(), который использует htmlspecialchars).
+        $safe_js_url       = wp_json_encode($affiliate_url);
+        $charset           = esc_attr(get_bloginfo('charset'));
+        $lang_attr         = get_language_attributes();
+        $site_name         = esc_html(get_bloginfo('name'));
 
-        // Убираем ВСЕ скрипты темы/плагинов — они ломают наш countdown,
-        // потому что ожидают DOM-элементы темы (header, nav, footer), которых нет.
-        // Стили оставляем — из них берём CSS-переменные (шрифты, цвета).
-        add_action('wp_enqueue_scripts', static function (): void {
-            global $wp_scripts;
-            if ($wp_scripts instanceof \WP_Scripts) {
-                foreach (array_keys($wp_scripts->registered) as $handle) {
-                    wp_dequeue_script($handle);
+        // Логотип сайта: custom_logo → site_icon → fallback эмодзи
+        $logo_html = '';
+        $custom_logo_id = get_theme_mod('custom_logo');
+        if ($custom_logo_id) {
+            $logo_url = wp_get_attachment_image_url($custom_logo_id, 'medium');
+            if ($logo_url) {
+                $logo_alt = get_post_meta($custom_logo_id, '_wp_attachment_image_alt', true);
+                $logo_html = '<img src="' . esc_url($logo_url) . '" alt="' . esc_attr($logo_alt ?: $site_name) . '">';
+            }
+        }
+        if (empty($logo_html)) {
+            $site_icon_id = get_option('site_icon');
+            if ($site_icon_id) {
+                $icon_url = wp_get_attachment_image_url((int) $site_icon_id, 'full');
+                if ($icon_url) {
+                    $logo_html = '<img src="' . esc_url($icon_url) . '" alt="' . esc_attr($site_name) . '">';
                 }
             }
-        }, 9999);
+        }
+        if (empty($logo_html)) {
+            $logo_html = '&#128176;';
+        }
+        $store_name_esc    = esc_html($store_name);
 
-        // Дополнительная страховка: убираем скрипты, добавленные после wp_enqueue_scripts
-        add_action('wp_print_scripts', static function (): void {
-            global $wp_scripts;
-            if ($wp_scripts instanceof \WP_Scripts) {
-                $wp_scripts->queue = [];
+        // Текстовые строки
+        $text_heading     = esc_html__('Переход в магазин', 'cashback-plugin');
+        $text_activated   = esc_html__('Кэшбэк активирован', 'cashback-plugin');
+        $text_redirect    = esc_html__('Вы будете перенаправлены через', 'cashback-plugin');
+        $text_sec         = esc_html__('сек.', 'cashback-plugin');
+        $text_go_now      = esc_html__('Перейти сейчас', 'cashback-plugin');
+
+        // Favicon из Site Icon (Customizer → Site Identity → Иконка сайта)
+        $favicon_html = '';
+        $site_icon_id = get_option('site_icon');
+        if ($site_icon_id) {
+            $icon_32 = wp_get_attachment_image_url((int) $site_icon_id, array(32, 32));
+            $icon_180 = wp_get_attachment_image_url((int) $site_icon_id, array(180, 180));
+            if ($icon_32) {
+                $favicon_html .= '<link rel="icon" href="' . esc_url($icon_32) . '" sizes="32x32">';
             }
-        }, 9999);
+            if ($icon_180) {
+                $favicon_html .= '<link rel="apple-touch-icon" href="' . esc_url($icon_180) . '">';
+            }
+        }
 
-        ?>
+        // Полностью standalone HTML — никаких wp_head()/wp_footer().
+        // Тема и WooCommerce не могут ничего внедрить.
+        echo <<<HTML
 <!DOCTYPE html>
-<html <?php language_attributes(); ?> data-cb-activation="<?php echo esc_attr($activation_data); ?>">
+<html {$lang_attr} data-cb-activation="{$activation_data}">
 <head>
-<meta charset="<?php bloginfo('charset'); ?>">
+<meta charset="{$charset}">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="robots" content="noindex, nofollow">
-<?php wp_head(); ?>
-<style id="cb-redirect-styles">
-/* Скрываем всё, что тема может вывести (header, nav, footer, preloader и пр.) */
-body.cb-redirect-page > *:not(.cb-redirect-overlay) { display:none !important; }
-body.cb-redirect-page {
-    margin: 0; padding: 0;
-    min-height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background-color: var(--wd-main-bgcolor, #fff);
-    color: var(--wd-text-color, var(--color-gray-800, #333));
-    font-family: var(--wd-text-font, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif);
-    font-size: var(--wd-text-font-size, 15px);
-    line-height: var(--wd-text-line-height, 1.6);
+{$favicon_html}
+<title>{$text_heading} — {$site_name}</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{
+    height:100%;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Oxygen,Ubuntu,Cantarell,"Helvetica Neue",sans-serif;
+    font-size:15px;
+    line-height:1.6;
+    color:#333;
+    background:#f7f7f7;
+    -webkit-font-smoothing:antialiased;
+    -moz-osx-font-smoothing:grayscale;
 }
-.cb-redirect-overlay {
-    position: fixed; inset: 0;
-    display: flex !important;
-    align-items: center;
-    justify-content: center;
-    z-index: 2147483647;
-    background-color: var(--wd-main-bgcolor, #fff);
+body{
+    display:flex;
+    align-items:center;
+    justify-content:center;
 }
-.cb-redirect-card {
-    text-align: center;
-    padding: 48px 32px;
-    max-width: 420px; width: 90%;
+.cb-activation{
+    text-align:center;
+    padding:48px 32px;
+    max-width:440px;
+    width:90%;
+    background:#fff;
+    border-radius:16px;
+    box-shadow:0 2px 24px rgba(0,0,0,.06);
 }
-.cb-redirect-icon {
-    font-size: 48px;
-    margin-bottom: 20px;
-    line-height: 1;
+.cb-activation__icon{
+    margin:0 auto 20px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    line-height:1;
 }
-.cb-redirect-card h1 {
-    font-size: 22px;
-    font-weight: 600;
-    margin: 0 0 10px;
-    color: var(--wd-title-color, var(--color-gray-800, #333));
-    font-family: var(--wd-title-font, var(--wd-text-font, inherit));
+.cb-activation__icon img{
+    max-height:48px;
+    width:auto;
+    object-fit:contain;
 }
-.cb-redirect-card p {
-    font-size: 15px;
-    color: var(--color-gray-500, #767676);
-    margin: 0 0 24px;
+.cb-activation__heading{
+    font-size:22px;
+    font-weight:600;
+    color:#1a1a1a;
+    margin:0 0 6px;
 }
-.cb-redirect-countdown {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 64px; height: 64px;
-    border-radius: 50%;
-    border: 3px solid var(--wd-primary-color, #27ae60);
-    color: var(--wd-primary-color, #27ae60);
-    font-size: 26px;
-    font-weight: 700;
-    margin: 0 auto 16px;
-    font-variant-numeric: tabular-nums;
+.cb-activation__store{
+    font-size:14px;
+    color:#888;
+    margin:0 0 24px;
 }
-.cb-redirect-progress {
-    width: 200px; height: 4px;
-    margin: 0 auto 24px;
-    background: var(--color-gray-200, #e9e9e9);
-    border-radius: 2px;
-    overflow: hidden;
+.cb-activation__status{
+    display:none;
+    align-items:center;
+    justify-content:center;
+    gap:6px;
+    font-size:14px;
+    font-weight:500;
+    color:#2e7d32;
+    margin-bottom:12px;
 }
-.cb-redirect-progress-bar {
-    height: 100%; width: 100%;
-    background: var(--wd-primary-color, #27ae60);
-    border-radius: 2px;
-    transform-origin: left center;
+.cb-activation__status.visible{
+    display:flex;
 }
-.cb-redirect-link {
-    display: inline-block;
-    font-size: 14px;
-    color: var(--wd-primary-color, var(--wd-link-color, #333));
-    text-decoration: none;
+.cb-activation__status svg{
+    flex-shrink:0;
 }
-.cb-redirect-link:hover {
-    text-decoration: underline;
+.cb-activation__timer{
+    position:relative;
+    width:72px;height:72px;
+    margin:0 auto 12px;
 }
-.cb-redirect-check {
-    color: var(--wd-primary-color, #27ae60);
-    font-size: 15px;
-    margin-bottom: 10px;
-    display: none;
+.cb-activation__timer svg{
+    width:72px;height:72px;
+    transform:rotate(-90deg);
 }
-.cb-redirect-check.visible { display: block; }
+.cb-activation__timer-bg{
+    fill:none;
+    stroke:#e0e0e0;
+    stroke-width:3;
+}
+.cb-activation__timer-progress{
+    fill:none;
+    stroke:#4caf50;
+    stroke-width:3;
+    stroke-linecap:round;
+    stroke-dasharray:201.06;
+    stroke-dashoffset:0;
+    transition:stroke-dashoffset 1s linear;
+}
+.cb-activation__timer-text{
+    position:absolute;
+    inset:0;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-size:24px;
+    font-weight:700;
+    color:#4caf50;
+    font-variant-numeric:tabular-nums;
+}
+.cb-activation__label{
+    font-size:14px;
+    color:#888;
+    margin:0 0 24px;
+}
+.cb-activation__link{
+    display:inline-block;
+    padding:10px 28px;
+    font-size:14px;
+    font-weight:500;
+    color:#fff;
+    background:#4caf50;
+    border:none;
+    border-radius:8px;
+    text-decoration:none;
+    cursor:pointer;
+    transition:background .2s;
+}
+.cb-activation__link:hover{
+    background:#43a047;
+}
 </style>
 </head>
-<body <?php body_class('cb-redirect-page'); ?>>
-<div class="cb-redirect-overlay">
-<div class="cb-redirect-card">
-<div class="cb-redirect-icon">&#128176;</div>
-<h1><?php esc_html_e('Переход в магазин', 'cashback-plugin'); ?></h1>
-<div class="cb-redirect-check" id="cb-ext-status">&#10003; <?php esc_html_e('Кэшбэк активирован', 'cashback-plugin'); ?></div>
-<p><?php esc_html_e('Вы будете перенаправлены через', 'cashback-plugin'); ?> <strong id="cb-seconds">5</strong> <?php esc_html_e('сек.', 'cashback-plugin'); ?></p>
-<div class="cb-redirect-countdown" id="cb-countdown">5</div>
-<div class="cb-redirect-progress"><div class="cb-redirect-progress-bar" id="cb-progress-bar"></div></div>
-<div><a class="cb-redirect-link" href="<?php echo $safe_redirect_url; ?>"><?php esc_html_e('Перейти сейчас', 'cashback-plugin'); ?> &rarr;</a></div>
-</div>
+<body>
+<div class="cb-activation">
+    <div class="cb-activation__icon">{$logo_html}</div>
+    <h1 class="cb-activation__heading">{$text_heading}</h1>
+    <p class="cb-activation__store">{$store_name_esc}</p>
+    <div class="cb-activation__status" id="cb-ext-status">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="8" fill="#4caf50"/><path d="M4.5 8.5L7 11L11.5 5.5" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        {$text_activated}
+    </div>
+    <div class="cb-activation__timer">
+        <svg viewBox="0 0 72 72">
+            <circle class="cb-activation__timer-bg" cx="36" cy="36" r="32"/>
+            <circle class="cb-activation__timer-progress" id="cb-progress" cx="36" cy="36" r="32"/>
+        </svg>
+        <div class="cb-activation__timer-text" id="cb-countdown">5</div>
+    </div>
+    <p class="cb-activation__label">{$text_redirect} <strong id="cb-seconds">5</strong> {$text_sec}</p>
+    <a class="cb-activation__link" href="{$safe_redirect_url}">{$text_go_now} &rarr;</a>
 </div>
 <script>
-/* Cashback redirect countdown — standalone, no dependencies */
-(function() {
+(function(){
     'use strict';
+    var URL={$safe_js_url};
+    var TOTAL=5;
+    var remaining=TOTAL;
+    var CIRCUMFERENCE=2*Math.PI*32; // 201.06
+    var elCountdown=document.getElementById('cb-countdown');
+    var elSeconds=document.getElementById('cb-seconds');
+    var elProgress=document.getElementById('cb-progress');
 
-    var REDIRECT_URL = '<?php echo $safe_js_url; ?>';
-    var TOTAL        = 5;
-    var remaining    = TOTAL;
-
-    var elCountdown = document.getElementById('cb-countdown');
-    var elSeconds   = document.getElementById('cb-seconds');
-    var elProgress  = document.getElementById('cb-progress-bar');
-
-    /* Прогресс-бар: CSS animation вместо transition (надёжнее, не зависит от reflow) */
-    if (elProgress) {
-        var keyframes = '@keyframes cbShrink{from{transform:scaleX(1)}to{transform:scaleX(0)}}';
-        var styleEl   = document.createElement('style');
-        styleEl.textContent = keyframes;
-        document.head.appendChild(styleEl);
-        elProgress.style.animation = 'cbShrink ' + TOTAL + 's linear forwards';
-    }
-
-    function tick() {
-        remaining--;
-        if (remaining < 0) remaining = 0;
-        if (elCountdown) elCountdown.textContent = remaining;
-        if (elSeconds)   elSeconds.textContent   = remaining;
-        if (remaining <= 0) {
-            clearInterval(timer);
-            window.location.href = REDIRECT_URL;
+    function update(){
+        if(elCountdown)elCountdown.textContent=remaining;
+        if(elSeconds)elSeconds.textContent=remaining;
+        if(elProgress){
+            var offset=CIRCUMFERENCE*(1-remaining/TOTAL);
+            elProgress.style.strokeDashoffset=offset;
         }
     }
+    update();
 
-    var timer = setInterval(tick, 1000);
+    function tick(){
+        remaining--;
+        if(remaining<0)remaining=0;
+        update();
+        if(remaining<=0){
+            clearInterval(timer);
+            window.location.href=URL;
+        }
+    }
+    var timer=setInterval(tick,1000);
 
-    /* Событие от браузерного расширения: кэшбэк подтверждён */
-    var confirmed = false;
-    document.addEventListener('cashback:site:confirmed', function() {
-        if (confirmed) return;
-        confirmed = true;
-        var el = document.getElementById('cb-ext-status');
-        if (el) el.classList.add('visible');
+    var confirmed=false;
+    document.addEventListener('cashback:site:confirmed',function(){
+        if(confirmed)return;
+        confirmed=true;
+        var el=document.getElementById('cb-ext-status');
+        if(el)el.classList.add('visible');
     });
 })();
 </script>
 </body>
 </html>
-        <?php
+HTML;
         exit;
     }
 
