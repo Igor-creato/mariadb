@@ -925,7 +925,7 @@ class CashbackWithdrawal
             // Читаем статус профиля здесь — под защитой транзакции.
             $profile_table = $wpdb->prefix . 'cashback_user_profile';
             $user_status = $wpdb->get_var($wpdb->prepare(
-                "SELECT status FROM {$profile_table} WHERE user_id = %d",
+                "SELECT status FROM {$profile_table} WHERE user_id = %d FOR UPDATE",
                 $user_id
             ));
             if ($user_status === 'banned') {
@@ -967,6 +967,15 @@ class CashbackWithdrawal
             }
 
             // 4.4. Собираем данные для заявки (внутри транзакции — снапшот консистентен)
+            // Перечитываем payout_method и payout_account внутри транзакции,
+            // чтобы исключить рассогласование с encrypted_details
+            // при параллельном save_payout_settings (race condition:
+            // pre-tx reads видят старый метод, а in-tx reads — новые encrypted_details).
+            $payout_method = $this->get_payout_method($user_id);
+            $payout_account = $this->get_payout_account($user_id);
+            if (empty($payout_method) || empty($payout_account)) {
+                throw new \Exception('payout_details_missing');
+            }
             $bank_info = $this->get_user_bank_info($user_id);
             $bank_code = $bank_info['bank_code'] ?? '';
             $encryption_data = $this->get_user_encryption_data($user_id);
@@ -1112,6 +1121,7 @@ class CashbackWithdrawal
                 'Insufficient available balance after lock',
                 'balance_below_min',
                 'amount_below_min',
+                'payout_details_missing',
                 'Duplicate payout request detected',
             ];
             if (!in_array($error_message, $expected_errors, true)) {
@@ -1132,6 +1142,11 @@ class CashbackWithdrawal
             } elseif ($error_message === 'amount_below_min') {
                 $min_amt = $this->get_min_payout_amount($user_id);
                 wp_send_json_error(sprintf(__('Введите сумму больше или равно %s', 'cashback-plugin'), wc_price($min_amt)));
+            } elseif ($error_message === 'payout_details_missing') {
+                wp_send_json_error(array(
+                    'message' => __('Для вывода средств пожалуйста, заполните способ вывода и номер счета в вашем профиле.', 'cashback-plugin'),
+                    'show_form' => true
+                ));
             } elseif ($error_message === 'Duplicate payout request detected') {
                 // Параллельный запрос с тем же ключом — найдём созданную заявку
                 $dup = $wpdb->get_row($wpdb->prepare(
