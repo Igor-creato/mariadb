@@ -108,16 +108,6 @@
     padding-top: 10px;
 }
 
-.payout-detail-wrap #post-body.columns-2 {
-    margin-right: 320px;
-}
-
-.payout-detail-wrap #postbox-container-1 {
-    float: right;
-    margin-right: -320px;
-    width: 300px;
-}
-
 .payout-detail-wrap .postbox {
     margin-bottom: 20px;
 }
@@ -184,27 +174,44 @@
     margin-right: 6px;
 }
 
-/* Форма управления заявкой */
-.payout-detail-form p {
-    margin-bottom: 15px;
+/* Форма управления заявкой — вертикальный layout */
+.payout-detail-form--inline .payout-detail-form__fields {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    max-width: 400px;
 }
 
-.payout-detail-form label {
-    display: block;
+.payout-detail-form__field {
+    display: flex;
+    flex-direction: column;
+}
+
+.payout-detail-form__field label {
     margin-bottom: 4px;
+    white-space: nowrap;
 }
 
-.payout-detail-form .widefat {
+.payout-detail-form__field select,
+.payout-detail-form__field input[type="text"],
+.payout-detail-form__field input[type="number"],
+.payout-detail-form__field textarea {
     width: 100%;
     box-sizing: border-box;
 }
 
-.payout-detail-form textarea.widefat {
+.payout-detail-form__field textarea {
     resize: vertical;
 }
 
+.payout-detail-form__actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 14px;
+    flex-wrap: wrap;
+}
+
 #save-detail-btn {
-    margin-top: 5px;
     font-size: 14px;
     height: 36px;
 }
@@ -216,16 +223,6 @@
 
 /* Адаптация для узких экранов */
 @media screen and (max-width: 782px) {
-    .payout-detail-wrap #post-body.columns-2 {
-        margin-right: 0;
-    }
-
-    .payout-detail-wrap #postbox-container-1 {
-        float: none;
-        margin-right: 0;
-        width: 100%;
-    }
-
     .payout-detail-table th {
         width: auto;
         display: block;

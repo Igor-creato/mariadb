@@ -355,26 +355,28 @@
   function buildVerifyReport(result) {
     const isOk = result.status === 'ok';
     const borderColor = isOk ? '#46b450' : '#dc3232';
-    const iconColor = isOk ? '#46b450' : '#dc3232';
     const icon = isOk ? '&#10004;' : '&#10006;';
 
-    let html = '<div style="border:1px solid ' + borderColor + '; border-radius:4px; margin-top:8px; font-size:13px;">';
+    const cellStyle = 'padding:5px 10px; white-space:nowrap;';
+
+    let html = '<div style="display:inline-block; border:1px solid ' + borderColor + '; border-radius:4px; font-size:13px; max-width:100%;">';
 
     // Заголовок
-    html += '<div style="background:' + borderColor + '; color:#fff; padding:8px 10px; font-weight:bold;">';
+    html += '<div style="background:' + borderColor + '; color:#fff; padding:8px 12px; font-weight:bold; white-space:nowrap;">';
     html += '<span style="margin-right:6px;">' + icon + '</span>';
     html += escapeHtml(result.message);
     html += '</div>';
 
     // Сводка по балансу
     if (result.balance_summary) {
-      html += '<div style="padding:8px 10px; border-bottom:1px solid #e5e5e5;">';
+      html += '<div style="padding:10px 12px; border-bottom:1px solid #e5e5e5;">';
       html += '<strong>Баланс пользователя:</strong>';
-      html += '<table style="width:100%; margin-top:6px; border-collapse:collapse; font-size:12px;">';
-      html += '<tr style="background:#f9f9f9;"><th style="text-align:left; padding:4px 6px;"></th>';
-      html += '<th style="text-align:right; padding:4px 6px;">Расчётный</th>';
-      html += '<th style="text-align:right; padding:4px 6px;">В базе</th>';
-      html += '<th style="text-align:center; padding:4px 6px;"></th></tr>';
+      html += '<table style="margin-top:6px; border-collapse:collapse; font-size:12px;">';
+      html += '<tr style="background:#f9f9f9;">';
+      html += '<th style="text-align:left; ' + cellStyle + '"></th>';
+      html += '<th style="text-align:right; ' + cellStyle + '">Расчётный</th>';
+      html += '<th style="text-align:right; ' + cellStyle + '">В базе</th>';
+      html += '<th style="text-align:center; ' + cellStyle + '"></th></tr>';
 
       const fields = ['available', 'pending', 'paid', 'frozen'];
       for (let i = 0; i < fields.length; i++) {
@@ -391,10 +393,10 @@
         const statusIcon = ledgerVal === '—' ? '' : (match ? '<span style="color:#46b450;">&#10004;</span>' : '<span style="color:#dc3232;">&#10006;</span>');
 
         html += '<tr style="border-top:1px solid #eee;' + rowColor + '">';
-        html += '<td style="padding:4px 6px;">' + escapeHtml(item.label) + '</td>';
-        html += '<td style="text-align:right; padding:4px 6px;">' + (ledgerVal === '—' ? '—' : formatAmount(ledgerVal)) + '</td>';
-        html += '<td style="text-align:right; padding:4px 6px;">' + formatAmount(cacheVal) + '</td>';
-        html += '<td style="text-align:center; padding:4px 6px;">' + statusIcon + '</td>';
+        html += '<td style="' + cellStyle + '">' + escapeHtml(item.label) + '</td>';
+        html += '<td style="text-align:right; ' + cellStyle + '">' + (ledgerVal === '—' ? '—' : formatAmount(ledgerVal)) + '</td>';
+        html += '<td style="text-align:right; ' + cellStyle + '">' + formatAmount(cacheVal) + '</td>';
+        html += '<td style="text-align:center; ' + cellStyle + '">' + statusIcon + '</td>';
         html += '</tr>';
       }
 
@@ -403,16 +405,16 @@
 
     // Операции
     if (result.operations_summary && result.operations_summary.length > 0) {
-      html += '<div style="padding:8px 10px; border-bottom:1px solid #e5e5e5;">';
+      html += '<div style="padding:10px 12px; border-bottom:1px solid #e5e5e5;">';
       html += '<strong>Операции в журнале:</strong>';
-      html += '<table style="width:100%; margin-top:6px; border-collapse:collapse; font-size:12px;">';
+      html += '<table style="margin-top:6px; border-collapse:collapse; font-size:12px;">';
 
       for (let i = 0; i < result.operations_summary.length; i++) {
         const op = result.operations_summary[i];
         html += '<tr style="border-top:1px solid #eee;">';
-        html += '<td style="padding:3px 6px;">' + escapeHtml(op.label) + '</td>';
-        html += '<td style="text-align:center; padding:3px 6px; color:#666;">' + op.count + ' шт.</td>';
-        html += '<td style="text-align:right; padding:3px 6px; font-weight:500;">' + escapeHtml(op.sum) + ' ₽</td>';
+        html += '<td style="' + cellStyle + '">' + escapeHtml(op.label) + '</td>';
+        html += '<td style="text-align:center; ' + cellStyle + ' color:#666;">' + op.count + ' шт.</td>';
+        html += '<td style="text-align:right; ' + cellStyle + ' font-weight:500;">' + escapeHtml(op.sum) + ' ₽</td>';
         html += '</tr>';
       }
 
@@ -421,11 +423,11 @@
 
     // Проблемы (если есть)
     if (!isOk && result.issues && result.issues.length > 0) {
-      html += '<div style="padding:8px 10px; background:#fff8f8;">';
+      html += '<div style="padding:10px 12px; background:#fff8f8;">';
       html += '<strong style="color:#dc3232;">Обнаруженные проблемы:</strong>';
       html += '<ul style="margin:6px 0 0 0; padding-left:18px; color:#72150a;">';
       for (let i = 0; i < result.issues.length; i++) {
-        html += '<li style="margin-bottom:4px;">' + escapeHtml(result.issues[i]) + '</li>';
+        html += '<li style="margin-bottom:4px; white-space:nowrap;">' + escapeHtml(result.issues[i]) + '</li>';
       }
       html += '</ul></div>';
     }

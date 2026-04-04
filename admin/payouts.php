@@ -596,9 +596,9 @@ class Cashback_Payouts_Admin
             <div id="payout-detail-notices"></div>
 
             <div id="poststuff">
-                <div id="post-body" class="metabox-holder columns-2">
+                <div id="post-body" class="metabox-holder columns-1">
 
-                    <!-- Левая колонка: информация -->
+                    <!-- Информация -->
                     <div id="post-body-content">
 
                         <!-- Информация о пользователе -->
@@ -724,60 +724,53 @@ class Cashback_Payouts_Admin
                                 </table>
                             </div>
                         </div>
-                    </div>
-
-                    <!-- Правая колонка: форма редактирования -->
-                    <div id="postbox-container-1" class="postbox-container">
+                        <!-- Управление заявкой -->
                         <div class="postbox">
                             <h2 class="hndle"><span><?php echo esc_html__('Управление заявкой', 'cashback-plugin'); ?></span></h2>
                             <div class="inside">
-                                <div class="payout-detail-form">
-                                    <?php if (!empty($available_statuses)): ?>
-                                    <p>
-                                        <label for="detail-status"><strong><?php echo esc_html__('Изменить статус', 'cashback-plugin'); ?></strong></label><br>
-                                        <select id="detail-status" class="widefat">
-                                            <option value="<?php echo esc_attr($current_status); ?>" selected>
-                                                <?php echo esc_html($this->get_admin_status_label($current_status)); ?> (<?php echo esc_html__('текущий', 'cashback-plugin'); ?>)
-                                            </option>
-                                            <?php foreach ($available_statuses as $avail_status): ?>
-                                                <option value="<?php echo esc_attr($avail_status); ?>">
-                                                    <?php echo esc_html($this->get_admin_status_label($avail_status)); ?>
+                                <div class="payout-detail-form payout-detail-form--inline">
+                                    <div class="payout-detail-form__fields">
+                                        <div class="payout-detail-form__field">
+                                            <?php if (!empty($available_statuses)): ?>
+                                            <label for="detail-status"><strong><?php echo esc_html__('Изменить статус', 'cashback-plugin'); ?></strong></label>
+                                            <select id="detail-status">
+                                                <option value="<?php echo esc_attr($current_status); ?>" selected>
+                                                    <?php echo esc_html($this->get_admin_status_label($current_status)); ?> (<?php echo esc_html__('текущий', 'cashback-plugin'); ?>)
                                                 </option>
-                                            <?php endforeach; ?>
-                                        </select>
-                                    </p>
-                                    <?php else: ?>
-                                    <p>
-                                        <label><strong><?php echo esc_html__('Статус', 'cashback-plugin'); ?></strong></label><br>
-                                        <em><?php echo esc_html($this->get_admin_status_label($current_status)); ?> &mdash; <?php echo esc_html__('финальный статус, изменение невозможно', 'cashback-plugin'); ?></em>
-                                    </p>
-                                    <?php endif; ?>
+                                                <?php foreach ($available_statuses as $avail_status): ?>
+                                                    <option value="<?php echo esc_attr($avail_status); ?>">
+                                                        <?php echo esc_html($this->get_admin_status_label($avail_status)); ?>
+                                                    </option>
+                                                <?php endforeach; ?>
+                                            </select>
+                                            <?php else: ?>
+                                            <label><strong><?php echo esc_html__('Статус', 'cashback-plugin'); ?></strong></label>
+                                            <em><?php echo esc_html($this->get_admin_status_label($current_status)); ?> &mdash; <?php echo esc_html__('финальный', 'cashback-plugin'); ?></em>
+                                            <?php endif; ?>
+                                        </div>
 
-                                    <p>
-                                        <label for="detail-provider-payout-id"><strong><?php echo esc_html__('ID Транзакции', 'cashback-plugin'); ?></strong></label><br>
-                                        <input type="text" id="detail-provider-payout-id" class="widefat" value="<?php echo esc_attr($payout['provider_payout_id'] ?? ''); ?>">
-                                    </p>
+                                        <div class="payout-detail-form__field">
+                                            <label for="detail-provider-payout-id"><strong><?php echo esc_html__('ID Транзакции', 'cashback-plugin'); ?></strong></label>
+                                            <input type="text" id="detail-provider-payout-id" value="<?php echo esc_attr($payout['provider_payout_id'] ?? ''); ?>">
+                                        </div>
 
-                                    <p>
-                                        <label for="detail-attempts"><strong><?php echo esc_html__('Количество попыток', 'cashback-plugin'); ?></strong></label><br>
-                                        <input type="number" id="detail-attempts" class="widefat" min="0" value="<?php echo esc_attr($payout['attempts']); ?>">
-                                    </p>
+                                        <div class="payout-detail-form__field payout-detail-form__field--small">
+                                            <label for="detail-attempts"><strong><?php echo esc_html__('Попыток', 'cashback-plugin'); ?></strong></label>
+                                            <input type="number" id="detail-attempts" min="0" value="<?php echo esc_attr($payout['attempts']); ?>">
+                                        </div>
 
-                                    <p>
-                                        <label for="detail-fail-reason"><strong><?php echo esc_html__('Описание ошибки', 'cashback-plugin'); ?></strong></label><br>
-                                        <textarea id="detail-fail-reason" class="widefat" rows="4"><?php echo esc_textarea($payout['fail_reason'] ?? ''); ?></textarea>
-                                    </p>
+                                        <div class="payout-detail-form__field payout-detail-form__field--wide">
+                                            <label for="detail-fail-reason"><strong><?php echo esc_html__('Описание ошибки', 'cashback-plugin'); ?></strong></label>
+                                            <textarea id="detail-fail-reason" rows="2"><?php echo esc_textarea($payout['fail_reason'] ?? ''); ?></textarea>
+                                        </div>
+                                    </div>
 
-                                    <p>
-                                        <button type="button" id="verify-detail-btn" class="button button-large widefat"
+                                    <div class="payout-detail-form__actions">
+                                        <button type="button" id="verify-detail-btn" class="button button-large"
                                                 data-payout-id="<?php echo esc_attr((string)$payout_id); ?>">
                                             <?php echo esc_html__('Проверить движения средств', 'cashback-plugin'); ?>
                                         </button>
-                                        <span id="verify-detail-result" style="display:none; margin-top:6px;"></span>
-                                    </p>
-
-                                    <p>
-                                        <button type="button" id="save-detail-btn" class="button button-primary button-large widefat"
+                                        <button type="button" id="save-detail-btn" class="button button-primary button-large"
                                                 data-payout-id="<?php echo esc_attr((string)$payout_id); ?>"
                                                 data-original-status="<?php echo esc_attr($current_status); ?>"
                                                 data-original-provider-payout-id="<?php echo esc_attr($payout['provider_payout_id'] ?? ''); ?>"
@@ -785,10 +778,13 @@ class Cashback_Payouts_Admin
                                                 data-original-fail-reason="<?php echo esc_attr($payout['fail_reason'] ?? ''); ?>">
                                             <?php echo esc_html__('Сохранить изменения', 'cashback-plugin'); ?>
                                         </button>
-                                    </p>
+                                    </div>
+
+                                    <div id="verify-detail-result" style="display:none; margin-top:10px;"></div>
                                 </div>
                             </div>
                         </div>
+
                     </div>
 
                 </div>
@@ -1924,12 +1920,16 @@ class Cashback_Payouts_Admin
         // Сводка по операциям в леджере
         $operations_summary = [];
         $type_labels = [
-            'accrual'         => __('Начислений кэшбэка', 'cashback-plugin'),
-            'payout_hold'     => __('Заявок на вывод (заблокировано)', 'cashback-plugin'),
-            'payout_complete' => __('Выплачено', 'cashback-plugin'),
-            'payout_cancel'   => __('Возвратов (отмена заявки)', 'cashback-plugin'),
-            'payout_declined' => __('Заморожено (мошенничество)', 'cashback-plugin'),
-            'adjustment'      => __('Ручных корректировок', 'cashback-plugin'),
+            'accrual'            => __('Начислений кэшбэка', 'cashback-plugin'),
+            'affiliate_accrual'  => __('Реферальных начислений', 'cashback-plugin'),
+            'affiliate_reversal' => __('Отмен реферальных начислений', 'cashback-plugin'),
+            'affiliate_freeze'   => __('Заморожено (реферальные)', 'cashback-plugin'),
+            'affiliate_unfreeze' => __('Разморожено (реферальные)', 'cashback-plugin'),
+            'payout_hold'        => __('Заявок на вывод (заблокировано)', 'cashback-plugin'),
+            'payout_complete'    => __('Выплачено', 'cashback-plugin'),
+            'payout_cancel'      => __('Возвратов (отмена заявки)', 'cashback-plugin'),
+            'payout_declined'    => __('Заморожено (мошенничество)', 'cashback-plugin'),
+            'adjustment'         => __('Ручных корректировок', 'cashback-plugin'),
         ];
 
         $sums = $ledger['sums'] ?? [];
