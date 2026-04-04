@@ -1363,6 +1363,423 @@ class Mariadb_Plugin
 
 
     // =========================================================================
+    // Начисление кешбэка (PHP-замена MySQL event cashback_ev_confirmed_cashback)
+    // =========================================================================
+
+    /**
+     * Batch-н��числение подтверждённых транзакций на баланс пользователей.
+     *
+     * Условия начисления:
+     * - order_status = 'completed'
+     * - api_verified = 1 (подтверждено API)
+     * - funds_ready = 1 (деньги в CPA готовы к выводу)
+     * - spam_click = 0
+     * - processed_at IS NULL (ещё не начислено)
+     * - cashback > 0
+     * - Задержка cashback_balance_delay_days дней с updated_at (0 = сразу)
+     * - Пользователь не забанен
+     *
+     * ДОЛЖЕ�� вызываться ТОЛЬ��О под глобальным Cashback_Lock.
+     *
+     * @return array{processed: int, ledger_inserted: int, errors: string[]}
+     */
+    public static function process_ready_transactions(): array
+    {
+        global $wpdb;
+        $prefix = $wpdb->prefix;
+
+        // Проверяем что глобальный lock удержан (вызов разрешён только из sync)
+        if (class_exists('Cashback_Lock') && !Cashback_Lock::is_lock_held_by_current_process()) {
+            error_log('[Cashback] process_ready_transactions called without global lock — DENIED');
+            return ['processed' => 0, 'ledger_inserted' => 0, 'errors' => ['Global lock not held']];
+        }
+
+        $errors = [];
+        $total_processed = 0;
+        $total_ledger = 0;
+
+        try {
+            $batch_id = cashback_generate_uuid7(false);
+
+            $delay_days = (int) get_option('cashback_balance_delay_days', 0);
+            $delay_sql  = '';
+            if ($delay_days > 0) {
+                // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+                $delay_sql = $wpdb->prepare(
+                    ' AND t.updated_at <= DATE_SUB(NOW(), INTERVAL %d DAY)',
+                    $delay_days
+                );
+            }
+
+            $wpdb->query('START TRANSACTION');
+
+            // ШАГ 1: SELECT FOR UPDATE — блокируем транзакции-кандидаты для начисления
+            // Исключаем забаненных пользователей — их баланс заморожен триггером tr_freeze_balance_on_ban
+            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+            $candidates = $wpdb->get_results(
+                "SELECT t.id, t.user_id, t.cashback
+                 FROM `{$prefix}cashback_transactions` t
+                 INNER JOIN `{$prefix}cashback_user_profile` p
+                     ON p.user_id = t.user_id AND p.status != 'banned'
+                 WHERE t.order_status = 'completed'
+                   AND t.api_verified = 1
+                   AND t.funds_ready = 1
+                   AND t.processed_at IS NULL
+                   AND t.cashback IS NOT NULL
+                   AND t.cashback > 0
+                   AND t.spam_click = 0"
+                    . $delay_sql // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+                    . ' FOR UPDATE',
+                ARRAY_A
+            );
+
+            if ($candidates === null) {
+                throw new \RuntimeException('Step 1 (SELECT FOR UPDATE) failed: ' . $wpdb->last_error);
+            }
+
+            if (!empty($candidates)) {
+                $candidate_ids = array_column($candidates, 'id');
+
+                // ШАГ 2: INSERT IGNORE в леджер (идемпотентный — дубли пропускаются)
+                // Каждая транзакция = одна запись в леджере с idempotency_key = "accrual_{id}"
+                $ledger_values = [];
+                $ledger_args = [];
+                foreach ($candidates as $row) {
+                    $ledger_values[] = '(%d, %s, %s, %d, %s)';
+                    $ledger_args[] = (int) $row['user_id'];
+                    $ledger_args[] = 'accrual';
+                    $ledger_args[] = number_format((float) $row['cashback'], 2, '.', '');
+                    $ledger_args[] = (int) $row['id'];
+                    $ledger_args[] = 'accrual_' . $row['id'];
+                }
+
+                $values_sql = implode(', ', $ledger_values);
+                // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                $ledger_result = $wpdb->query($wpdb->prepare(
+                    "INSERT INTO `{$prefix}cashback_balance_ledger`
+                         (user_id, type, amount, transaction_id, idempotency_key)
+                     VALUES {$values_sql}
+                     ON DUPLICATE KEY UPDATE id = id",
+                    ...$ledger_args
+                ));
+
+                if ($ledger_result === false) {
+                    throw new \RuntimeException('Step 2 (ledger INSERT) failed: ' . $wpdb->last_error);
+                }
+                $total_ledger = (int) $wpdb->rows_affected;
+
+                // ШАГ 3: Маркируем транзакции как обработанные
+                $id_placeholders = implode(',', array_fill(0, count($candidate_ids), '%d'));
+                // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                $step3 = $wpdb->query($wpdb->prepare(
+                    "UPDATE `{$prefix}cashback_transactions`
+                     SET processed_at = NOW(), processed_batch_id = %s
+                     WHERE id IN ({$id_placeholders}) AND processed_at IS NULL",
+                    $batch_id,
+                    ...$candidate_ids
+                ));
+
+                if ($step3 === false) {
+                    throw new \RuntimeException('Step 3 (mark processed) failed: ' . $wpdb->last_error);
+                }
+                $total_processed = (int) $wpdb->rows_affected;
+
+                // ШАГ 4: Обновляем кэш available_balance (из леджера — SUM за этот батч)
+                // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                $step4 = $wpdb->query($wpdb->prepare(
+                    "INSERT INTO `{$prefix}cashback_user_balance`
+                         (user_id, available_balance, version)
+                     SELECT user_id, SUM(cashback), 0
+                     FROM `{$prefix}cashback_transactions`
+                     WHERE processed_batch_id = %s AND cashback > 0
+                     GROUP BY user_id
+                     ON DUPLICATE KEY UPDATE
+                         available_balance = available_balance + VALUES(available_balance),
+                         version = version + 1",
+                    $batch_id
+                ));
+
+                if ($step4 === false) {
+                    throw new \RuntimeException('Step 4 (update balance cache) failed: ' . $wpdb->last_error);
+                }
+
+                // ШАГ 4.5: Начисление партнёрских комиссий (affiliate module)
+                // NON-FATAL: ошибка affiliate не блокирует начисление кешбэка
+                if (class_exists('Cashback_Affiliate_DB')
+                    && Cashback_Affiliate_DB::is_module_enabled()
+                    && class_exists('Cashback_Affiliate_Service')
+                ) {
+                    try {
+                        $aff_result = Cashback_Affiliate_Service::process_affiliate_commissions($candidates);
+                        if (!empty($aff_result['errors'])) {
+                            foreach ($aff_result['errors'] as $aff_err) {
+                                $errors[] = '[Affiliate] ' . $aff_err;
+                            }
+                        }
+                    } catch (\Throwable $aff_e) {
+                        error_log('[Cashback] Affiliate commission error (non-fatal): ' . $aff_e->getMessage());
+                        $errors[] = '[Affiliate] ' . $aff_e->getMessage();
+                    }
+                }
+
+                // ��АГ 5: Переводим в финальный статус balance
+                // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                $step5 = $wpdb->query($wpdb->prepare(
+                    "UPDATE `{$prefix}cashback_transactions`
+                     SET order_status = 'balance'
+                     WHERE processed_batch_id = %s AND order_status = 'completed'",
+                    $batch_id
+                ));
+
+                if ($step5 === false) {
+                    throw new \RuntimeException('Step 5 (finalize status) failed: ' . $wpdb->last_error);
+                }
+            }
+
+            $wpdb->query('COMMIT');
+        } catch (\Throwable $e) {
+            $wpdb->query('ROLLBACK');
+            $errors[] = $e->getMessage();
+            error_log('[Cashback] process_ready_transactions error: ' . $e->getMessage());
+        }
+
+        return [
+            'processed'       => $total_processed,
+            'ledger_inserted' => $total_ledger,
+            'errors'          => $errors,
+        ];
+    }
+
+    /**
+     * Проверка консистентности баланса пользователя: леджер vs кэш.
+     *
+     * Сравнивает SUM(amount) из cashback_balance_ledger с данными cashback_user_balance.
+     * Обнаруживает:
+     * - Расхождения суммы начислений (ledger vs available_balance)
+     * - Дублированные accrual записи (одна транзакция = одно начисление)
+     * - Выплаты без payout_hold записи
+     * - Отрицательный расчётный баланс
+     *
+     * @param int $user_id ID пользователя
+     * @return array{consistent: bool, details: array}
+     */
+    public static function validate_user_balance_consistency(int $user_id): array
+    {
+        global $wpdb;
+        $prefix = $wpdb->prefix;
+
+        $issues = [];
+
+        // 1. Суммы из леджера по типам операций
+        $ledger_sums = $wpdb->get_results($wpdb->prepare(
+            "SELECT type, SUM(amount) as total, COUNT(*) as cnt
+             FROM `{$prefix}cashback_balance_ledger`
+             WHERE user_id = %d
+             GROUP BY type",
+            $user_id
+        ), ARRAY_A);
+
+        $sums = [
+            'accrual'             => '0.00',
+            'payout_hold'         => '0.00',
+            'payout_complete'     => '0.00',
+            'payout_cancel'       => '0.00',
+            'payout_declined'     => '0.00',
+            'adjustment'          => '0.00',
+            'affiliate_accrual'   => '0.00',
+            'affiliate_reversal'  => '0.00',
+            'affiliate_freeze'    => '0.00',
+            'affiliate_unfreeze'  => '0.00',
+        ];
+        $counts = [];
+        foreach ($ledger_sums as $row) {
+            $sums[$row['type']] = $row['total'];
+            $counts[$row['type']] = (int) $row['cnt'];
+        }
+
+        // Абсолютные значен��я сумм (все hold/complete/declined записаны как отрицательные)
+        $abs_hold     = bcmul($sums['payout_hold'], '-1', 2);
+        $abs_complete = bcmul($sums['payout_complete'], '-1', 2);
+        $abs_declined = bcmul($sums['payout_declined'], '-1', 2);
+
+        // Affiliate contributions (все в одном леджере)
+        // affiliate_accrual (+), affiliate_reversal (-), affiliate_freeze (-), affiliate_unfreeze (+)
+        $aff_net = bcadd(
+            bcadd($sums['affiliate_accrual'], $sums['affiliate_reversal'], 2),
+            bcadd($sums['affiliate_freeze'], $sums['affiliate_unfreeze'], 2),
+            2
+        );
+        // affiliate_freeze �� отрицательная су��ма, |freeze| - unfreeze = замороженна�� affiliate часть
+        $aff_frozen = bcadd(bcmul($sums['affiliate_freeze'], '-1', 2), bcmul($sums['affiliate_unfreeze'], '-1', 2), 2);
+        if (bccomp($aff_frozen, '0', 2) < 0) {
+            $aff_frozen = '0.00';
+        }
+
+        // Расчётный available: accrual - |hold| + cancel + adjustment + affiliate_net
+        // payout_hold отрицательный → bcadd с отрицательным = вычитание
+        $ledger_available = bcadd(
+            bcadd(
+                bcadd(
+                    bcadd($sums['accrual'], $sums['payout_hold'], 2),
+                    $sums['payout_cancel'],
+                    2
+                ),
+                $sums['adjustment'],
+                2
+            ),
+            $aff_net,
+            2
+        );
+
+        // Расчётный pending: |hold| - |complete| - |declined| - cancel
+        // hold → день��и заблокированы, complete → выплачены, declined → заморожены, cancel → возвращены
+        $ledger_pending = bcsub(
+            bcsub(bcsub($abs_hold, $abs_complete, 2), $abs_declined, 2),
+            $sums['payout_cancel'],
+            2
+        );
+
+        // Расчётный paid: |payout_complete| (только реально выплаченные)
+        $ledger_paid = $abs_complete;
+
+        // Расчётный frozen (из леджера): |payout_declined| + affiliate frozen portion
+        $ledger_frozen = bcadd($abs_declined, $aff_frozen, 2);
+
+        // 2. Кэш из cashback_user_balance
+        $cache = $wpdb->get_row($wpdb->prepare(
+            "SELECT available_balance, pending_balance, paid_balance, frozen_balance
+             FROM `{$prefix}cashback_user_balance`
+             WHERE user_id = %d",
+            $user_id
+        ), ARRAY_A);
+
+        $cache_available = $cache['available_balance'] ?? '0.00';
+        $cache_pending   = $cache['pending_balance'] ?? '0.00';
+        $cache_paid      = $cache['paid_balance'] ?? '0.00';
+
+        // 3. Сравнени��
+        $frozen = $cache['frozen_balance'] ?? '0.00';
+        $is_banned = bccomp($frozen, '0', 2) > 0;
+
+        // ��сновная проверка: сумма в��ех денег в си��теме должна совпадать
+        $ledger_total = bcadd(bcadd(bcadd($ledger_available, $ledger_pending, 2), $ledger_paid, 2), $ledger_frozen, 2);
+        $cache_total = bcadd(bcadd(bcadd($cache_available, $cache_pending, 2), $cache_paid, 2), $frozen, 2);
+
+        if (bccomp($ledger_total, $cache_total, 2) !== 0) {
+            $issues[] = sprintf(
+                'total balance mismatch: ledger=%s, cache=%s (available=%s, pending=%s, paid=%s, frozen=%s)',
+                $ledger_total,
+                $cache_total,
+                $cache_available,
+                $cache_pending,
+                $cache_paid,
+                $frozen
+            );
+        }
+
+        // Детальная проверка по полям (только для не забаненных)
+        if (!$is_banned) {
+            if (bccomp($ledger_available, $cache_available, 2) !== 0) {
+                $issues[] = sprintf(
+                    'available_balance mismatch: ledger=%s, cache=%s',
+                    $ledger_available,
+                    $cache_available
+                );
+            }
+
+            if (bccomp($ledger_pending, $cache_pending, 2) !== 0) {
+                $issues[] = sprintf(
+                    'pending_balance mismatch: ledger=%s, cache=%s',
+                    $ledger_pending,
+                    $cache_pending
+                );
+            }
+
+            if (bccomp($ledger_frozen, $frozen, 2) !== 0) {
+                $issues[] = sprintf(
+                    'frozen_balance mismatch: ledger(declined)=%s, cache=%s',
+                    $ledger_frozen,
+                    $frozen
+                );
+            }
+        } else {
+            // Для забаненного: триггер переносит available+pending → frozen
+            $ledger_ban_frozen = bcadd(bcadd($ledger_available, $ledger_pending, 2), $ledger_frozen, 2);
+            if (bccomp($ledger_ban_frozen, $frozen, 2) !== 0) {
+                $issues[] = sprintf(
+                    'frozen_balance mismatch (banned): ledger(available+pending+declined)=%s, cache frozen=%s',
+                    $ledger_ban_frozen,
+                    $frozen
+                );
+            }
+        }
+
+        if (bccomp($ledger_paid, $cache_paid, 2) !== 0) {
+            $issues[] = sprintf(
+                'paid_balance mismatch: ledger=%s, cache=%s',
+                $ledger_paid,
+                $cache_paid
+            );
+        }
+
+        // 4. Дублированные accrual по transaction_id
+        $dup_accruals = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM (
+                SELECT transaction_id, COUNT(*) as cnt
+                FROM `{$prefix}cashback_balance_ledger`
+                WHERE user_id = %d AND type = 'accrual' AND transaction_id IS NOT NULL
+                GROUP BY transaction_id
+                HAVING cnt > 1
+            ) dups",
+            $user_id
+        ));
+
+        if ($dup_accruals > 0) {
+            $issues[] = sprintf('duplicate accrual entries: %d transaction_ids with multiple accruals', $dup_accruals);
+        }
+
+        // 5. Отрицательный расчётный ба��анс
+        if (bccomp($ledger_available, '0', 2) < 0) {
+            $issues[] = sprintf('negative calculated available balance: %s', $ledger_available);
+        }
+
+        // 6. Выплаченные payout без hold записи
+        $payouts_without_hold = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(DISTINCT l.payout_request_id)
+             FROM `{$prefix}cashback_balance_ledger` l
+             WHERE l.user_id = %d
+               AND l.type = 'payout_complete'
+               AND l.payout_request_id IS NOT NULL
+               AND l.payout_request_id NOT IN (
+                   SELECT payout_request_id
+                   FROM `{$prefix}cashback_balance_ledger`
+                   WHERE user_id = %d AND type = 'payout_hold' AND payout_request_id IS NOT NULL
+               )",
+            $user_id,
+            $user_id
+        ));
+
+        if ($payouts_without_hold > 0) {
+            $issues[] = sprintf('payout_complete without payout_hold: %d payouts', $payouts_without_hold);
+        }
+
+        return [
+            'consistent' => empty($issues),
+            'details'    => [
+                'ledger' => [
+                    'available' => $ledger_available,
+                    'pending'   => $ledger_pending,
+                    'paid'      => $ledger_paid,
+                    'sums'      => $sums,
+                    'counts'    => $counts,
+                ],
+                'cache' => $cache ?: [],
+                'issues' => $issues,
+            ],
+        ];
+    }
+
+    // =========================================================================
     // Partner Token — замена user_id в партнёрских ссылках
     // =========================================================================
 
