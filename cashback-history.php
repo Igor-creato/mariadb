@@ -133,7 +133,7 @@ class CashbackHistory
 
             foreach ($transactions as $transaction) {
                 echo '<tr>';
-                echo '<td>' . $this->format_date($transaction->created_at) . '</td>';
+                echo '<td>' . $this->format_date($transaction->action_date ?? $transaction->created_at) . '</td>';
                 echo '<td>' . esc_html($transaction->offer_name ?? __('Н/Д', 'cashback-plugin')) . '</td>';
                 echo '<td>' . esc_html($transaction->order_number ?? __('Н/Д', 'cashback-plugin')) . '</td>';
                 echo '<td>' . esc_html($transaction->cashback ?? '0.00') . '</td>';
@@ -225,7 +225,7 @@ class CashbackHistory
         global $wpdb;
         $table_name = $wpdb->prefix . 'cashback_transactions';
         return $wpdb->get_results($wpdb->prepare(
-            "SELECT created_at, offer_name, order_number, cashback, order_status
+            "SELECT action_date, created_at, offer_name, order_number, cashback, order_status
              FROM {$table_name}
              WHERE user_id = %d
              ORDER BY created_at DESC
@@ -295,7 +295,7 @@ class CashbackHistory
         $html = '';
         foreach ($transactions as $transaction) {
             $html .= '<tr>';
-            $html .= '<td>' . $this->format_date($transaction->created_at) . '</td>';
+            $html .= '<td>' . $this->format_date($transaction->action_date ?? $transaction->created_at) . '</td>';
             $html .= '<td>' . esc_html($transaction->offer_name ?? __('Н/Д', 'cashback-plugin')) . '</td>';
             $html .= '<td>' . esc_html($transaction->order_number ?? __('Н/Д', 'cashback-plugin')) . '</td>';
             $html .= '<td>' . esc_html($transaction->cashback ?? '0.00') . '</td>';
