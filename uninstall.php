@@ -76,6 +76,8 @@ function cashback_plugin_uninstall(): void
         "{$prefix}cashback_support_messages",
         "{$prefix}cashback_audit_log",
         "{$prefix}cashback_click_log",
+        "{$prefix}cashback_sync_log",
+        "{$prefix}cashback_validation_checkpoints",
     ];
 
     // Drop triggers
@@ -152,8 +154,6 @@ function cashback_plugin_uninstall(): void
         'cashback_support_max_files_per_message',
         'cashback_support_allowed_extensions',
         'cashback_plugin_version',
-        'cashback_plugin_db_version',
-        'cashback_encryption_migrated',
         // Antifraud settings
         'cashback_fraud_enabled',
         'cashback_fraud_max_users_per_ip',
@@ -175,9 +175,6 @@ function cashback_plugin_uninstall(): void
         'cashback_events_active',
         // API sync results
         'cashback_last_sync_result',
-        // Migration flags
-        'cashback_migrated_uuid_ascii',
-        'cashback_migrated_affiliate_ledger',
         // Global lock
         'cashback_global_lock_active',
         // Affiliate module

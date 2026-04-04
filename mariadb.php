@@ -72,17 +72,7 @@ class Mariadb_Plugin
         try {
             $instance->ensure_users_table_innodb();
             $instance->create_tables();
-            $instance->migrate_add_reference_id();
-            $instance->migrate_add_bank_required();
             $instance->create_triggers();
-            $instance->migrate_backfill_webhook_payload_hash();
-            $instance->migrate_add_stats_indexes();
-            $instance->migrate_add_original_cpa_subid();
-            $instance->migrate_add_webhook_processing_status();
-            $instance->migrate_add_funds_ready();
-            $instance->migrate_uuid_columns_to_ascii();
-            $instance->migrate_merge_affiliate_ledger();
-            $instance->migrate_add_partner_token();
             $instance->create_events();
             $instance->initialize_existing_users();
 
@@ -169,6 +159,16 @@ class Mariadb_Plugin
             `name` varchar(255) NOT NULL COMMENT 'Название партнера',
             `slug` varchar(100) NOT NULL COMMENT 'Уникальный идентификатор',
             `notes` text DEFAULT NULL COMMENT 'Примечание',
+            `api_base_url` varchar(500) DEFAULT NULL COMMENT 'Base URL API сети (например https://api.admitad.com)',
+            `api_auth_type` enum('oauth2','api_key') NOT NULL DEFAULT 'oauth2' COMMENT 'Тип авторизации API',
+            `api_credentials` BLOB DEFAULT NULL COMMENT 'AES-256 зашифрованные credentials (JSON)',
+            `api_user_field` varchar(100) DEFAULT NULL COMMENT 'Имя поля в API, содержащего user_id (subid для Admitad)',
+            `api_click_field` varchar(100) DEFAULT NULL COMMENT 'Имя поля в API, содержащего click_id (subid1 для Admitad)',
+            `api_status_map` text DEFAULT NULL COMMENT 'JSON маппинг статусов сети → локальные',
+            `api_field_map` text DEFAULT NULL COMMENT 'JSON маппинг полей API → колонки таблицы транзакций',
+            `api_actions_endpoint` varchar(500) DEFAULT NULL COMMENT 'Endpoint для получения действий (/statistics/actions/)',
+            `api_token_endpoint` varchar(500) DEFAULT NULL COMMENT 'Endpoint для получения токена (/token/)',
+            `api_website_id` varchar(100) DEFAULT NULL COMMENT 'ID площадки в CPA-сети (для фильтрации)',
             `sort_order` int(11) NOT NULL DEFAULT 0 COMMENT 'Порядок сортировки',
             `is_active` tinyint(1) NOT NULL DEFAULT 1 COMMENT '1 = активен',
             `created_at` datetime DEFAULT current_timestamp(),
@@ -216,7 +216,8 @@ class Mariadb_Plugin
             KEY `idx_provider_payout_id` (`provider_payout_id`),
             KEY `idx_refunded` (`refunded_at`),
             KEY `idx_payout_method_slug` (`payout_method`),
-            KEY `idx_user_created` (`user_id`,`created_at` DESC)
+            KEY `idx_user_created` (`user_id`,`created_at` DESC),
+            KEY `idx_stats_created_at` (`created_at`)
         ) ENGINE=InnoDB {$charset_collate} COMMENT='Заявки на выплаты с защитой от дублирования';";
 
         // Таблица cashback_transactions (FK и CHECK добавляются в Фазе 2)
@@ -257,7 +258,8 @@ class Mariadb_Plugin
             KEY `idx_processed_batch_id` (`processed_batch_id`),
             KEY `idx_click_id` (`click_id`),
             KEY `idx_offer_id` (`offer_id`),
-            KEY `idx_balance_candidates` (`order_status`,`api_verified`,`funds_ready`,`processed_at`,`spam_click`,`cashback`)
+            KEY `idx_balance_candidates` (`order_status`,`api_verified`,`funds_ready`,`processed_at`,`spam_click`,`cashback`),
+            KEY `idx_stats_created_at` (`created_at`)
         ) ENGINE=InnoDB {$charset_collate};";
 
         // Таблица cashback_unregistered_transactions
@@ -290,7 +292,9 @@ class Mariadb_Plugin
             `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
             PRIMARY KEY (`id`),
             UNIQUE KEY `unique_uniq_partner` (`uniq_id`,`partner`),
-            UNIQUE KEY `idx_idempotency_key` (`idempotency_key`)
+            UNIQUE KEY `idx_idempotency_key` (`idempotency_key`),
+            KEY `idx_click_id` (`click_id`),
+            KEY `idx_stats_created_at` (`created_at`)
         ) ENGINE=InnoDB {$charset_collate} COMMENT='Вэбхуки принятые от неавторизованных пользователей';";
 
         // Таблица cashback_user_balance (FK и CHECK добавляются в Фазе 2)
@@ -404,6 +408,51 @@ class Mariadb_Plugin
             KEY `idx_user_created` (`user_id`,`created_at`)
         ) ENGINE=InnoDB {$charset_collate} COMMENT='Леджер баланса: единственный источник правды';";
 
+        // Таблица чекпоинтов валидации (API сверка)
+        $table_validation_checkpoints = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_validation_checkpoints` (
+            `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            `user_id` bigint(20) unsigned NOT NULL,
+            `network_slug` varchar(100) NOT NULL COMMENT 'Slug CPA-сети (admitad, epn)',
+            `last_validated_date` date NOT NULL COMMENT 'До какой даты данные проверены',
+            `api_sum_approved` decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'Сумма approved по API',
+            `api_sum_pending` decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'Сумма pending по API',
+            `api_sum_declined` decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'Сумма declined по API',
+            `api_actions_count` int(11) NOT NULL DEFAULT 0 COMMENT 'Кол-во действий в API',
+            `local_sum_approved` decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'Сумма approved локально',
+            `local_sum_pending` decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'Сумма pending локально',
+            `local_sum_declined` decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'Сумма declined локально',
+            `local_transactions_count` int(11) NOT NULL DEFAULT 0 COMMENT 'Кол-во транзакций локально',
+            `validation_status` enum('match','mismatch','pending','error') NOT NULL DEFAULT 'pending',
+            `discrepancy_amount` decimal(18,2) NOT NULL DEFAULT 0.00 COMMENT 'Разница между API и локальными данными',
+            `matched_count` int(11) NOT NULL DEFAULT 0 COMMENT 'Кол-во совпавших транзакций',
+            `mismatch_count` int(11) NOT NULL DEFAULT 0 COMMENT 'Кол-во расхождений',
+            `missing_local_count` int(11) NOT NULL DEFAULT 0 COMMENT 'Есть в API, нет локально',
+            `missing_api_count` int(11) NOT NULL DEFAULT 0 COMMENT 'Есть локально, нет в API',
+            `validated_at` datetime DEFAULT NULL COMMENT 'Когда проводилась валидация',
+            `validated_by` bigint(20) unsigned DEFAULT NULL COMMENT 'Кто инициировал валидацию (admin user_id)',
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uk_user_network` (`user_id`, `network_slug`),
+            KEY `idx_validation_status` (`validation_status`),
+            KEY `idx_validated_at` (`validated_at`)
+        ) ENGINE=InnoDB {$charset_collate} COMMENT='Чекпоинты инкрементальной валидации кэшбэка';";
+
+        // Таблица лога синхронизации
+        $table_sync_log = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_sync_log` (
+            `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            `network_slug` varchar(100) NOT NULL COMMENT 'Slug CPA-сети',
+            `transaction_id` bigint(20) unsigned NOT NULL COMMENT 'ID локальной транзакции',
+            `action_id` varchar(255) DEFAULT NULL COMMENT 'ID действия в CPA-сети',
+            `old_status` varchar(50) NOT NULL COMMENT 'Статус до синхронизации',
+            `new_status` varchar(50) NOT NULL COMMENT 'Статус после синхронизации',
+            `api_payment` decimal(18,2) DEFAULT NULL COMMENT 'Сумма комиссии по API',
+            `sync_type` enum('cron','manual','webhook','auto_decline') NOT NULL DEFAULT 'cron' COMMENT 'Источник синхронизации',
+            `synced_at` datetime NOT NULL DEFAULT current_timestamp(),
+            PRIMARY KEY (`id`),
+            KEY `idx_transaction_id` (`transaction_id`),
+            KEY `idx_network_synced` (`network_slug`, `synced_at`),
+            KEY `idx_synced_at` (`synced_at`)
+        ) ENGINE=InnoDB {$charset_collate} COMMENT='Лог синхронизации статусов транзакций через API';";
+
         // Порядок создания: сначала справочники, потом зависимые таблицы
         $tables = [
             'cashback_payout_methods'          => $table_payout_methods,
@@ -418,6 +467,8 @@ class Mariadb_Plugin
             'cashback_webhooks'                => $table_webhooks,
             'cashback_user_profile'            => $table_profile,
             'cashback_click_log'               => $table_click_log,
+            'cashback_validation_checkpoints'  => $table_validation_checkpoints,
+            'cashback_sync_log'                => $table_sync_log,
         ];
 
         $failed_tables = [];
@@ -455,6 +506,7 @@ class Mariadb_Plugin
         // Инициализация начальных данных в справочные таблицы
         $this->insert_default_payout_methods();
         $this->insert_default_banks();
+        $this->insert_default_api_config();
 
         // Таблица аудит-лога
         $this->create_audit_log_table();
@@ -622,6 +674,87 @@ class Mariadb_Plugin
         }
 
         error_log('Mariadb Plugin: Initialized ' . count($defaults) . ' default banks');
+    }
+
+    /**
+     * Заполнить дефолтную API-конфигурацию для Admitad и EPN.
+     * Только если колонки api_base_url пустые (не перезаписывает ручную настройку).
+     */
+    private function insert_default_api_config(): void
+    {
+        global $wpdb;
+        $table = $wpdb->prefix . 'cashback_affiliate_networks';
+
+        // Admitad
+        $admitad_url = $wpdb->get_var($wpdb->prepare(
+            "SELECT api_base_url FROM `{$table}` WHERE slug = %s",
+            'admitad'
+        ));
+
+        if ($admitad_url === null || $admitad_url === '') {
+            $wpdb->update(
+                $table,
+                [
+                    'api_base_url'         => 'https://api.admitad.com',
+                    'api_token_endpoint'   => '/token/',
+                    'api_actions_endpoint' => '/statistics/actions/',
+                    'api_user_field'       => 'subid',
+                    'api_click_field'      => 'subid1',
+                    'api_status_map'       => wp_json_encode([
+                        'pending'  => 'waiting',
+                        'approved' => 'completed',
+                        'declined' => 'declined',
+                        'rejected' => 'declined',
+                        'open'     => 'waiting',
+                        'hold'     => 'waiting',
+                    ]),
+                    'api_field_map'        => wp_json_encode([
+                        'payment'          => 'comission',
+                        'cart'             => 'sum_order',
+                        'action_id'        => 'uniq_id',
+                        'order_id'         => 'order_number',
+                        'advcampaign_id'   => 'offer_id',
+                        'advcampaign_name' => 'offer_name',
+                    ]),
+                ],
+                ['slug' => 'admitad']
+            );
+        }
+
+        // EPN
+        $epn_url = $wpdb->get_var($wpdb->prepare(
+            "SELECT api_base_url FROM `{$table}` WHERE slug = %s",
+            'epn'
+        ));
+
+        if ($epn_url === null || $epn_url === '') {
+            $wpdb->update(
+                $table,
+                [
+                    'api_base_url'         => 'https://oauth2.epn.bz',
+                    'api_token_endpoint'   => '/token',
+                    'api_actions_endpoint' => 'https://app.epn.bz/transactions/user',
+                    'api_user_field'       => 'sub',
+                    'api_click_field'      => 'click_id',
+                    'api_status_map'       => wp_json_encode([
+                        'pending'  => 'waiting',
+                        'approved' => 'completed',
+                        'rejected' => 'declined',
+                        'canceled' => 'declined',
+                        'hold'     => 'waiting',
+                    ]),
+                    'api_field_map'        => wp_json_encode([
+                        'payment'          => 'comission',
+                        'cart'             => 'sum_order',
+                        'action_id'        => 'uniq_id',
+                        'order_id'         => 'order_number',
+                        'advcampaign_id'   => 'offer_id',
+                        'advcampaign_name' => 'offer_name',
+                    ]),
+                ],
+                ['slug' => 'epn']
+            );
+        }
     }
 
     /**
@@ -1228,924 +1361,6 @@ class Mariadb_Plugin
         return $result;
     }
 
-    /**
-     * Миграция: добавление колонки reference_id в cashback_payout_requests
-     * Бэкфилл существующих записей уникальными идентификаторами
-     *
-     * @return void
-     */
-    private function migrate_add_reference_id(): void
-    {
-        global $wpdb;
-
-        $table = $wpdb->prefix . 'cashback_payout_requests';
-
-        // Шаг 1: Проверяем наличие колонки
-        $column_exists = $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM information_schema.COLUMNS
-             WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s AND COLUMN_NAME = 'reference_id'",
-            DB_NAME,
-            $table
-        ));
-
-        if (!$column_exists) {
-            // Шаг 2: Добавляем колонку
-            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $table is $wpdb->prefix . hardcoded name, not user input
-            $wpdb->query("ALTER TABLE `{$table}` ADD COLUMN `reference_id` varchar(11) NOT NULL DEFAULT '' COMMENT 'Публичный ID заявки формата WD-XXXXXXXX' AFTER `id`");
-
-            if ($wpdb->last_error) {
-                error_log('[Cashback] Failed to add reference_id column: ' . $wpdb->last_error);
-                return;
-            }
-        }
-
-        // Шаг 3: Бэкфилл записей с пустым reference_id
-        $batch_size = 100;
-        $max_retries = 5;
-
-        do {
-            $rows = $wpdb->get_results(
-                $wpdb->prepare(
-                    "SELECT id FROM `{$table}` WHERE reference_id = '' LIMIT %d",
-                    $batch_size
-                )
-            );
-
-            if (empty($rows)) {
-                break;
-            }
-
-            foreach ($rows as $row) {
-                $updated = false;
-
-                for ($attempt = 0; $attempt < $max_retries; $attempt++) {
-                    $ref_id = self::generate_reference_id();
-                    $result = $wpdb->update(
-                        $table,
-                        array('reference_id' => $ref_id),
-                        array('id' => $row->id),
-                        array('%s'),
-                        array('%d')
-                    );
-
-                    if ($result !== false) {
-                        $updated = true;
-                        break;
-                    }
-
-                    // Если ошибка не связана с дубликатом — прекращаем
-                    if (strpos($wpdb->last_error, 'Duplicate') === false) {
-                        error_log('[Cashback] Failed to update reference_id for payout #' . $row->id . ': ' . $wpdb->last_error);
-                        break;
-                    }
-                }
-
-                if (!$updated) {
-                    error_log('[Cashback] Could not generate unique reference_id for payout #' . $row->id . ' after ' . $max_retries . ' attempts');
-                }
-            }
-        } while (!empty($rows));
-
-        // Шаг 4: Добавляем UNIQUE индекс если отсутствует
-        $index_exists = $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM information_schema.STATISTICS
-             WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s AND INDEX_NAME = 'uk_reference_id'",
-            DB_NAME,
-            $table
-        ));
-
-        if (!$index_exists) {
-            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $table is $wpdb->prefix . hardcoded name, not user input
-            $wpdb->query("ALTER TABLE `{$table}` ADD UNIQUE KEY `uk_reference_id` (`reference_id`)");
-
-            if ($wpdb->last_error) {
-                error_log('[Cashback] Failed to add uk_reference_id index: ' . $wpdb->last_error);
-            }
-        }
-    }
-
-    /**
-     * Миграция: добавление колонки bank_required в cashback_payout_methods
-     * DEFAULT 1 — все существующие способы продолжат требовать банк
-     *
-     * @return void
-     */
-    private function migrate_add_bank_required(): void
-    {
-        global $wpdb;
-
-        $table = $wpdb->prefix . 'cashback_payout_methods';
-
-        $column_exists = $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM information_schema.COLUMNS
-             WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s AND COLUMN_NAME = 'bank_required'",
-            DB_NAME,
-            $table
-        ));
-
-        if (!$column_exists) {
-            $wpdb->query(
-                "ALTER TABLE `{$table}` ADD COLUMN `bank_required` tinyint(1) NOT NULL DEFAULT 1 COMMENT '1 = для этого способа нужно выбрать банк' AFTER `sort_order`"
-            );
-
-            if ($wpdb->last_error) {
-                error_log('[Cashback] Failed to add bank_required column: ' . $wpdb->last_error);
-            }
-        }
-    }
-
-    /**
-     * Бэкфилл payload_hash для существующих записей в cashback_webhooks.
-     *
-     * После удаления GENERATED ALWAYS AS (SHA2(payload, 256)) STORED
-     * старые записи остались с payload_hash = NULL. Обновляем батчами.
-     */
-    private function migrate_backfill_webhook_payload_hash(): void
-    {
-        global $wpdb;
-
-        $table = $wpdb->prefix . 'cashback_webhooks';
-
-        // Проверяем есть ли записи с NULL хешем
-        $null_count = (int) $wpdb->get_var(
-            "SELECT COUNT(*) FROM `{$table}` WHERE payload_hash IS NULL"
-        );
-
-        if ($null_count === 0) {
-            return;
-        }
-
-        // Батчевое обновление по 5000 записей
-        $max_iterations = 100;
-        $iteration = 0;
-
-        do {
-            $affected = $wpdb->query(
-                "UPDATE `{$table}` SET payload_hash = SHA2(payload, 256) WHERE payload_hash IS NULL LIMIT 5000"
-            );
-
-            $iteration++;
-        } while ($affected > 0 && $iteration < $max_iterations);
-
-        error_log(sprintf('[Cashback] Webhook payload_hash backfill complete. Updated %d records.', $null_count));
-    }
-
-    /**
-     * Добавляет индексы на created_at для таблиц статистики.
-     * Индексы позволяют использовать range-сканирование вместо full table scan.
-     */
-    private function migrate_add_stats_indexes(): void
-    {
-        global $wpdb;
-
-        $tables = [
-            $wpdb->prefix . 'cashback_transactions',
-            $wpdb->prefix . 'cashback_unregistered_transactions',
-            $wpdb->prefix . 'cashback_payout_requests',
-        ];
-
-        foreach ($tables as $table) {
-            $idx_exists = (int) $wpdb->get_var($wpdb->prepare(
-                "SELECT COUNT(*) FROM information_schema.STATISTICS
-                 WHERE TABLE_SCHEMA = DATABASE()
-                   AND TABLE_NAME = %s
-                   AND INDEX_NAME = 'idx_stats_created_at'",
-                $table
-            ));
-
-            if (!$idx_exists) {
-                $wpdb->query("ALTER TABLE `{$table}` ADD INDEX `idx_stats_created_at` (`created_at`)");
-            }
-        }
-    }
-
-    /**
-     * Добавляет колонку original_cpa_subid в cashback_transactions.
-     *
-     * Хранит оригинальный subid2, переданный в CPA-сеть при клике пользователя.
-     * Для транзакций, перенесённых из незарегистрированных, содержит 'unregistered'
-     * (или иное значение user_id, которое было в CPA на момент клика).
-     * Используется в validate_user() для корректного поиска таких транзакций в API.
-     */
-    private function migrate_add_original_cpa_subid(): void
-    {
-        global $wpdb;
-
-        $table = $wpdb->prefix . 'cashback_transactions';
-
-        $column_exists = (int) $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM information_schema.COLUMNS
-             WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s AND COLUMN_NAME = 'original_cpa_subid'",
-            DB_NAME,
-            $table
-        ));
-
-        if (!$column_exists) {
-            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $table is $wpdb->prefix . hardcoded name
-            $wpdb->query("ALTER TABLE `{$table}` ADD COLUMN `original_cpa_subid` varchar(255) DEFAULT NULL COMMENT 'Оригинальный subid2 переданный в CPA при клике. Для перенесённых из unregistered = значение user_id на момент клика (например: unregistered)' AFTER `idempotency_key`");
-
-            if ($wpdb->last_error) {
-                error_log('[Cashback] Failed to add original_cpa_subid column: ' . $wpdb->last_error);
-            }
-        }
-    }
-
-    /**
-     * Добавляет колонку processing_status в cashback_webhooks.
-     *
-     * Используется webhook-receiver для маркировки результата проверки click_id.
-     * NULL   = вебхук ещё не обработан или пришёл до введения этого функционала.
-     * ok     = click_id найден, user_id совпадает.
-     * click_not_found = click_id отсутствует в постбэке или не найден в cashback_click_log.
-     * user_mismatch   = click_id найден, но user_id из постбэка ≠ user_id из click_log.
-     * error  = ошибка обработки на стороне воркера.
-     */
-    private function migrate_add_webhook_processing_status(): void
-    {
-        global $wpdb;
-
-        $table = $wpdb->prefix . 'cashback_webhooks';
-
-        $column_exists = (int) $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM information_schema.COLUMNS
-             WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s AND COLUMN_NAME = 'processing_status'",
-            DB_NAME,
-            $table
-        ));
-
-        if (!$column_exists) {
-            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-            $wpdb->query(
-                "ALTER TABLE `{$table}`
-                 ADD COLUMN `processing_status`
-                     ENUM('ok','click_not_found','user_mismatch','error')
-                     DEFAULT NULL
-                     AFTER `network_slug`"
-            );
-
-            if ($wpdb->last_error) {
-                error_log('[Cashback] Failed to add processing_status column to cashback_webhooks: ' . $wpdb->last_error);
-            }
-        }
-
-        $idx_exists = (int) $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM information_schema.STATISTICS
-             WHERE TABLE_SCHEMA = DATABASE()
-               AND TABLE_NAME = %s
-               AND INDEX_NAME = 'idx_processing_status'",
-            $table
-        ));
-
-        if (!$idx_exists) {
-            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-            $wpdb->query("ALTER TABLE `{$table}` ADD INDEX `idx_processing_status` (`processing_status`)");
-        }
-    }
-
-    /**
-     * Миграция: добавляет поле funds_ready в таблицы транзакций.
-     * funds_ready=1 означает что CPA-сеть подтвердила готовность средств к снятию.
-     * Admitad: поле processed=1. EPN: статус approved (нет отдельного флага).
-     */
-    private function migrate_add_funds_ready(): void
-    {
-        global $wpdb;
-
-        $tables = [
-            $wpdb->prefix . 'cashback_transactions',
-            $wpdb->prefix . 'cashback_unregistered_transactions',
-        ];
-
-        foreach ($tables as $table) {
-            $column_exists = (int) $wpdb->get_var($wpdb->prepare(
-                "SELECT COUNT(*) FROM information_schema.COLUMNS
-                 WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s AND COLUMN_NAME = 'funds_ready'",
-                DB_NAME,
-                $table
-            ));
-
-            if (!$column_exists) {
-                // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-                $wpdb->query(
-                    "ALTER TABLE `{$table}`
-                     ADD COLUMN `funds_ready` TINYINT(1) NOT NULL DEFAULT 0
-                     COMMENT '1 = CPA-сеть подтвердила готовность средств к снятию'
-                     AFTER `spam_click`"
-                );
-
-                if ($wpdb->last_error) {
-                    error_log('[Cashback] Failed to add funds_ready column to ' . $table . ': ' . $wpdb->last_error);
-                }
-            }
-        }
-
-        // Обновляем индекс idx_balance_candidates в cashback_transactions
-        $tx_table = $wpdb->prefix . 'cashback_transactions';
-        $idx_exists = (int) $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM information_schema.STATISTICS
-             WHERE TABLE_SCHEMA = DATABASE()
-               AND TABLE_NAME = %s
-               AND INDEX_NAME = 'idx_balance_candidates'
-               AND COLUMN_NAME = 'funds_ready'",
-            $tx_table
-        ));
-
-        if (!$idx_exists) {
-            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-            $wpdb->query("ALTER TABLE `{$tx_table}` DROP INDEX IF EXISTS `idx_balance_candidates`");
-            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-            $wpdb->query(
-                "ALTER TABLE `{$tx_table}`
-                 ADD KEY `idx_balance_candidates`
-                 (`order_status`,`api_verified`,`funds_ready`,`processed_at`,`spam_click`,`cashback`)"
-            );
-        }
-    }
-
-    /**
-     * Атомарно начисляет кешбэк по транзакциям с funds_ready=1.
-     *
-     * КРИТИЧНО: Эта функция ДОЛЖНА вызываться ТОЛЬКО внутри sync-процесса
-     * при удержанном глобальном cashback-lock. Вне sync вызов запрещён.
-     *
-     * Атомарность: SELECT FOR UPDATE → INSERT IGNORE в ledger → обновление balance-кэша → статус balance.
-     * Идемпотентность: UNIQUE(idempotency_key) = "accrual_{transaction_id}" защищает от двойных начислений.
-     *
-     * @return array{processed: int, ledger_inserted: int, errors: string[]}
-     */
-    public static function process_ready_transactions(): array
-    {
-        global $wpdb;
-        $prefix = $wpdb->prefix;
-
-        // Проверяем что глобальный lock удержан (вызов разрешён только из sync)
-        if (class_exists('Cashback_Lock') && !Cashback_Lock::is_lock_held_by_current_process()) {
-            error_log('[Cashback] process_ready_transactions called without global lock — DENIED');
-            return ['processed' => 0, 'ledger_inserted' => 0, 'errors' => ['Global lock not held']];
-        }
-
-        $errors = [];
-        $total_processed = 0;
-        $total_ledger = 0;
-
-        try {
-            $batch_id = cashback_generate_uuid7(false);
-
-            $delay_days = (int) get_option('cashback_balance_delay_days', 0);
-            $delay_sql  = '';
-            if ($delay_days > 0) {
-                // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
-                $delay_sql = $wpdb->prepare(
-                    ' AND t.updated_at <= DATE_SUB(NOW(), INTERVAL %d DAY)',
-                    $delay_days
-                );
-            }
-
-            $wpdb->query('START TRANSACTION');
-
-            // ШАГ 1: SELECT FOR UPDATE — блокируем транзакции-кандидаты для начисления
-            // Исключаем забаненных пользователей — их баланс заморожен триггером tr_freeze_balance_on_ban
-            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-            $candidates = $wpdb->get_results(
-                "SELECT t.id, t.user_id, t.cashback
-                 FROM `{$prefix}cashback_transactions` t
-                 INNER JOIN `{$prefix}cashback_user_profile` p
-                     ON p.user_id = t.user_id AND p.status != 'banned'
-                 WHERE t.order_status = 'completed'
-                   AND t.api_verified = 1
-                   AND t.funds_ready = 1
-                   AND t.processed_at IS NULL
-                   AND t.cashback IS NOT NULL
-                   AND t.cashback > 0
-                   AND t.spam_click = 0"
-                    . $delay_sql // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
-                    . ' FOR UPDATE',
-                ARRAY_A
-            );
-
-            if ($candidates === null) {
-                throw new \RuntimeException('Step 1 (SELECT FOR UPDATE) failed: ' . $wpdb->last_error);
-            }
-
-            if (!empty($candidates)) {
-                $candidate_ids = array_column($candidates, 'id');
-
-                // ШАГ 2: INSERT IGNORE в леджер (идемпотентный — дубли пропускаются)
-                // Каждая транзакция = одна запись в леджере с idempotency_key = "accrual_{id}"
-                $ledger_values = [];
-                $ledger_args = [];
-                foreach ($candidates as $row) {
-                    $ledger_values[] = '(%d, %s, %s, %d, %s)';
-                    $ledger_args[] = (int) $row['user_id'];
-                    $ledger_args[] = 'accrual';
-                    $ledger_args[] = number_format((float) $row['cashback'], 2, '.', '');
-                    $ledger_args[] = (int) $row['id'];
-                    $ledger_args[] = 'accrual_' . $row['id'];
-                }
-
-                $values_sql = implode(', ', $ledger_values);
-                // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
-                $ledger_result = $wpdb->query($wpdb->prepare(
-                    "INSERT INTO `{$prefix}cashback_balance_ledger`
-                         (user_id, type, amount, transaction_id, idempotency_key)
-                     VALUES {$values_sql}
-                     ON DUPLICATE KEY UPDATE id = id",
-                    ...$ledger_args
-                ));
-
-                if ($ledger_result === false) {
-                    throw new \RuntimeException('Step 2 (ledger INSERT) failed: ' . $wpdb->last_error);
-                }
-                $total_ledger = (int) $wpdb->rows_affected;
-
-                // ШАГ 3: Маркируем транзакции как обработанные
-                $id_placeholders = implode(',', array_fill(0, count($candidate_ids), '%d'));
-                // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
-                $step3 = $wpdb->query($wpdb->prepare(
-                    "UPDATE `{$prefix}cashback_transactions`
-                     SET processed_at = NOW(), processed_batch_id = %s
-                     WHERE id IN ({$id_placeholders}) AND processed_at IS NULL",
-                    $batch_id,
-                    ...$candidate_ids
-                ));
-
-                if ($step3 === false) {
-                    throw new \RuntimeException('Step 3 (mark processed) failed: ' . $wpdb->last_error);
-                }
-                $total_processed = (int) $wpdb->rows_affected;
-
-                // ШАГ 4: Обновляем кэш available_balance (из леджера — SUM за этот батч)
-                // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
-                $step4 = $wpdb->query($wpdb->prepare(
-                    "INSERT INTO `{$prefix}cashback_user_balance`
-                         (user_id, available_balance, version)
-                     SELECT user_id, SUM(cashback), 0
-                     FROM `{$prefix}cashback_transactions`
-                     WHERE processed_batch_id = %s AND cashback > 0
-                     GROUP BY user_id
-                     ON DUPLICATE KEY UPDATE
-                         available_balance = available_balance + VALUES(available_balance),
-                         version = version + 1",
-                    $batch_id
-                ));
-
-                if ($step4 === false) {
-                    throw new \RuntimeException('Step 4 (update balance cache) failed: ' . $wpdb->last_error);
-                }
-
-                // ШАГ 4.5: Начисление партнёрских комиссий (affiliate module)
-                // NON-FATAL: ошибка affiliate не блокирует начисление кешбэка
-                if (class_exists('Cashback_Affiliate_DB')
-                    && Cashback_Affiliate_DB::is_module_enabled()
-                    && class_exists('Cashback_Affiliate_Service')
-                ) {
-                    try {
-                        $aff_result = Cashback_Affiliate_Service::process_affiliate_commissions($candidates);
-                        if (!empty($aff_result['errors'])) {
-                            foreach ($aff_result['errors'] as $aff_err) {
-                                $errors[] = '[Affiliate] ' . $aff_err;
-                            }
-                        }
-                    } catch (\Throwable $aff_e) {
-                        error_log('[Cashback] Affiliate commission error (non-fatal): ' . $aff_e->getMessage());
-                        $errors[] = '[Affiliate] ' . $aff_e->getMessage();
-                    }
-                }
-
-                // ШАГ 5: Переводим в финальный статус balance
-                // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
-                $step5 = $wpdb->query($wpdb->prepare(
-                    "UPDATE `{$prefix}cashback_transactions`
-                     SET order_status = 'balance'
-                     WHERE processed_batch_id = %s AND order_status = 'completed'",
-                    $batch_id
-                ));
-
-                if ($step5 === false) {
-                    throw new \RuntimeException('Step 5 (finalize status) failed: ' . $wpdb->last_error);
-                }
-            }
-
-            $wpdb->query('COMMIT');
-        } catch (\Throwable $e) {
-            $wpdb->query('ROLLBACK');
-            $errors[] = $e->getMessage();
-            error_log('[Cashback] process_ready_transactions error: ' . $e->getMessage());
-        }
-
-        return [
-            'processed'       => $total_processed,
-            'ledger_inserted' => $total_ledger,
-            'errors'          => $errors,
-        ];
-    }
-
-    /**
-     * Проверка консистентности баланса пользователя: леджер vs кэш.
-     *
-     * Сравнивает SUM(amount) из cashback_balance_ledger с данными cashback_user_balance.
-     * Обнаруживает:
-     * - Расхождения суммы начислений (ledger vs available_balance)
-     * - Дублированные accrual записи (одна транзакция = одно начисление)
-     * - Выплаты без payout_hold записи
-     * - Отрицательный расчётный баланс
-     *
-     * @param int $user_id ID пользователя
-     * @return array{consistent: bool, details: array}
-     */
-    public static function validate_user_balance_consistency(int $user_id): array
-    {
-        global $wpdb;
-        $prefix = $wpdb->prefix;
-
-        $issues = [];
-
-        // 1. Суммы из леджера по типам операций
-        $ledger_sums = $wpdb->get_results($wpdb->prepare(
-            "SELECT type, SUM(amount) as total, COUNT(*) as cnt
-             FROM `{$prefix}cashback_balance_ledger`
-             WHERE user_id = %d
-             GROUP BY type",
-            $user_id
-        ), ARRAY_A);
-
-        $sums = [
-            'accrual'             => '0.00',
-            'payout_hold'         => '0.00',
-            'payout_complete'     => '0.00',
-            'payout_cancel'       => '0.00',
-            'payout_declined'     => '0.00',
-            'adjustment'          => '0.00',
-            'affiliate_accrual'   => '0.00',
-            'affiliate_reversal'  => '0.00',
-            'affiliate_freeze'    => '0.00',
-            'affiliate_unfreeze'  => '0.00',
-        ];
-        $counts = [];
-        foreach ($ledger_sums as $row) {
-            $sums[$row['type']] = $row['total'];
-            $counts[$row['type']] = (int) $row['cnt'];
-        }
-
-        // Абсолютные значения сумм (все hold/complete/declined записаны как отрицательные)
-        $abs_hold     = bcmul($sums['payout_hold'], '-1', 2);
-        $abs_complete = bcmul($sums['payout_complete'], '-1', 2);
-        $abs_declined = bcmul($sums['payout_declined'], '-1', 2);
-
-        // Affiliate contributions (все в одном леджере)
-        // affiliate_accrual (+), affiliate_reversal (-), affiliate_freeze (-), affiliate_unfreeze (+)
-        $aff_net = bcadd(
-            bcadd($sums['affiliate_accrual'], $sums['affiliate_reversal'], 2),
-            bcadd($sums['affiliate_freeze'], $sums['affiliate_unfreeze'], 2),
-            2
-        );
-        // affiliate_freeze — отрицательная сумма, |freeze| - unfreeze = замороженная affiliate часть
-        $aff_frozen = bcadd(bcmul($sums['affiliate_freeze'], '-1', 2), bcmul($sums['affiliate_unfreeze'], '-1', 2), 2);
-        if (bccomp($aff_frozen, '0', 2) < 0) {
-            $aff_frozen = '0.00';
-        }
-
-        // Расчётный available: accrual - |hold| + cancel + adjustment + affiliate_net
-        // payout_hold отрицательный → bcadd с отрицательным = вычитание
-        $ledger_available = bcadd(
-            bcadd(
-                bcadd(
-                    bcadd($sums['accrual'], $sums['payout_hold'], 2),
-                    $sums['payout_cancel'],
-                    2
-                ),
-                $sums['adjustment'],
-                2
-            ),
-            $aff_net,
-            2
-        );
-
-        // Расчётный pending: |hold| - |complete| - |declined| - cancel
-        // hold → деньги заблокированы, complete → выплачены, declined → заморожены, cancel → возвращены
-        $ledger_pending = bcsub(
-            bcsub(bcsub($abs_hold, $abs_complete, 2), $abs_declined, 2),
-            $sums['payout_cancel'],
-            2
-        );
-
-        // Расчётный paid: |payout_complete| (только реально выплаченные)
-        $ledger_paid = $abs_complete;
-
-        // Расчётный frozen (из леджера): |payout_declined| + affiliate frozen portion
-        $ledger_frozen = bcadd($abs_declined, $aff_frozen, 2);
-
-        // 2. Кэш из cashback_user_balance
-        $cache = $wpdb->get_row($wpdb->prepare(
-            "SELECT available_balance, pending_balance, paid_balance, frozen_balance
-             FROM `{$prefix}cashback_user_balance`
-             WHERE user_id = %d",
-            $user_id
-        ), ARRAY_A);
-
-        $cache_available = $cache['available_balance'] ?? '0.00';
-        $cache_pending   = $cache['pending_balance'] ?? '0.00';
-        $cache_paid      = $cache['paid_balance'] ?? '0.00';
-
-        // 3. Сравнение
-        $frozen = $cache['frozen_balance'] ?? '0.00';
-        $is_banned = bccomp($frozen, '0', 2) > 0;
-
-        // Основная проверка: сумма всех денег в системе должна совпадать
-        // Леджер: available + pending + paid + frozen(declined) = все деньги
-        // Кэш: available + pending + paid + frozen = все деньги
-        $ledger_total = bcadd(bcadd(bcadd($ledger_available, $ledger_pending, 2), $ledger_paid, 2), $ledger_frozen, 2);
-        $cache_total = bcadd(bcadd(bcadd($cache_available, $cache_pending, 2), $cache_paid, 2), $frozen, 2);
-
-        if (bccomp($ledger_total, $cache_total, 2) !== 0) {
-            $issues[] = sprintf(
-                'total balance mismatch: ledger=%s, cache=%s (available=%s, pending=%s, paid=%s, frozen=%s)',
-                $ledger_total,
-                $cache_total,
-                $cache_available,
-                $cache_pending,
-                $cache_paid,
-                $frozen
-            );
-        }
-
-        // Детальная проверка по полям (только для не забаненных)
-        // При бане триггер переносит available+pending → frozen, поэтому
-        // поле-по-поле сравнение невозможно, но total уже проверен выше
-        if (!$is_banned) {
-            if (bccomp($ledger_available, $cache_available, 2) !== 0) {
-                $issues[] = sprintf(
-                    'available_balance mismatch: ledger=%s, cache=%s',
-                    $ledger_available,
-                    $cache_available
-                );
-            }
-
-            if (bccomp($ledger_pending, $cache_pending, 2) !== 0) {
-                $issues[] = sprintf(
-                    'pending_balance mismatch: ledger=%s, cache=%s',
-                    $ledger_pending,
-                    $cache_pending
-                );
-            }
-
-            // frozen: declined-заморозки (без бана)
-            if (bccomp($ledger_frozen, $frozen, 2) !== 0) {
-                $issues[] = sprintf(
-                    'frozen_balance mismatch: ledger(declined)=%s, cache=%s',
-                    $ledger_frozen,
-                    $frozen
-                );
-            }
-        } else {
-            // Для забаненного: триггер переносит available+pending → frozen
-            // frozen в кэше = ledger_frozen(declined) + ledger_available + ledger_pending
-            $ledger_ban_frozen = bcadd(bcadd($ledger_available, $ledger_pending, 2), $ledger_frozen, 2);
-            if (bccomp($ledger_ban_frozen, $frozen, 2) !== 0) {
-                $issues[] = sprintf(
-                    'frozen_balance mismatch (banned): ledger(available+pending+declined)=%s, cache frozen=%s',
-                    $ledger_ban_frozen,
-                    $frozen
-                );
-            }
-        }
-
-        if (bccomp($ledger_paid, $cache_paid, 2) !== 0) {
-            $issues[] = sprintf(
-                'paid_balance mismatch: ledger=%s, cache=%s',
-                $ledger_paid,
-                $cache_paid
-            );
-        }
-
-        // 4. Дублированные accrual по transaction_id
-        $dup_accruals = (int) $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM (
-                SELECT transaction_id, COUNT(*) as cnt
-                FROM `{$prefix}cashback_balance_ledger`
-                WHERE user_id = %d AND type = 'accrual' AND transaction_id IS NOT NULL
-                GROUP BY transaction_id
-                HAVING cnt > 1
-            ) dups",
-            $user_id
-        ));
-
-        if ($dup_accruals > 0) {
-            $issues[] = sprintf('duplicate accrual entries: %d transaction_ids with multiple accruals', $dup_accruals);
-        }
-
-        // 5. Отрицательный расчётный баланс
-        if (bccomp($ledger_available, '0', 2) < 0) {
-            $issues[] = sprintf('negative calculated available balance: %s', $ledger_available);
-        }
-
-        // 6. Выплаченные payout без hold записи
-        $payouts_without_hold = (int) $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(DISTINCT l.payout_request_id)
-             FROM `{$prefix}cashback_balance_ledger` l
-             WHERE l.user_id = %d
-               AND l.type = 'payout_complete'
-               AND l.payout_request_id IS NOT NULL
-               AND l.payout_request_id NOT IN (
-                   SELECT payout_request_id
-                   FROM `{$prefix}cashback_balance_ledger`
-                   WHERE user_id = %d AND type = 'payout_hold' AND payout_request_id IS NOT NULL
-               )",
-            $user_id,
-            $user_id
-        ));
-
-        if ($payouts_without_hold > 0) {
-            $issues[] = sprintf('payout_complete without payout_hold: %d payouts', $payouts_without_hold);
-        }
-
-        return [
-            'consistent' => empty($issues),
-            'details'    => [
-                'ledger' => [
-                    'available' => $ledger_available,
-                    'pending'   => $ledger_pending,
-                    'paid'      => $ledger_paid,
-                    'sums'      => $sums,
-                    'counts'    => $counts,
-                ],
-                'cache' => $cache ?: [],
-                'issues' => $issues,
-            ],
-        ];
-    }
-
-    /**
-     * Миграция UUID-колонок на CHAR(32) CHARACTER SET ascii COLLATE ascii_bin.
-     *
-     * Даёт:
-     * - 32 байта вместо 128 (utf8mb4 × char(32))
-     * - Индексы в ~4 раза легче и быстрее
-     * - Бинарное сравнение без overhead коллации
-     *
-     * Для колонок, которые были CHAR(36) (с дефисами), удаляет дефисы из существующих данных.
-     */
-    private function migrate_uuid_columns_to_ascii(): void
-    {
-        global $wpdb;
-
-        if (get_option('cashback_migrated_uuid_ascii', false)) {
-            return;
-        }
-
-        $prefix = $wpdb->prefix;
-
-        // Колонки, которые были CHAR(36) с дефисами → CHAR(32) без дефисов
-        $columns_36_to_32 = [
-            "{$prefix}cashback_payout_requests" => ['idempotency_key'],
-            "{$prefix}cashback_transactions"    => ['processed_batch_id'],
-            "{$prefix}cashback_unregistered_transactions" => ['processed_batch_id'],
-        ];
-
-        foreach ($columns_36_to_32 as $table => $columns) {
-            foreach ($columns as $col) {
-                if (!$this->column_exists_in_table($table, $col)) {
-                    continue;
-                }
-
-                // Удалить дефисы из существующих данных
-                // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-                $wpdb->query(
-                    "UPDATE `{$table}` SET `{$col}` = REPLACE(`{$col}`, '-', '') WHERE `{$col}` LIKE '%-%'"
-                );
-
-                // Сменить тип колонки
-                // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-                $wpdb->query(
-                    "ALTER TABLE `{$table}` MODIFY COLUMN `{$col}` char(32) CHARACTER SET ascii COLLATE ascii_bin"
-                );
-
-                if ($wpdb->last_error) {
-                    error_log("[Cashback] migrate_uuid_ascii: failed to alter {$table}.{$col}: " . $wpdb->last_error);
-                }
-            }
-        }
-
-        // Колонки, которые уже CHAR(32) → только сменить charset/collation
-        $columns_32_ascii = [
-            "{$prefix}cashback_transactions"    => ['click_id'],
-            "{$prefix}cashback_unregistered_transactions" => ['click_id'],
-            "{$prefix}cashback_click_log"       => ['click_id'],
-        ];
-
-        foreach ($columns_32_ascii as $table => $columns) {
-            foreach ($columns as $col) {
-                if (!$this->column_exists_in_table($table, $col)) {
-                    continue;
-                }
-
-                // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-                $wpdb->query(
-                    "ALTER TABLE `{$table}` MODIFY COLUMN `{$col}` char(32) CHARACTER SET ascii COLLATE ascii_bin"
-                );
-
-                if ($wpdb->last_error) {
-                    error_log("[Cashback] migrate_uuid_ascii: failed to alter {$table}.{$col}: " . $wpdb->last_error);
-                }
-            }
-        }
-
-        update_option('cashback_migrated_uuid_ascii', true, false);
-    }
-
-    /**
-     * Миграция: объединение cashback_affiliate_ledger → cashback_balance_ledger.
-     *
-     * 1. Расширяет ENUM type affiliate-типами
-     * 2. Добавляет reference_type / reference_id
-     * 3. Переносит данные из cashback_affiliate_ledger (если есть)
-     * 4. Дропает старую таблицу cashback_affiliate_ledger
-     */
-    private function migrate_merge_affiliate_ledger(): void
-    {
-        global $wpdb;
-
-        if (get_option('cashback_migrated_affiliate_ledger', false)) {
-            return;
-        }
-
-        $prefix  = $wpdb->prefix;
-        $ledger  = "{$prefix}cashback_balance_ledger";
-        $old     = "{$prefix}cashback_affiliate_ledger";
-        $suppress = $wpdb->suppress_errors(true);
-
-        // 1. Расширяем ENUM (добавляем affiliate типы)
-        // ALTER TABLE MODIFY COLUMN — идемпотентно, если типы уже есть
-        $wpdb->query(
-            "ALTER TABLE `{$ledger}` MODIFY COLUMN `type`
-             enum('accrual','payout_hold','payout_complete','payout_cancel','payout_declined','adjustment',
-                  'affiliate_accrual','affiliate_reversal','affiliate_freeze','affiliate_unfreeze')
-             NOT NULL COMMENT 'Тип операции'"
-        );
-
-        // 2. Добавляем reference_type (если нет)
-        if (!$this->column_exists_in_table($ledger, 'reference_type')) {
-            $wpdb->query(
-                "ALTER TABLE `{$ledger}`
-                 ADD COLUMN `reference_type` varchar(50) DEFAULT NULL COMMENT 'Тип связанной сущности (accrual, payout, affiliate_accrual)' AFTER `payout_request_id`,
-                 ADD COLUMN `reference_id` bigint(20) unsigned DEFAULT NULL COMMENT 'ID связанной сущности' AFTER `reference_type`,
-                 ADD KEY `idx_reference` (`reference_type`,`reference_id`),
-                 ADD KEY `idx_user_created` (`user_id`,`created_at`)"
-            );
-        }
-
-        // 3. Переносим данные из старого affiliate ledger (если таблица существует)
-        $old_exists = $wpdb->get_var("SHOW TABLES LIKE '{$old}'");
-        if ($old_exists) {
-            // Миграция данных: INSERT IGNORE (идемпотентность через uk_idempotency_key)
-            $wpdb->query(
-                "INSERT IGNORE INTO `{$ledger}`
-                     (user_id, type, amount, transaction_id, reference_type, reference_id, idempotency_key, created_at)
-                 SELECT
-                     user_id,
-                     type,
-                     amount,
-                     transaction_id,
-                     CASE WHEN accrual_id IS NOT NULL THEN 'affiliate_accrual' ELSE NULL END,
-                     accrual_id,
-                     idempotency_key,
-                     created_at
-                 FROM `{$old}`"
-            );
-
-            if ($wpdb->last_error) {
-                error_log('[Cashback] migrate_merge_affiliate_ledger: data migration error: ' . $wpdb->last_error);
-            }
-
-            // 4. Удаляем FK constraints перед дропом (подавляем ошибки если нет)
-            $wpdb->query("ALTER TABLE `{$old}` DROP FOREIGN KEY `fk_aff_ledger_user`");
-            $wpdb->query("ALTER TABLE `{$old}` DROP FOREIGN KEY `fk_aff_ledger_tx`");
-            $wpdb->query("ALTER TABLE `{$old}` DROP FOREIGN KEY `fk_aff_ledger_accrual`");
-
-            // 5. Дропаем старую таблицу
-            $wpdb->query("DROP TABLE IF EXISTS `{$old}`");
-        }
-
-        $wpdb->suppress_errors($suppress);
-
-        update_option('cashback_migrated_affiliate_ledger', true, false);
-    }
-
-    /**
-     * Проверяет наличие колонки в таблице.
-     */
-    private function column_exists_in_table(string $table, string $column): bool
-    {
-        global $wpdb;
-
-        return (bool) $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM information_schema.COLUMNS
-             WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s AND COLUMN_NAME = %s",
-            DB_NAME,
-            $table,
-            $column
-        ));
-    }
 
     // =========================================================================
     // Partner Token — замена user_id в партнёрских ссылках
@@ -2302,89 +1517,6 @@ class Mariadb_Plugin
         return $map;
     }
 
-    /**
-     * Миграция: добавление колонки partner_token в cashback_user_profile.
-     * Бэкфилл существующих записей криптографически стойкими токенами.
-     */
-    private function migrate_add_partner_token(): void
-    {
-        global $wpdb;
-
-        $table = $wpdb->prefix . 'cashback_user_profile';
-
-        // Шаг 1: Проверяем наличие колонки
-        if (!$this->column_exists_in_table($table, 'partner_token')) {
-            $wpdb->query(
-                "ALTER TABLE `{$table}`
-                 ADD COLUMN `partner_token` char(32) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL
-                 COMMENT 'Криптографический токен для партнёрских ссылок (вместо user_id)'
-                 AFTER `details_hash`"
-            );
-
-            if ($wpdb->last_error) {
-                error_log('[Cashback] Failed to add partner_token column: ' . $wpdb->last_error);
-                return;
-            }
-
-            // Добавляем UNIQUE индекс
-            $wpdb->query("ALTER TABLE `{$table}` ADD UNIQUE KEY `uk_partner_token` (`partner_token`)");
-
-            if ($wpdb->last_error) {
-                error_log('[Cashback] Failed to add partner_token unique index: ' . $wpdb->last_error);
-            }
-        }
-
-        // Шаг 2: Бэкфилл записей с NULL partner_token
-        $batch_size = 100;
-        $max_retries = 5;
-
-        do {
-            $rows = $wpdb->get_results(
-                $wpdb->prepare(
-                    "SELECT user_id FROM `{$table}` WHERE partner_token IS NULL LIMIT %d",
-                    $batch_size
-                )
-            );
-
-            if (empty($rows)) {
-                break;
-            }
-
-            foreach ($rows as $row) {
-                $updated = false;
-
-                for ($attempt = 0; $attempt < $max_retries; $attempt++) {
-                    $token = self::generate_partner_token();
-                    $result = $wpdb->query($wpdb->prepare(
-                        "UPDATE `{$table}` SET partner_token = %s WHERE user_id = %d AND partner_token IS NULL",
-                        $token,
-                        $row->user_id
-                    ));
-
-                    if ($result !== false && $result > 0) {
-                        $updated = true;
-                        break;
-                    }
-
-                    if ($result === 0) {
-                        // Другой процесс уже заполнил
-                        $updated = true;
-                        break;
-                    }
-
-                    // Duplicate key — повторяем
-                    if (strpos($wpdb->last_error, 'Duplicate') === false) {
-                        error_log('[Cashback] Failed to set partner_token for user #' . $row->user_id . ': ' . $wpdb->last_error);
-                        break;
-                    }
-                }
-
-                if (!$updated) {
-                    error_log('[Cashback] Could not generate unique partner_token for user #' . $row->user_id . ' after ' . $max_retries . ' attempts');
-                }
-            }
-        } while (!empty($rows));
-    }
 }
 
 // Инициализация Mariadb_Plugin происходит через CashbackPlugin::initialize_components()

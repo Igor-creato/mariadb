@@ -182,7 +182,6 @@ class Cashback_Affiliate_DB
 
         // Таблица cashback_affiliate_ledger удалена — affiliate операции хранятся
         // в едином cashback_balance_ledger (типы: affiliate_accrual, affiliate_freeze, affiliate_unfreeze).
-        // Миграция данных: Mariadb_Plugin::migrate_merge_affiliate_ledger().
 
         // Фаза 2: FK constraints (ошибки подавляются — constraint может уже существовать)
         $suppress = $wpdb->suppress_errors(true);
