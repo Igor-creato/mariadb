@@ -417,6 +417,7 @@ class CashbackPlugin
             $this->require_file('admin/click-log.php');
             $this->require_file('admin/transactions.php');
             $this->require_file('admin/statistics.php');
+            $this->require_file('admin/rate-history.php');
             $this->require_file('partner/partner-management.php');
             $this->require_file('support/admin-support.php');
             $this->require_file('antifraud/class-fraud-admin.php');
@@ -482,6 +483,10 @@ class CashbackPlugin
 
         if (is_admin() && class_exists('Cashback_Fraud_Admin')) {
             new Cashback_Fraud_Admin();
+        }
+
+        if (is_admin() && class_exists('Cashback_Rate_History_Admin')) {
+            Cashback_Rate_History_Admin::get_instance();
         }
 
         // --- API Валидация: админ-страница + AJAX (только в админке) ---

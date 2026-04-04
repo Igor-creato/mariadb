@@ -87,7 +87,6 @@ jQuery(document).ready(function($) {
             if (response.success) {
                 $info.html('<span style="color: green;">Обновлено пользователей: ' + response.data.updated + '</span>');
                 $applyBtn.prop('disabled', true);
-                // Обновляем ставки в видимой таблице
                 $('#users-tbody tr').each(function() {
                     var $cell = $(this).find('.edit-field[data-field="cashback_rate"]');
                     var currentRate = $cell.text().trim();
@@ -154,11 +153,9 @@ jQuery(document).ready(function($) {
             var field = cell.data('field');
             var currentValue = cell.text().trim();
 
-            // Сохраняем оригинальное значение в data-атрибуте
             cell.attr('data-original-value', currentValue);
 
             if (field === 'status') {
-                // Для поля status создаем select
                 var selectHtml = '<select class="edit-input" data-field="' + escapeHtml(field) + '">';
                 selectHtml += '<option value="active"' + (currentValue === 'active' ? ' selected' : '') + '>active</option>';
                 selectHtml += '<option value="noactive"' + (currentValue === 'noactive' ? ' selected' : '') + '>noactive</option>';
@@ -167,12 +164,10 @@ jQuery(document).ready(function($) {
                 selectHtml += '</select>';
                 cell.html(selectHtml);
             } else if (field === 'cashback_rate' || field === 'min_payout_amount') {
-                // Для числовых полей создаем input с типом number
                 var step = '0.01';
                 var placeholder = field === 'cashback_rate' ? 'Ставка кэшбэка' : 'Мин. сумма';
                 cell.html('<input type="number" step="' + step + '" class="edit-input" data-field="' + escapeHtml(field) + '" value="' + escapeHtml(currentValue) + '" placeholder="' + escapeHtml(placeholder) + '" />');
             } else {
-                // Для остальных полей создаем input
                 cell.html('<input type="text" class="edit-input" data-field="' + escapeHtml(field) + '" value="' + escapeHtml(currentValue) + '" />');
             }
         });
@@ -193,13 +188,11 @@ jQuery(document).ready(function($) {
         var userId = row.data('user-id');
         var changedData = {};
 
-        // Собираем только измененные данные
         row.find('.edit-input').each(function() {
             var input = $(this);
             var field = input.data('field');
             var newValue = input.val().trim();
 
-            // Получаем оригинальное значение из data-атрибута ячейки
             var cell = input.closest('.edit-field');
             var originalValue = cell.attr('data-original-value');
 
@@ -207,33 +200,27 @@ jQuery(document).ready(function($) {
                 originalValue = '';
             }
 
-            // Проверяем, изменилось ли значение (сравниваем как строки)
             if (originalValue.trim() !== newValue) {
                 changedData[field] = newValue;
             }
         });
 
-        // Добавляем только необходимые данные для обновления
         var data = {
             'action': 'update_user_profile',
             'user_id': userId,
             'nonce': cashbackUsersData.updateNonce
         };
 
-        // Добавляем только измененные поля
         Object.assign(data, changedData);
 
-        // Проверяем, есть ли вообще изменения
         var hasChanges = Object.keys(changedData).length > 0;
 
         if (!hasChanges) {
             alert('Нет изменений для сохранения.');
-            // Переключаем строку обратно в режим просмотра
             resetRowToViewMode(row);
             return;
         }
 
-        // Валидация только измененных данных
         if (changedData.hasOwnProperty('cashback_rate')) {
             var cashbackRate = parseFloat(changedData['cashback_rate']);
             if (isNaN(cashbackRate) || cashbackRate < 0 || cashbackRate > 100) {
@@ -261,14 +248,12 @@ jQuery(document).ready(function($) {
 
         $.post(ajaxurl, data, function(response) {
             if (response.success) {
-                // Обновляем все значения в ячейках, используя полученные данные из базы
                 row.find('.edit-field[data-field="cashback_rate"]').text(response.data.cashback_rate);
                 row.find('.edit-field[data-field="min_payout_amount"]').text(response.data.min_payout_amount);
                 row.find('.edit-field[data-field="status"]').text(response.data.status);
                 row.find('.edit-field[data-field="ban_reason"]').text(response.data.ban_reason);
                 row.find('.edit-field[data-field="banned_at"]').text(response.data.banned_at ? response.data.banned_at : '');
 
-                // Переключаем строку в режим просмотра
                 row.find('.edit-input').each(function() {
                     var cell = $(this).closest('.edit-field');
                     var field = $(this).data('field');
@@ -278,7 +263,6 @@ jQuery(document).ready(function($) {
                 row.find('.save-btn, .cancel-btn').hide();
                 row.find('.edit-btn').show();
 
-                // Показываем сообщение об успешном обновлении
                 $('.wp-header-end').after('<div class="notice notice-success is-dismissible"><p>Профиль пользователя успешно обновлен.</p></div>');
                 setTimeout(function() {
                     $('.notice-success').fadeOut().remove();
@@ -308,7 +292,6 @@ jQuery(document).ready(function($) {
 
     // Сброс строки к режиму просмотра
     function resetRowToViewMode(row) {
-        // Обновляем строку данными из базы данных
         var userId = row.data('user-id');
         var data = {
             'action': 'get_user_profile',
@@ -324,7 +307,6 @@ jQuery(document).ready(function($) {
                 row.find('.edit-field[data-field="ban_reason"]').text(response.data.ban_reason);
                 row.find('.edit-field[data-field="banned_at"]').text(response.data.banned_at ? response.data.banned_at : '');
             } else {
-                // Если не удалось получить данные, восстанавливаем старые значения
                 row.find('.edit-field').each(function() {
                     var cell = $(this);
                     var input = cell.find('.edit-input');
@@ -352,7 +334,6 @@ jQuery(document).ready(function($) {
 
             console.error(errorMsg);
 
-            // Восстанавливаем старые значения
             row.find('.edit-field').each(function() {
                 var cell = $(this);
                 var input = cell.find('.edit-input');

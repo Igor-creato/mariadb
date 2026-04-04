@@ -78,6 +78,8 @@ function cashback_plugin_uninstall(): void
         "{$prefix}cashback_click_log",
         "{$prefix}cashback_sync_log",
         "{$prefix}cashback_validation_checkpoints",
+        "{$prefix}cashback_rate_history",
+        "{$prefix}cashback_rate_history",
     ];
 
     // Drop triggers

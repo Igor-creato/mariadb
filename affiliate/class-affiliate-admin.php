@@ -29,6 +29,7 @@ class Cashback_Affiliate_Admin
         add_action('wp_ajax_affiliate_save_settings', [$this, 'handle_save_settings']);
         add_action('wp_ajax_affiliate_update_partner', [$this, 'handle_update_partner']);
         add_action('wp_ajax_affiliate_get_partner_details', [$this, 'handle_get_partner_details']);
+        add_action('wp_ajax_affiliate_bulk_update_commission_rate', [$this, 'handle_bulk_update_commission_rate']);
     }
 
     public function add_admin_menu(): void
@@ -79,6 +80,7 @@ class Cashback_Affiliate_Admin
             'settingsNonce' => wp_create_nonce('affiliate_save_settings_nonce'),
             'partnerNonce'  => wp_create_nonce('affiliate_update_partner_nonce'),
             'detailsNonce'  => wp_create_nonce('affiliate_get_partner_details_nonce'),
+            'bulkRateNonce' => wp_create_nonce('affiliate_bulk_update_commission_rate_nonce'),
         ]);
     }
 
@@ -461,6 +463,23 @@ class Cashback_Affiliate_Admin
 
         $global_rate = Cashback_Affiliate_DB::get_global_rate();
 
+        // Массовое изменение ставки комиссии
+        echo '<div class="postbox" style="padding: 12px 16px; margin-top: 15px; margin-bottom: 20px;">';
+        echo '<h3 style="margin: 0 0 10px;">' . esc_html__('Массовое изменение ставки комиссии', 'cashback-plugin') . '</h3>';
+        echo '<div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">';
+        echo '<label for="bulk-aff-old-rate">' . esc_html__('Текущая ставка:', 'cashback-plugin') . '</label>';
+        echo '<input type="text" id="bulk-aff-old-rate" placeholder="10 или all" style="width: 100px;" />';
+        echo '<label for="bulk-aff-new-rate">' . esc_html__('Новая ставка (%):', 'cashback-plugin') . '</label>';
+        echo '<input type="number" id="bulk-aff-new-rate" step="0.01" min="0" max="100" placeholder="15" style="width: 100px;" />';
+        echo '<button type="button" id="bulk-aff-rate-preview" class="button">' . esc_html__('Предпросмотр', 'cashback-plugin') . '</button>';
+        echo '<button type="button" id="bulk-aff-rate-apply" class="button button-primary" disabled>' . esc_html__('Применить', 'cashback-plugin') . '</button>';
+        echo '<span id="bulk-aff-rate-info" style="color: #666;"></span>';
+        echo '</div>';
+        echo '<p class="description" style="margin-top: 10px;">';
+        echo esc_html__('В поле «Текущая ставка» укажите процент, который нужно заменить (например, 10), или введите all, чтобы изменить ставку у всех партнёров сразу. В поле «Новая ставка» укажите новый процент комиссии (от 0 до 100). Нажмите «Предпросмотр», чтобы увидеть количество затронутых партнёров, затем «Применить» для подтверждения.', 'cashback-plugin');
+        echo '</p>';
+        echo '</div>';
+
         // Filters
         echo '<div class="tablenav top">';
         echo '<form method="get" action="' . esc_url(admin_url('admin.php')) . '">';
@@ -561,7 +580,24 @@ class Cashback_Affiliate_Admin
         }
 
         if (isset($_POST['global_rate'])) {
-            Cashback_Affiliate_DB::set_global_rate(sanitize_text_field(wp_unslash($_POST['global_rate'])));
+            $old_global_rate = Cashback_Affiliate_DB::get_global_rate();
+            $new_global_rate = sanitize_text_field(wp_unslash($_POST['global_rate']));
+            Cashback_Affiliate_DB::set_global_rate($new_global_rate);
+
+            if (class_exists('Cashback_Rate_History_Admin') && $old_global_rate !== $new_global_rate) {
+                $logged = Cashback_Rate_History_Admin::log_rate_change(
+                    'affiliate_global',
+                    null,
+                    $old_global_rate !== '' ? (float) $old_global_rate : null,
+                    (float) $new_global_rate,
+                    0,
+                    'manual',
+                    ['setting' => 'cashback_affiliate_global_rate']
+                );
+                if (!$logged) {
+                    error_log('[Cashback Affiliate] Failed to log global rate change from ' . $old_global_rate . ' to ' . $new_global_rate);
+                }
+            }
         }
         if (isset($_POST['cookie_ttl'])) {
             Cashback_Affiliate_DB::set_cookie_ttl_days((int) $_POST['cookie_ttl']);
@@ -621,25 +657,59 @@ class Cashback_Affiliate_Admin
     {
         global $wpdb;
 
+        $old_rate = $wpdb->get_var($wpdb->prepare(
+            "SELECT affiliate_rate FROM `{$wpdb->prefix}cashback_affiliate_profiles` WHERE user_id = %d",
+            $user_id
+        ));
+
         $rate = isset($_POST['rate']) && $_POST['rate'] !== ''
             ? max(0, min(100, (float) $_POST['rate']))
             : null;
 
-        if ($rate !== null) {
-            $wpdb->update(
-                $wpdb->prefix . 'cashback_affiliate_profiles',
-                ['affiliate_rate' => number_format($rate, 2, '.', '')],
-                ['user_id' => $user_id],
-                ['%s'],
-                ['%d']
-            );
-        } else {
-            $wpdb->query($wpdb->prepare(
-                "UPDATE `{$wpdb->prefix}cashback_affiliate_profiles`
-                 SET affiliate_rate = NULL
-                 WHERE user_id = %d",
-                $user_id
-            ));
+        $wpdb->query('START TRANSACTION');
+
+        try {
+            if ($rate !== null) {
+                $result = $wpdb->update(
+                    $wpdb->prefix . 'cashback_affiliate_profiles',
+                    ['affiliate_rate' => number_format($rate, 2, '.', '')],
+                    ['user_id' => $user_id],
+                    ['%s'],
+                    ['%d']
+                );
+            } else {
+                $result = $wpdb->query($wpdb->prepare(
+                    "UPDATE `{$wpdb->prefix}cashback_affiliate_profiles`
+                     SET affiliate_rate = NULL
+                     WHERE user_id = %d",
+                    $user_id
+                ));
+            }
+
+            if ($result === false) {
+                $wpdb->query('ROLLBACK');
+                wp_send_json_error(['message' => 'Ошибка при обновлении ставки.']);
+                return;
+            }
+
+            if (class_exists('Cashback_Rate_History_Admin')) {
+                $old_rate_val = $old_rate !== null ? (float) $old_rate : null;
+                $new_rate_val = $rate ?? 0;
+                Cashback_Rate_History_Admin::log_rate_change(
+                    'affiliate_commission',
+                    $user_id,
+                    $old_rate_val,
+                    $new_rate_val,
+                    1,
+                    'manual'
+                );
+            }
+
+            $wpdb->query('COMMIT');
+        } catch (Exception $e) {
+            $wpdb->query('ROLLBACK');
+            wp_send_json_error(['message' => 'Ошибка при обновлении ставки.']);
+            return;
         }
 
         wp_send_json_success(['message' => __('Ставка обновлена.', 'cashback-plugin')]);
@@ -710,6 +780,182 @@ class Cashback_Affiliate_Admin
         wp_send_json_success([
             'profile' => $profile,
             'stats'   => $stats,
+        ]);
+    }
+
+    /**
+     * Массовое обновление ставки комиссии партнёрской программы.
+     */
+    public function handle_bulk_update_commission_rate(): void
+    {
+        if (!isset($_POST['nonce'])) {
+            wp_send_json_error(['message' => 'Отсутствует nonce.']);
+            return;
+        }
+
+        if (!wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'affiliate_bulk_update_commission_rate_nonce')) {
+            wp_send_json_error(['message' => 'Неверный nonce.']);
+            return;
+        }
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Недостаточно прав для выполнения этого действия.']);
+            return;
+        }
+
+        if (!isset($_POST['old_rate'], $_POST['new_rate'])) {
+            wp_send_json_error(['message' => 'Не указаны параметры.']);
+            return;
+        }
+
+        $old_rate_raw = trim(sanitize_text_field(wp_unslash($_POST['old_rate'])));
+        $new_rate = sanitize_text_field(wp_unslash($_POST['new_rate']));
+        $preview = !empty($_POST['preview']);
+
+        if (!preg_match('/^\d+(\.\d{1,2})?$/', $new_rate) || bccomp($new_rate, '0', 2) < 0 || bccomp($new_rate, '100', 2) > 0) {
+            wp_send_json_error(['message' => 'Новая ставка должна быть числом от 0 до 100.']);
+            return;
+        }
+
+        global $wpdb;
+        $prefix = $wpdb->prefix;
+        $table = $prefix . 'cashback_affiliate_profiles';
+
+        $is_all = (strtolower($old_rate_raw) === 'all');
+
+        if (!$is_all) {
+            if (!preg_match('/^\d+(\.\d{1,2})?$/', $old_rate_raw) || bccomp($old_rate_raw, '0', 2) < 0 || bccomp($old_rate_raw, '100', 2) > 0) {
+                wp_send_json_error(['message' => 'Текущая ставка должна быть числом от 0 до 100 или "all".']);
+                return;
+            }
+        }
+
+        // Count affected users (for preview or apply)
+        if ($is_all) {
+            $count = (int) $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM `{$table}` WHERE (affiliate_rate IS NULL OR affiliate_rate != %s)",
+                $new_rate
+            ));
+        } else {
+            // Users with affiliate_rate = old_rate (including those using global rate when old_rate matches global)
+            $global_rate = Cashback_Affiliate_DB::get_global_rate();
+            $count = (int) $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM `{$table}` WHERE affiliate_rate = %s",
+                $old_rate_raw
+            ));
+            // Also count users using global rate if old_rate matches global
+            if (bccomp($old_rate_raw, $global_rate, 2) === 0) {
+                $count_null = (int) $wpdb->get_var($wpdb->prepare(
+                    "SELECT COUNT(*) FROM `{$table}` WHERE affiliate_rate IS NULL"
+                ));
+                $count += $count_null;
+            }
+        }
+
+        if ($preview) {
+            wp_send_json_success([
+                'count' => $count,
+                'old_rate' => $old_rate_raw,
+                'new_rate' => $new_rate,
+            ]);
+            return;
+        }
+
+        if ($count === 0) {
+            wp_send_json_error(['message' => 'Не найдено партнёров для обновления.']);
+            return;
+        }
+
+        $wpdb->query('START TRANSACTION');
+
+        try {
+            $global_rate = Cashback_Affiliate_DB::get_global_rate();
+
+            if ($is_all) {
+                $result = $wpdb->query($wpdb->prepare(
+                    "UPDATE `{$table}` SET affiliate_rate = %s WHERE (affiliate_rate IS NULL OR affiliate_rate != %s)",
+                    $new_rate,
+                    $new_rate
+                ));
+            } else {
+                $result = $wpdb->query($wpdb->prepare(
+                    "UPDATE `{$table}` SET affiliate_rate = %s WHERE affiliate_rate = %s",
+                    $new_rate,
+                    $old_rate_raw
+                ));
+                if (bccomp($old_rate_raw, $global_rate, 2) === 0) {
+                    $result_null = $wpdb->query($wpdb->prepare(
+                        "UPDATE `{$table}` SET affiliate_rate = %s WHERE affiliate_rate IS NULL",
+                        $new_rate
+                    ));
+                    if ($result_null !== false) {
+                        $result += $result_null;
+                    }
+                }
+            }
+
+            if ($result === false) {
+                $wpdb->query('ROLLBACK');
+                wp_send_json_error(['message' => 'Ошибка при обновлении базы данных.']);
+                return;
+            }
+
+            if ($result === 0) {
+                $wpdb->query('ROLLBACK');
+                wp_send_json_error(['message' => 'Не найдено партнёров для обновления.']);
+                return;
+            }
+
+            // Rate history log — внутри транзакции для атомарности
+            if (class_exists('Cashback_Rate_History_Admin')) {
+                $rate_type = $is_all ? 'affiliate_global' : 'affiliate_commission';
+                Cashback_Rate_History_Admin::log_rate_change(
+                    $rate_type,
+                    null,
+                    $is_all ? null : (float) $old_rate_raw,
+                    (float) $new_rate,
+                    (int) $result,
+                    'bulk',
+                    ['scope' => $is_all ? 'all' : 'by_rate', 'old_rate' => $old_rate_raw]
+                );
+            }
+
+            // Audit log — внутри транзакции для атомарности
+            if (class_exists('Cashback_Encryption')) {
+                Cashback_Encryption::write_audit_log(
+                    'bulk_affiliate_commission_rate_update',
+                    get_current_user_id(),
+                    'cashback_affiliate_profiles',
+                    null,
+                    [
+                        'old_rate' => $old_rate_raw,
+                        'new_rate' => $new_rate,
+                        'affected_users' => $result,
+                    ]
+                );
+            }
+
+            // Обновляем глобальную ставку ПОСЛЕ COMMIT — update_option() не участвует
+            // в MySQL-транзакции. Если COMMIT прошёл, профили и логи записаны.
+            // Если update_option() упадёт, это не критично — ставка по умолчанию
+            // для новых пользователей будет старой до следующего ручного изменения.
+            $committed_global = $is_all ? $new_rate : null;
+
+            $wpdb->query('COMMIT');
+
+            if ($committed_global !== null) {
+                Cashback_Affiliate_DB::set_global_rate($committed_global);
+            }
+        } catch (Exception $e) {
+            $wpdb->query('ROLLBACK');
+            wp_send_json_error(['message' => 'Ошибка при обновлении базы данных.']);
+            return;
+        }
+
+        wp_send_json_success([
+            'updated' => (int) $result,
+            'old_rate' => $old_rate_raw,
+            'new_rate' => $new_rate,
         ]);
     }
 }

@@ -144,4 +144,110 @@
         });
     });
 
+    /* ── Bulk commission rate change ── */
+    function escapeHtml(text) {
+        var div = document.createElement('div');
+        div.appendChild(document.createTextNode(text));
+        return div.innerHTML;
+    }
+
+    $('#bulk-aff-rate-preview').on('click', function () {
+        var oldRate = $('#bulk-aff-old-rate').val().trim();
+        var newRate = $('#bulk-aff-new-rate').val().trim();
+
+        if (!oldRate || !newRate) {
+            alert('Заполните оба поля.');
+            return;
+        }
+
+        if (oldRate.toLowerCase() !== 'all') {
+            var parsed = parseFloat(oldRate);
+            if (isNaN(parsed) || parsed < 0 || parsed > 100) {
+                alert('Текущая ставка должна быть числом от 0 до 100 или "all".');
+                return;
+            }
+        }
+
+        var parsedNew = parseFloat(newRate);
+        if (isNaN(parsedNew) || parsedNew < 0 || parsedNew > 100) {
+            alert('Новая ставка должна быть числом от 0 до 100.');
+            return;
+        }
+
+        var $info = $('#bulk-aff-rate-info');
+        var $applyBtn = $('#bulk-aff-rate-apply');
+        $info.text('Загрузка...');
+        $applyBtn.prop('disabled', true);
+
+        $.post(data.ajaxurl, {
+            action: 'affiliate_bulk_update_commission_rate',
+            nonce: data.bulkRateNonce,
+            old_rate: oldRate,
+            new_rate: newRate,
+            preview: 1
+        }, function (response) {
+            if (response.success) {
+                var count = response.data.count;
+                if (count === 0) {
+                    $info.text('Не найдено партнёров для обновления.');
+                    $applyBtn.prop('disabled', true);
+                } else {
+                    var label = oldRate.toLowerCase() === 'all'
+                        ? 'Будет обновлено партнёров: ' + count + ' (all -> ' + newRate + '%)'
+                        : 'Будет обновлено партнёров: ' + count + ' (' + oldRate + '% -> ' + newRate + '%)';
+                    $info.text(label);
+                    $applyBtn.prop('disabled', false);
+                }
+            } else {
+                $info.text('Ошибка: ' + response.data.message);
+                $applyBtn.prop('disabled', true);
+            }
+        }).fail(function () {
+            $info.text('Ошибка соединения.');
+            $applyBtn.prop('disabled', true);
+        });
+    });
+
+    $('#bulk-aff-rate-apply').on('click', function () {
+        var oldRate = $('#bulk-aff-old-rate').val().trim();
+        var newRate = $('#bulk-aff-new-rate').val().trim();
+        var infoText = $('#bulk-aff-rate-info').text();
+
+        if (!confirm('Подтвердите массовое изменение ставки комиссии.\n\n' + infoText)) {
+            return;
+        }
+
+        var $info = $('#bulk-aff-rate-info');
+        var $applyBtn = $('#bulk-aff-rate-apply');
+        $applyBtn.prop('disabled', true);
+        $info.text('Обновление...');
+
+        $.post(data.ajaxurl, {
+            action: 'affiliate_bulk_update_commission_rate',
+            nonce: data.bulkRateNonce,
+            old_rate: oldRate,
+            new_rate: newRate,
+            preview: 0
+        }, function (response) {
+            if (response.success) {
+                $info.html('<span style="color: green;">Обновлено партнёров: ' + response.data.updated + '</span>');
+                $applyBtn.prop('disabled', true);
+                $('#bulk-aff-old-rate').val('');
+                $('#bulk-aff-new-rate').val('');
+                setTimeout(function () {
+                    location.reload();
+                }, 800);
+            } else {
+                $info.html('<span style="color: red;">Ошибка: ' + escapeHtml(response.data.message) + '</span>');
+            }
+        }).fail(function () {
+            $info.html('<span style="color: red;">Ошибка соединения.</span>');
+        });
+    });
+
+    $('#bulk-aff-old-rate, #bulk-aff-new-rate').on('input', function () {
+        $('#bulk-aff-rate-apply').prop('disabled', true);
+        $('#bulk-aff-rate-info').text('');
+    });
+
 })(jQuery);

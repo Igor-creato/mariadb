@@ -75,6 +75,7 @@ class Mariadb_Plugin
             $instance->create_triggers();
             $instance->create_events();
             $instance->initialize_existing_users();
+            $instance->migrate_rate_history_enum();
 
             ob_end_clean();
         } catch (Exception $e) {
@@ -453,6 +454,28 @@ class Mariadb_Plugin
             KEY `idx_synced_at` (`synced_at`)
         ) ENGINE=InnoDB {$charset_collate} COMMENT='Лог синхронизации статусов транзакций через API';";
 
+        // Таблица истории изменений ставок кэшбэка и партнёрской комиссии
+        $table_rate_history = "CREATE TABLE IF NOT EXISTS `{$wpdb->prefix}cashback_rate_history` (
+            `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            `rate_type` enum('cashback','cashback_global','affiliate_commission','affiliate_global') NOT NULL COMMENT 'Тип изменённой ставки',
+            `user_id` bigint(20) unsigned DEFAULT NULL COMMENT 'ID пользователя (NULL = для всех)',
+            `old_rate` decimal(5,2) DEFAULT NULL COMMENT 'Предыдущее значение ставки',
+            `new_rate` decimal(5,2) NOT NULL COMMENT 'Новое значение ставки',
+            `affected_users` int(11) NOT NULL DEFAULT 1 COMMENT 'Количество затронутых пользователей',
+            `changed_by` bigint(20) unsigned NOT NULL DEFAULT 0 COMMENT 'ID администратора (0 = система)',
+            `change_source` varchar(50) NOT NULL DEFAULT 'manual' COMMENT 'Источник изменения: manual, bulk, api, system',
+            `details` text DEFAULT NULL COMMENT 'Дополнительные данные в JSON',
+            `created_at` datetime NOT NULL DEFAULT current_timestamp(),
+            PRIMARY KEY (`id`),
+            KEY `idx_rate_type` (`rate_type`),
+            KEY `idx_user_id` (`user_id`),
+            KEY `idx_changed_by` (`changed_by`),
+            KEY `idx_created_at` (`created_at`),
+            KEY `idx_new_rate` (`new_rate`),
+            KEY `idx_type_created` (`rate_type`,`created_at`),
+            KEY `idx_type_user` (`rate_type`,`user_id`)
+        ) ENGINE=InnoDB {$charset_collate} COMMENT='История изменений ставок кэшбэка и партнёрской комиссии';";
+
         // Порядок создания: сначала справочники, потом зависимые таблицы
         $tables = [
             'cashback_payout_methods'          => $table_payout_methods,
@@ -469,6 +492,7 @@ class Mariadb_Plugin
             'cashback_click_log'               => $table_click_log,
             'cashback_validation_checkpoints'  => $table_validation_checkpoints,
             'cashback_sync_log'                => $table_sync_log,
+            'cashback_rate_history'            => $table_rate_history,
         ];
 
         $failed_tables = [];
@@ -1932,6 +1956,50 @@ class Mariadb_Plugin
         }
 
         return $map;
+    }
+
+    /**
+     * Миграция: добавление 'cashback_global' в ENUM rate_type таблицы cashback_rate_history.
+     * Для новых установок ENUM уже содержит cashback_global в схеме CREATE TABLE.
+     */
+    public function migrate_rate_history_enum(): void
+    {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'cashback_rate_history';
+
+        $exists = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s",
+            $table
+        ));
+
+        if (!$exists) {
+            return;
+        }
+
+        $column_type = $wpdb->get_row($wpdb->prepare(
+            "SELECT COLUMN_TYPE FROM information_schema.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND COLUMN_NAME = 'rate_type'",
+            $table
+        ));
+
+        if (!$column_type) {
+            return;
+        }
+
+        if (strpos($column_type->COLUMN_TYPE, 'cashback_global') !== false) {
+            return;
+        }
+
+        $wpdb->query(
+            "ALTER TABLE `{$table}`
+             MODIFY COLUMN `rate_type` ENUM('cashback','cashback_global','affiliate_commission','affiliate_global')
+             NOT NULL COMMENT 'Тип изменённой ставки'"
+        );
+
+        if ($wpdb->last_error) {
+            error_log('[Cashback] Failed to migrate rate_history ENUM: ' . $wpdb->last_error);
+        }
     }
 
 }
