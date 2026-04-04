@@ -38,8 +38,9 @@ class Cashback_Affiliate_Frontend
         add_action('woocommerce_account_cashback-affiliate_endpoint', [$this, 'endpoint_content']);
         add_action('wp_enqueue_scripts', [$this, 'enqueue_scripts']);
 
-        // AJAX пагинация начислений
+        // AJAX пагинация начислений и приглашённых
         add_action('wp_ajax_affiliate_load_accruals', [$this, 'ajax_load_accruals']);
+        add_action('wp_ajax_affiliate_load_referrals', [$this, 'ajax_load_referrals']);
     }
 
     public function register_endpoint(): void
@@ -78,9 +79,16 @@ class Cashback_Affiliate_Frontend
         }
 
         wp_enqueue_style(
+            'cashback-frontend',
+            plugins_url('../assets/css/frontend.css', __FILE__),
+            [],
+            '1.0.0'
+        );
+
+        wp_enqueue_style(
             'cashback-affiliate-frontend',
             plugins_url('../assets/css/affiliate-frontend.css', __FILE__),
-            [],
+            ['cashback-frontend'],
             '1.0.0'
         );
 
@@ -192,13 +200,30 @@ class Cashback_Affiliate_Frontend
         echo '</div>'; // stats-grid
         echo '</div>'; // section
 
-        // Таблица начислений
+        // Вкладки: История начислений / Список приглашённых
         echo '<div class="cashback-affiliate-section">';
-        echo '<h3>' . esc_html__('История начислений', 'cashback-plugin') . '</h3>';
+        echo '<div class="cashback-tabs">';
+        echo '<button type="button" class="cashback-tab active" data-tab="affiliate-tab-accruals">'
+            . esc_html__('История начислений', 'cashback-plugin') . '</button>';
+        echo '<button type="button" class="cashback-tab" data-tab="affiliate-tab-referrals">'
+            . esc_html__('Список приглашённых', 'cashback-plugin') . '</button>';
+        echo '</div>';
+
+        // Вкладка: История начислений
+        echo '<div class="cashback-tab-content active" id="affiliate-tab-accruals">';
         echo '<div id="affiliate-accruals-container">';
         $this->render_accruals_table($user_id, 1);
         echo '</div>';
         echo '</div>';
+
+        // Вкладка: Список приглашённых
+        echo '<div class="cashback-tab-content" id="affiliate-tab-referrals">';
+        echo '<div id="affiliate-referrals-container">';
+        $this->render_referrals_table($user_id, 1);
+        echo '</div>';
+        echo '</div>';
+
+        echo '</div>'; // section
 
         echo '</div>'; // page
     }
@@ -309,6 +334,113 @@ class Cashback_Affiliate_Frontend
 
         ob_start();
         $this->render_accruals_table($user_id, $page);
+        $html = ob_get_clean();
+
+        wp_send_json_success(['html' => $html]);
+    }
+
+    /**
+     * Рендер таблицы приглашённых пользователей.
+     */
+    private function render_referrals_table(int $user_id, int $page): void
+    {
+        global $wpdb;
+        $prefix   = $wpdb->prefix;
+        $per_page = self::PER_PAGE;
+        $offset   = ($page - 1) * $per_page;
+
+        $total = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM `{$prefix}cashback_affiliate_profiles`
+             WHERE referred_by_user_id = %d",
+            $user_id
+        ));
+
+        $total_pages = max(1, (int) ceil($total / $per_page));
+        $page        = min($page, $total_pages);
+
+        $referrals = $wpdb->get_results($wpdb->prepare(
+            "SELECT ap.user_id, ap.referred_at, ap.affiliate_status,
+                    u.display_name, u.user_registered,
+                    COALESCE(SUM(aa.commission_amount), 0) AS total_earned
+             FROM `{$prefix}cashback_affiliate_profiles` ap
+             LEFT JOIN `{$wpdb->users}` u ON u.ID = ap.user_id
+             LEFT JOIN `{$prefix}cashback_affiliate_accruals` aa
+                    ON aa.referred_user_id = ap.user_id AND aa.referrer_id = %d
+             WHERE ap.referred_by_user_id = %d
+             GROUP BY ap.user_id, ap.referred_at, ap.affiliate_status,
+                      u.display_name, u.user_registered
+             ORDER BY ap.referred_at DESC
+             LIMIT %d OFFSET %d",
+            $user_id,
+            $user_id,
+            $per_page,
+            $offset
+        ), ARRAY_A);
+
+        if (empty($referrals)) {
+            echo '<p class="cashback-affiliate-empty">'
+                . esc_html__('Приглашённых пользователей пока нет.', 'cashback-plugin') . '</p>';
+            return;
+        }
+
+        echo '<table class="cashback-affiliate-table">';
+        echo '<thead><tr>';
+        echo '<th>' . esc_html__('Имя', 'cashback-plugin') . '</th>';
+        echo '<th>' . esc_html__('Дата регистрации', 'cashback-plugin') . '</th>';
+        echo '<th>' . esc_html__('Дата привязки', 'cashback-plugin') . '</th>';
+        echo '<th>' . esc_html__('Заработано', 'cashback-plugin') . '</th>';
+        echo '</tr></thead><tbody>';
+
+        foreach ($referrals as $row) {
+            $registered = $row['user_registered']
+                ? wp_date('d.m.Y', strtotime($row['user_registered']))
+                : '—';
+            $referred_at = $row['referred_at']
+                ? wp_date('d.m.Y', strtotime($row['referred_at']))
+                : '—';
+
+            echo '<tr>';
+            echo '<td>' . esc_html($row['display_name'] ?: '—') . '</td>';
+            echo '<td>' . esc_html($registered) . '</td>';
+            echo '<td>' . esc_html($referred_at) . '</td>';
+            echo '<td>' . esc_html(number_format_i18n((float) $row['total_earned'], 2)) . ' ₽</td>';
+            echo '</tr>';
+        }
+
+        echo '</tbody></table>';
+
+        // Пагинация
+        if ($total_pages > 1) {
+            echo '<div class="cashback-affiliate-pagination cashback-affiliate-referrals-pagination" data-total="' . esc_attr($total_pages) . '">';
+            for ($i = 1; $i <= $total_pages; $i++) {
+                $active = $i === $page ? ' active' : '';
+                echo '<button type="button" class="cashback-affiliate-page-btn' . $active . '" data-page="' . esc_attr($i) . '">'
+                    . esc_html($i) . '</button>';
+            }
+            echo '</div>';
+        }
+    }
+
+    /**
+     * AJAX: загрузка страницы приглашённых.
+     */
+    public function ajax_load_referrals(): void
+    {
+        if (!check_ajax_referer('affiliate_frontend_nonce', 'nonce', false)) {
+            wp_send_json_error(['message' => 'Неверный nonce.']);
+            return;
+        }
+
+        if (!is_user_logged_in()) {
+            wp_send_json_error(['message' => 'Не авторизован.']);
+            return;
+        }
+
+        $user_id = get_current_user_id();
+        $page    = max(1, absint($_POST['page'] ?? 1));
+
+        ob_start();
+        $this->render_referrals_table($user_id, $page);
         $html = ob_get_clean();
 
         wp_send_json_success(['html' => $html]);

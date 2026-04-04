@@ -31,8 +31,8 @@
         }
     });
 
-    /* ── Pagination ── */
-    $(document).on('click', '.cashback-affiliate-page-btn', function () {
+    /* ── Accruals pagination ── */
+    $(document).on('click', '#affiliate-accruals-container .cashback-affiliate-page-btn', function () {
         var page = $(this).data('page');
         var $container = $('#affiliate-accruals-container');
 
@@ -40,6 +40,27 @@
 
         $.post(data.ajaxurl, {
             action: 'affiliate_load_accruals',
+            nonce:  data.nonce,
+            page:   page
+        }, function (resp) {
+            $container.css('opacity', '1');
+            if (resp.success && resp.data.html) {
+                $container.html(resp.data.html);
+            }
+        }).fail(function () {
+            $container.css('opacity', '1');
+        });
+    });
+
+    /* ── Referrals pagination ── */
+    $(document).on('click', '#affiliate-referrals-container .cashback-affiliate-page-btn', function () {
+        var page = $(this).data('page');
+        var $container = $('#affiliate-referrals-container');
+
+        $container.css('opacity', '0.5');
+
+        $.post(data.ajaxurl, {
+            action: 'affiliate_load_referrals',
             nonce:  data.nonce,
             page:   page
         }, function (resp) {
