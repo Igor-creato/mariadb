@@ -34,10 +34,13 @@ class Mariadb_Plugin
      */
     private function __construct()
     {
-        // Инициализация плагина
         add_action('user_register', function (int $user_id): void {
             $this->add_user_to_cashback_tables($user_id);
         });
+
+        add_action('wp_login', function (string $user_login, $user): void {
+            $this->add_user_to_cashback_tables((int) $user->ID);
+        }, 10, 2);
     }
 
     /**
@@ -1204,12 +1207,14 @@ class Mariadb_Plugin
         $batch_size = 500;
         $offset = 0;
         $total_initialized = 0;
+        $total_errors = 0;
 
         do {
             $user_ids = get_users(array(
                 'fields' => 'ID',
                 'number' => $batch_size,
                 'offset' => $offset,
+                'who' => '',
             ));
 
             if (empty($user_ids)) {
@@ -1220,18 +1225,23 @@ class Mariadb_Plugin
                 $result = $this->add_user_to_cashback_tables((int) $user_id);
                 if (!$result) {
                     error_log("[Cashback] Failed to initialize user {$user_id}: " . $wpdb->last_error);
-                    throw new Exception("Failed to initialize user {$user_id}.");
+                    $total_errors++;
+                } else {
+                    $total_initialized++;
                 }
-                $total_initialized++;
             }
 
             $offset += $batch_size;
         } while (count($user_ids) === $batch_size);
 
-        if ($total_initialized === 0) {
+        if ($total_initialized === 0 && $total_errors === 0) {
             error_log('Mariadb Plugin: No existing users to initialize');
         } else {
-            error_log('Mariadb Plugin: Successfully initialized ' . $total_initialized . ' existing users');
+            $message = 'Mariadb Plugin: Successfully initialized ' . $total_initialized . ' existing users';
+            if ($total_errors > 0) {
+                $message .= ', ' . $total_errors . ' errors';
+            }
+            error_log($message);
         }
     }
 

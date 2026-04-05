@@ -18,7 +18,7 @@
             }
         });
 
-        $('.cashback-filters-actions .button:not(.button-primary)').on('click', function (e) {
+        $('.cashback-filter-actions .button:not(.button-primary)').on('click', function (e) {
             e.preventDefault();
             window.location.href = window.location.pathname + '?page=cashback-rate-history';
         });

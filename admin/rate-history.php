@@ -99,38 +99,31 @@ class Cashback_Rate_History_Admin
 
         $where_clauses = [];
         $where_values  = [];
-        $where_formats = [];
 
         if ($filter_rate_type !== '') {
             $where_clauses[] = 'rate_type = %s';
             $where_values[]  = $filter_rate_type;
-            $where_formats[] = '%s';
         }
 
         if (!empty($filter_date_from)) {
             $where_clauses[] = 'created_at >= %s';
             $where_values[]  = $filter_date_from . ' 00:00:00';
-            $where_formats[] = '%s';
         }
 
         if (!empty($filter_date_to)) {
             $where_clauses[] = 'created_at <= %s';
             $where_values[]  = $filter_date_to . ' 23:59:59';
-            $where_formats[] = '%s';
         }
 
         if (!empty($filter_rate)) {
-            $where_clauses[] = 'new_rate = %s';
-            $where_values[]  = $filter_rate;
-            $where_formats[] = '%s';
+            $where_clauses[] = 'new_rate = %f';
+            $where_values[]  = (float) $filter_rate;
         }
 
         if (!empty($filter_user)) {
             $where_clauses[] = '(user_id = %d OR details LIKE %s)';
             $where_values[]  = absint($filter_user);
             $where_values[]  = '%' . $wpdb->esc_like($filter_user) . '%';
-            $where_formats[] = '%d';
-            $where_formats[] = '%s';
         }
 
         $where_sql = '';
@@ -139,12 +132,11 @@ class Cashback_Rate_History_Admin
         }
 
         $count_sql = "SELECT COUNT(*) FROM {$this->rate_history_table} {$where_sql}";
-        $total_items = (int) $wpdb->get_var($wpdb->prepare($count_sql, array_merge($where_values, $where_formats)));
+        $total_items = (int) $wpdb->get_var($wpdb->prepare($count_sql, $where_values));
 
         $offset = ($paged - 1) * $per_page;
         $data_sql = "SELECT * FROM {$this->rate_history_table} {$where_sql} ORDER BY created_at DESC LIMIT %d OFFSET %d";
-        $all_params = array_merge($where_values, $where_formats, [$per_page, $offset]);
-        $all_formats = array_merge($where_formats, ['%d', '%d']);
+        $all_params = array_merge($where_values, [$per_page, $offset]);
         $records = $wpdb->get_results($wpdb->prepare($data_sql, $all_params));
 
         $total_pages = ceil($total_items / $per_page);
@@ -277,12 +269,8 @@ class Cashback_Rate_History_Admin
                                 </td>
                                 <td>
                                     <?php
-                                    if ($record->user_id === null) {
-                                        if ($record->rate_type === 'affiliate_global' || $record->rate_type === 'cashback_global') {
-                                            esc_html_e('Все пользователи', 'cashback-plugin');
-                                        } else {
-                                            esc_html_e('Часть пользователей', 'cashback-plugin');
-                                        }
+                                    if ((int) $record->changed_by === 0) {
+                                        esc_html_e('Система', 'cashback-plugin');
                                     } else {
                                         $admin = get_user_by('id', (int) $record->changed_by);
                                         if ($admin) {
