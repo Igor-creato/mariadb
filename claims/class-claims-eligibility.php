@@ -156,12 +156,13 @@ class Cashback_Claims_Eligibility
     /**
      * Get all user clicks with their cashback status.
      *
-     * @param int $user_id
-     * @param int $page
-     * @param int $per_page
+     * @param int    $user_id
+     * @param int    $page
+     * @param int    $per_page
+     * @param array  $filters {date_from?: string, date_to?: string, search?: string, can_claim?: string}
      * @return array{clicks: array[], total: int, pages: int}
      */
-    public static function get_user_clicks(int $user_id, int $page = 1, int $per_page = 20): array
+    public static function get_user_clicks(int $user_id, int $page = 1, int $per_page = 20, array $filters = []): array
     {
         global $wpdb;
 
@@ -170,8 +171,46 @@ class Cashback_Claims_Eligibility
         $cutoff_min = gmdate('Y-m-d H:i:s', strtotime('-' . self::MAX_DAYS_AFTER_CLICK . ' days'));
         $cutoff_max = gmdate('Y-m-d H:i:s', strtotime('-' . self::MIN_HOURS_AFTER_CLICK . ' hours'));
 
-        $clicks = $wpdb->get_results($wpdb->prepare(
-            "SELECT cl.click_id, cl.product_id, cl.created_at, cl.cpa_network, cl.offer_id,
+        $where_extra = '';
+        $prepare_args = [$user_id];
+
+        // Date filters
+        $date_from = $filters['date_from'] ?? '';
+        $date_to = $filters['date_to'] ?? '';
+        if ($date_from !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $date_from)) {
+            $where_extra .= ' AND cl.created_at >= %s';
+            $prepare_args[] = $date_from . ' 00:00:00';
+        }
+        if ($date_to !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $date_to)) {
+            $where_extra .= ' AND cl.created_at <= %s';
+            $prepare_args[] = $date_to . ' 23:59:59';
+        }
+
+        // Search by product name — filter product_ids first to keep query efficient
+        $search = $filters['search'] ?? '';
+        $search_product_ids = null;
+        if ($search !== '') {
+            $search_product_ids = self::find_product_ids_by_name($search);
+            if (empty($search_product_ids)) {
+                return ['clicks' => [], 'total' => 0, 'pages' => 1];
+            }
+            $placeholders = implode(',', array_fill(0, count($search_product_ids), '%d'));
+            $where_extra .= " AND cl.product_id IN ($placeholders)";
+            $prepare_args = array_merge($prepare_args, $search_product_ids);
+        }
+
+        // can_claim filter — restrict to eligible time window and no cashback/claim
+        $can_claim_filter = $filters['can_claim'] ?? '';
+        if ($can_claim_filter === 'yes') {
+            $where_extra .= ' AND cl.spam_click = 0';
+            $where_extra .= ' AND cl.created_at >= %s AND cl.created_at <= %s';
+            $prepare_args[] = $cutoff_min;
+            $prepare_args[] = $cutoff_max;
+            $where_extra .= " AND t.id IS NULL";
+            $where_extra .= " AND c_active.claim_id IS NULL";
+        }
+
+        $select_query = "SELECT cl.click_id, cl.product_id, cl.created_at, cl.cpa_network, cl.offer_id,
                     cl.ip_address, cl.user_agent, cl.spam_click,
                     CASE WHEN t.id IS NOT NULL THEN 1 ELSE 0 END AS has_cashback,
                     t.order_status AS cashback_status,
@@ -184,18 +223,24 @@ class Cashback_Claims_Eligibility
              LEFT JOIN `{$wpdb->prefix}cashback_claims` c_active
                  ON c_active.click_id = cl.click_id AND c_active.user_id = cl.user_id
                  AND c_active.status IN ('draft', 'submitted', 'sent_to_network', 'approved')
-             WHERE cl.user_id = %d
+             WHERE cl.user_id = %d{$where_extra}
              ORDER BY cl.created_at DESC
-             LIMIT %d OFFSET %d",
-            $user_id,
-            $per_page,
-            $offset
-        ), ARRAY_A);
+             LIMIT %d OFFSET %d";
 
-        $total = (int) $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM `{$wpdb->prefix}cashback_click_log` WHERE user_id = %d",
-            $user_id
-        ));
+        $data_args = array_merge($prepare_args, [$per_page, $offset]);
+        $clicks = $wpdb->get_results($wpdb->prepare($select_query, ...$data_args), ARRAY_A);
+
+        $count_query = "SELECT COUNT(*)
+             FROM `{$wpdb->prefix}cashback_click_log` cl
+             LEFT JOIN `{$wpdb->prefix}cashback_transactions` t
+                 ON t.click_id = cl.click_id AND t.user_id = cl.user_id
+                 AND t.order_status IN ('waiting', 'completed', 'balance', 'hold')
+             LEFT JOIN `{$wpdb->prefix}cashback_claims` c_active
+                 ON c_active.click_id = cl.click_id AND c_active.user_id = cl.user_id
+                 AND c_active.status IN ('draft', 'submitted', 'sent_to_network', 'approved')
+             WHERE cl.user_id = %d{$where_extra}";
+
+        $total = (int) $wpdb->get_var($wpdb->prepare($count_query, ...$prepare_args));
 
         $pages = (int) ceil($total / $per_page);
 
@@ -255,6 +300,29 @@ class Cashback_Claims_Eligibility
         }
 
         return ['clicks' => $enriched, 'total' => $total, 'pages' => max(1, $pages)];
+    }
+
+    /**
+     * Find WooCommerce product IDs by name search.
+     *
+     * @param string $search
+     * @return int[]
+     */
+    private static function find_product_ids_by_name(string $search): array
+    {
+        global $wpdb;
+
+        $like = '%' . $wpdb->esc_like($search) . '%';
+
+        $ids = $wpdb->get_col($wpdb->prepare(
+            "SELECT ID FROM `{$wpdb->posts}`
+             WHERE post_type IN ('product', 'product_variation')
+             AND post_title LIKE %s
+             LIMIT 500",
+            $like
+        ));
+
+        return array_map('intval', $ids);
     }
 
     /**

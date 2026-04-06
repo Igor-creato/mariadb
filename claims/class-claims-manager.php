@@ -271,7 +271,7 @@ class Cashback_Claims_Manager
      * @param string $status_filter
      * @return array{claims: array[], total: int, pages: int}
      */
-    public static function get_user_claims(int $user_id, int $page = 1, int $per_page = 20, string $status_filter = ''): array
+    public static function get_user_claims(int $user_id, int $page = 1, int $per_page = 20, string $status_filter = '', array $filters = []): array
     {
         global $wpdb;
 
@@ -282,6 +282,23 @@ class Cashback_Claims_Manager
         if ($status_filter && $status_filter !== 'all') {
             $where .= ' AND c.status = %s';
             $params[] = $status_filter;
+        }
+
+        $date_from = $filters['date_from'] ?? '';
+        $date_to = $filters['date_to'] ?? '';
+        if ($date_from !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $date_from)) {
+            $where .= ' AND c.created_at >= %s';
+            $params[] = $date_from . ' 00:00:00';
+        }
+        if ($date_to !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $date_to)) {
+            $where .= ' AND c.created_at <= %s';
+            $params[] = $date_to . ' 23:59:59';
+        }
+
+        $search = $filters['search'] ?? '';
+        if ($search !== '') {
+            $where .= ' AND c.product_name LIKE %s';
+            $params[] = '%' . $wpdb->esc_like($search) . '%';
         }
 
         $claims = $wpdb->get_results($wpdb->prepare(

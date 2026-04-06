@@ -229,8 +229,38 @@ jQuery(function($) {
     });
 
     /* ========================================
-        AJAX Pagination for clicks tab
+        Clicks filters + AJAX Pagination
         ======================================== */
+
+    function getClicksFilters() {
+        return {
+            date_from: $('#clicks-date-from').val() || '',
+            date_to: $('#clicks-date-to').val() || '',
+            search: $('#clicks-search').val() || '',
+            can_claim: $('#clicks-can-claim').val() || ''
+        };
+    }
+
+    $(document).on('click', '#clicks-filter-apply', function() {
+        loadClicks(1);
+    });
+
+    $(document).on('click', '#clicks-filter-reset', function() {
+        $('#clicks-date-from').val('');
+        $('#clicks-date-to').val('');
+        $('#clicks-search').val('');
+        $('#clicks-can-claim').val('');
+        loadClicks(1);
+    });
+
+    // Search on Enter key
+    $(document).on('keypress', '#clicks-search', function(e) {
+        if (e.which === 13) {
+            e.preventDefault();
+            loadClicks(1);
+        }
+    });
+
     $(document).on('click', '#clicks-pagination .page-numbers[data-page]', function(e) {
         e.preventDefault();
         var page = $(this).data('page');
@@ -238,11 +268,18 @@ jQuery(function($) {
     });
 
     function loadClicks(page) {
-        $.post(ajaxUrl, {
+        var filters = getClicksFilters();
+        var postData = {
             action: 'claims_load_clicks',
             nonce: data.loadNonce,
-            page: page
-        }, function(res) {
+            page: page,
+            date_from: filters.date_from,
+            date_to: filters.date_to,
+            search: filters.search,
+            can_claim: filters.can_claim
+        };
+
+        $.post(ajaxUrl, postData, function(res) {
             if (res.success) {
                 $('#clicks-table-container').html(res.data.html);
                 $('#clicks-pagination').html(buildPagination(page, res.data.pages));
@@ -251,8 +288,37 @@ jQuery(function($) {
     }
 
     /* ========================================
-        AJAX Pagination + filter for claims tab
+        Claims filters + AJAX Pagination
         ======================================== */
+
+    function getClaimsFilters() {
+        return {
+            date_from: $('#claims-date-from').val() || '',
+            date_to: $('#claims-date-to').val() || '',
+            search: $('#claims-search').val() || '',
+            status: $('#claims-status-filter').val() || ''
+        };
+    }
+
+    $(document).on('click', '#claims-filter-apply', function() {
+        loadClaims(1);
+    });
+
+    $(document).on('click', '#claims-filter-reset', function() {
+        $('#claims-date-from').val('');
+        $('#claims-date-to').val('');
+        $('#claims-search').val('');
+        $('#claims-status-filter').val('');
+        loadClaims(1);
+    });
+
+    $(document).on('keypress', '#claims-search', function(e) {
+        if (e.which === 13) {
+            e.preventDefault();
+            loadClaims(1);
+        }
+    });
+
     window.CashbackClaims = {
         filterClaims: function() {
             loadClaims(1);
@@ -273,13 +339,16 @@ jQuery(function($) {
     });
 
     function loadClaims(page) {
-        var status = $('#claims-status-filter').val() || '';
+        var filters = getClaimsFilters();
 
         $.post(ajaxUrl, {
             action: 'claims_load_claims',
             nonce: data.loadNonce,
             page: page,
-            status: status
+            status: filters.status,
+            date_from: filters.date_from,
+            date_to: filters.date_to,
+            search: filters.search
         }, function(res) {
             if (res.success) {
                 $('#claims-table-container').html(res.data.html);

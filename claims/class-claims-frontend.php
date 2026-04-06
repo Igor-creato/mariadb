@@ -192,6 +192,33 @@ class Cashback_Claims_Frontend
     {
         $result = Cashback_Claims_Eligibility::get_user_clicks($user_id, 1, self::PER_PAGE);
         ?>
+        <div class="clicks-filters">
+            <div class="clicks-filters-row">
+                <div class="clicks-filter-group">
+                    <label for="clicks-date-from"><?php esc_html_e('С', 'cashback-plugin'); ?></label>
+                    <input type="date" id="clicks-date-from" class="clicks-filter-input">
+                </div>
+                <div class="clicks-filter-group">
+                    <label for="clicks-date-to"><?php esc_html_e('По', 'cashback-plugin'); ?></label>
+                    <input type="date" id="clicks-date-to" class="clicks-filter-input">
+                </div>
+                <div class="clicks-filter-group">
+                    <label for="clicks-search"><?php esc_html_e('Магазин', 'cashback-plugin'); ?></label>
+                    <input type="text" id="clicks-search" class="clicks-filter-input" placeholder="<?php esc_attr_e('Поиск по названию...', 'cashback-plugin'); ?>">
+                </div>
+                <div class="clicks-filter-group">
+                    <label for="clicks-can-claim"><?php esc_html_e('Заявка', 'cashback-plugin'); ?></label>
+                    <select id="clicks-can-claim" class="clicks-filter-input">
+                        <option value=""><?php esc_html_e('Все переходы', 'cashback-plugin'); ?></option>
+                        <option value="yes"><?php esc_html_e('Можно подать заявку', 'cashback-plugin'); ?></option>
+                    </select>
+                </div>
+                <div class="clicks-filter-group clicks-filter-buttons">
+                    <button type="button" id="clicks-filter-apply" class="button"><?php esc_html_e('Применить', 'cashback-plugin'); ?></button>
+                    <button type="button" id="clicks-filter-reset" class="button clicks-filter-reset"><?php esc_html_e('Сбросить', 'cashback-plugin'); ?></button>
+                </div>
+            </div>
+        </div>
         <div id="clicks-table-container">
             <?php if (empty($result['clicks'])): ?>
                 <p><?php esc_html_e('У вас пока нет переходов по партнёрским ссылкам.', 'cashback-plugin'); ?></p>
@@ -212,24 +239,44 @@ class Cashback_Claims_Frontend
      */
     private function render_claims_tab(int $user_id): void
     {
-        $status_filter = '';
-        $result = Cashback_Claims_Manager::get_user_claims($user_id, 1, self::PER_PAGE, $status_filter);
+        $result = Cashback_Claims_Manager::get_user_claims($user_id, 1, self::PER_PAGE);
         ?>
-        <div class="claims-filters">
-            <select id="claims-status-filter" onchange="CashbackClaims.filterClaims()">
-                <option value=""><?php esc_html_e('Все статусы', 'cashback-plugin'); ?></option>
-                <?php
-                $statuses = [
-                    'submitted'       => __('Отправлена', 'cashback-plugin'),
-                    'sent_to_network' => __('Отправлена партнёру', 'cashback-plugin'),
-                    'approved'        => __('Одобрена', 'cashback-plugin'),
-                    'declined'        => __('Отклонена', 'cashback-plugin'),
-                ];
-                foreach ($statuses as $slug => $label) {
-                    printf('<option value="%s">%s</option>', esc_attr($slug), esc_html($label));
-                }
-                ?>
-            </select>
+        <div class="clicks-filters">
+            <div class="clicks-filters-row">
+                <div class="clicks-filter-group">
+                    <label for="claims-date-from"><?php esc_html_e('С', 'cashback-plugin'); ?></label>
+                    <input type="date" id="claims-date-from" class="clicks-filter-input">
+                </div>
+                <div class="clicks-filter-group">
+                    <label for="claims-date-to"><?php esc_html_e('По', 'cashback-plugin'); ?></label>
+                    <input type="date" id="claims-date-to" class="clicks-filter-input">
+                </div>
+                <div class="clicks-filter-group">
+                    <label for="claims-search"><?php esc_html_e('Магазин', 'cashback-plugin'); ?></label>
+                    <input type="text" id="claims-search" class="clicks-filter-input" placeholder="<?php esc_attr_e('Поиск по названию...', 'cashback-plugin'); ?>">
+                </div>
+                <div class="clicks-filter-group">
+                    <label for="claims-status-filter"><?php esc_html_e('Статус', 'cashback-plugin'); ?></label>
+                    <select id="claims-status-filter" class="clicks-filter-input">
+                        <option value=""><?php esc_html_e('Все статусы', 'cashback-plugin'); ?></option>
+                        <?php
+                        $statuses = [
+                            'submitted'       => __('Отправлена', 'cashback-plugin'),
+                            'sent_to_network' => __('Отправлена партнёру', 'cashback-plugin'),
+                            'approved'        => __('Одобрена', 'cashback-plugin'),
+                            'declined'        => __('Отклонена', 'cashback-plugin'),
+                        ];
+                        foreach ($statuses as $slug => $label) {
+                            printf('<option value="%s">%s</option>', esc_attr($slug), esc_html($label));
+                        }
+                        ?>
+                    </select>
+                </div>
+                <div class="clicks-filter-group clicks-filter-buttons">
+                    <button type="button" id="claims-filter-apply" class="button"><?php esc_html_e('Применить', 'cashback-plugin'); ?></button>
+                    <button type="button" id="claims-filter-reset" class="button clicks-filter-reset"><?php esc_html_e('Сбросить', 'cashback-plugin'); ?></button>
+                </div>
+            </div>
         </div>
 
         <div id="claims-table-container">
@@ -458,11 +505,19 @@ class Cashback_Claims_Frontend
 
         $user_id = get_current_user_id();
         $page = max(1, absint($_POST['page'] ?? 1));
-        $result = Cashback_Claims_Eligibility::get_user_clicks($user_id, $page, self::PER_PAGE);
+
+        $filters = [
+            'date_from' => sanitize_text_field(wp_unslash($_POST['date_from'] ?? '')),
+            'date_to'   => sanitize_text_field(wp_unslash($_POST['date_to'] ?? '')),
+            'search'    => sanitize_text_field(wp_unslash($_POST['search'] ?? '')),
+            'can_claim' => sanitize_text_field(wp_unslash($_POST['can_claim'] ?? '')),
+        ];
+
+        $result = Cashback_Claims_Eligibility::get_user_clicks($user_id, $page, self::PER_PAGE, $filters);
 
         ob_start();
         if (empty($result['clicks'])) {
-            echo '<p>' . esc_html__('У вас пока нет переходов по партнёрским ссылкам.', 'cashback-plugin') . '</p>';
+            echo '<p>' . esc_html__('Ничего не найдено.', 'cashback-plugin') . '</p>';
         } else {
             $this->render_clicks_table($result['clicks']);
         }
@@ -483,7 +538,14 @@ class Cashback_Claims_Frontend
         $user_id = get_current_user_id();
         $page = max(1, absint($_POST['page'] ?? 1));
         $status = sanitize_text_field(wp_unslash($_POST['status'] ?? ''));
-        $result = Cashback_Claims_Manager::get_user_claims($user_id, $page, self::PER_PAGE, $status);
+
+        $filters = [
+            'date_from' => sanitize_text_field(wp_unslash($_POST['date_from'] ?? '')),
+            'date_to'   => sanitize_text_field(wp_unslash($_POST['date_to'] ?? '')),
+            'search'    => sanitize_text_field(wp_unslash($_POST['search'] ?? '')),
+        ];
+
+        $result = Cashback_Claims_Manager::get_user_claims($user_id, $page, self::PER_PAGE, $status, $filters);
 
         ob_start();
         if (empty($result['claims'])) {
@@ -538,14 +600,14 @@ class Cashback_Claims_Frontend
             'cashback-claims-css',
             $plugin_dir_url . 'assets/css/admin-claims.css',
             [],
-            '1.2.0'
+            '1.3.0'
         );
 
         wp_enqueue_script(
             'cashback-claims-js',
             $plugin_dir_url . 'assets/js/admin-claims.js',
             ['jquery'],
-            '1.2.0',
+            '1.3.0',
             true
         );
 
