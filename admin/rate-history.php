@@ -100,7 +100,8 @@ class Cashback_Rate_History_Admin
         $where_clauses = [];
         $where_values  = [];
 
-        if ($filter_rate_type !== '') {
+        $allowed_rate_types = ['cashback', 'cashback_global', 'affiliate_commission', 'affiliate_global'];
+        if ($filter_rate_type !== '' && in_array($filter_rate_type, $allowed_rate_types, true)) {
             $where_clauses[] = 'rate_type = %s';
             $where_values[]  = $filter_rate_type;
         }
@@ -132,7 +133,11 @@ class Cashback_Rate_History_Admin
         }
 
         $count_sql = "SELECT COUNT(*) FROM {$this->rate_history_table} {$where_sql}";
-        $total_items = (int) $wpdb->get_var($wpdb->prepare($count_sql, $where_values));
+        if (!empty($where_values)) {
+            $total_items = (int) $wpdb->get_var($wpdb->prepare($count_sql, $where_values));
+        } else {
+            $total_items = (int) $wpdb->get_var($count_sql);
+        }
 
         $offset = ($paged - 1) * $per_page;
         $data_sql = "SELECT * FROM {$this->rate_history_table} {$where_sql} ORDER BY created_at DESC LIMIT %d OFFSET %d";
@@ -344,29 +349,29 @@ class Cashback_Rate_History_Admin
             return false;
         }
 
-        $result = $wpdb->insert(
-            $table,
-            [
-                'rate_type' => $rate_type,
-                'user_id' => $user_id,
-                'old_rate' => $old_rate !== null ? number_format($old_rate, 2, '.', '') : null,
-                'new_rate' => number_format($new_rate, 2, '.', ''),
-                'affected_users' => $affected_users,
-                'changed_by' => get_current_user_id(),
-                'change_source' => $change_source,
-                'details' => $details !== null ? wp_json_encode($details) : null,
-            ],
-            [
-                '%s',
-                $user_id !== null ? '%d' : '%s',
-                $old_rate !== null ? '%s' : '%s',
-                '%s',
-                '%d',
-                '%d',
-                '%s',
-                '%s',
-            ]
-        );
+        $allowed_sources = ['manual', 'bulk', 'api', 'system'];
+        if (!in_array($change_source, $allowed_sources, true)) {
+            $change_source = 'manual';
+        }
+
+        $insert_data = [
+            'rate_type' => $rate_type,
+            'old_rate' => $old_rate !== null ? number_format($old_rate, 2, '.', '') : null,
+            'new_rate' => number_format($new_rate, 2, '.', ''),
+            'affected_users' => $affected_users,
+            'changed_by' => get_current_user_id(),
+            'change_source' => $change_source,
+            'details' => $details !== null ? wp_json_encode($details) : null,
+        ];
+
+        $insert_formats = ['%s', '%s', '%s', '%d', '%d', '%s', '%s'];
+
+        if ($user_id !== null) {
+            $insert_data['user_id'] = $user_id;
+            $insert_formats[] = '%d';
+        }
+
+        $result = $wpdb->insert($table, $insert_data, $insert_formats);
 
         return $result !== false;
     }
