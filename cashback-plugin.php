@@ -271,6 +271,13 @@ class CashbackPlugin
             Cashback_Affiliate_DB::create_tables();
         }
 
+        // Создание таблиц claims-модуля (неначисленный кэшбэк)
+        $this->require_file('claims/class-claims-db.php');
+        if (class_exists('Cashback_Claims_DB')) {
+            Cashback_Claims_DB::create_tables();
+            Cashback_Claims_DB::migrate_add_is_read();
+        }
+
         // Планируем cron для антифрод-детекции (ежечасно)
         if (!wp_next_scheduled('cashback_fraud_detection_cron')) {
             wp_schedule_event(time(), 'hourly', 'cashback_fraud_detection_cron');
@@ -287,6 +294,7 @@ class CashbackPlugin
         add_rewrite_endpoint('history-payout', EP_ROOT | EP_PAGES);
         add_rewrite_endpoint('cashback-support', EP_ROOT | EP_PAGES);
         add_rewrite_endpoint('cashback-affiliate', EP_ROOT | EP_PAGES);
+        add_rewrite_endpoint('cashback_lost_cashback', EP_ROOT | EP_PAGES);
 
         // Сбрасываем переписывание URL
         flush_rewrite_rules();
@@ -407,6 +415,15 @@ class CashbackPlugin
         $this->require_file('affiliate/class-affiliate-service.php');
         $this->require_file('affiliate/class-affiliate-frontend.php');
 
+        // Claims module (неначисленный кэшбэк) — загружается везде (фронт + админ + AJAX)
+        $this->require_file('claims/class-claims-db.php');
+        $this->require_file('claims/class-claims-eligibility.php');
+        $this->require_file('claims/class-claims-scoring.php');
+        $this->require_file('claims/class-claims-antifraud.php');
+        $this->require_file('claims/class-claims-manager.php');
+        $this->require_file('claims/class-claims-notifications.php');
+        $this->require_file('claims/class-claims-frontend.php');
+
         // Admin-only файлы (is_admin() = true для admin pages, admin-ajax.php, REST через admin)
         if (is_admin()) {
             $this->require_file('admin/traits/AdminPaginationTrait.php');
@@ -423,6 +440,7 @@ class CashbackPlugin
             $this->require_file('antifraud/class-fraud-admin.php');
             $this->require_file('admin/class-cashback-admin-api-validation.php');
             $this->require_file('affiliate/class-affiliate-admin.php');
+            $this->require_file('claims/class-claims-admin.php');
         }
     }
 
@@ -518,6 +536,17 @@ class CashbackPlugin
         }
         if (is_admin() && class_exists('Cashback_Affiliate_Admin')) {
             new Cashback_Affiliate_Admin();
+        }
+
+        // Claims module (неначисленный кэшбэк)
+        if (class_exists('Cashback_Claims_Frontend')) {
+            new Cashback_Claims_Frontend();
+        }
+        if (class_exists('Cashback_Claims_Notifications')) {
+            new Cashback_Claims_Notifications();
+        }
+        if (is_admin() && class_exists('Cashback_Claims_Admin')) {
+            new Cashback_Claims_Admin();
         }
     }
 

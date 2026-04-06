@@ -79,7 +79,9 @@ function cashback_plugin_uninstall(): void
         "{$prefix}cashback_sync_log",
         "{$prefix}cashback_validation_checkpoints",
         "{$prefix}cashback_rate_history",
-        "{$prefix}cashback_rate_history",
+        // Claims module (drop before claims — FK dependency)
+        "{$prefix}cashback_claim_events",
+        "{$prefix}cashback_claims",
     ];
 
     // Drop triggers
@@ -185,6 +187,10 @@ function cashback_plugin_uninstall(): void
         'cashback_affiliate_cookie_ttl',
         'cashback_affiliate_rules_url',
         'cashback_affiliate_antifraud_enabled',
+        // Claims module
+        'cashback_claims_blocked_merchants',
+        'cashback_claims_max_per_day',
+        'cashback_claims_max_per_week',
     ];
 
     foreach ($options as $option) {
