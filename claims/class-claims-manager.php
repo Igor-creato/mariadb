@@ -320,8 +320,9 @@ class Cashback_Claims_Manager
                 "SELECT event_id, claim_id, status, note, actor_type, is_read, created_at
                  FROM `{$wpdb->prefix}cashback_claim_events`
                  WHERE claim_id IN ({$placeholders}) AND note IS NOT NULL AND note != ''
+                   AND NOT (actor_type = 'system' AND note LIKE %s)
                  ORDER BY created_at ASC",
-                ...$claim_ids
+                ...array_merge($claim_ids, ['%Антифрод:%'])
             ), ARRAY_A);
 
             foreach ($events as $event) {

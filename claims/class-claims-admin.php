@@ -277,7 +277,18 @@ class Cashback_Claims_Admin
                                 </td>
                                 <td>
                                     <?php if ((int) $claim['is_suspicious']): ?>
-                                        <span class="dashicons dashicons-warning" style="color: #d63638;" title="<?php echo esc_attr($claim['suspicious_reasons'] ?? ''); ?>"></span>
+                                        <?php
+                                        $reasons_text = '';
+                                        if (!empty($claim['suspicious_reasons'])) {
+                                            $decoded = json_decode($claim['suspicious_reasons'], true);
+                                            if (is_array($decoded)) {
+                                                $reasons_text = implode('; ', $decoded);
+                                            } else {
+                                                $reasons_text = $claim['suspicious_reasons'];
+                                            }
+                                        }
+                                        ?>
+                                        <span class="dashicons dashicons-warning" style="color: #d63638;" title="<?php echo esc_attr($reasons_text); ?>"></span>
                                     <?php endif; ?>
                                 </td>
                                 <td><?php echo esc_html(gmdate('d.m.Y H:i', strtotime($claim['created_at']))); ?></td>
