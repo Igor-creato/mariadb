@@ -119,23 +119,10 @@
                         showAlert('support-create-alert', 'success', response.data.message);
                         $('#support-create-form')[0].reset();
                         $('#support-files-list').empty();
-                        // Через 2 секунды переключаемся на вкладку истории и добавляем тикет
+                        // Через 2 секунды переключаемся на вкладку истории и подгружаем первую страницу
                         setTimeout(function() {
                             $('.cashback-support-tab[data-tab="history"]').click();
-                            if (response.data.ticket_html) {
-                                var $history = $('#tab-history');
-                                // Убираем сообщение "У вас пока нет тикетов"
-                                $history.find('p').filter(function() {
-                                    return $(this).text().indexOf('У вас пока нет тикетов') !== -1;
-                                }).remove();
-                                var $list = $('#support-tickets-list');
-                                if ($list.length) {
-                                    $list.prepend(cashbackSafeHtml(response.data.ticket_html));
-                                } else {
-                                    $history.append('<div id="support-tickets-list">' + cashbackSafeHtml(response.data.ticket_html) + '</div><div id="support-pagination"></div>');
-                                }
-                                initPagination();
-                            }
+                            loadTicketsPage(1);
                             btn.prop('disabled', false).text('Отправить');
                         }, 2000);
                     } else {
@@ -334,84 +321,81 @@
             initFilePreview('support-reply-files', 'support-reply-files-list');
         }
 
-        // ========= Пагинация истории тикетов =========
-        var TICKETS_PER_PAGE = 10;
-        var currentPage = 1;
-
-        function initPagination() {
-            var $rows = $('#support-tickets-list .support-ticket-row');
-            var totalRows = $rows.length;
-            var totalPages = Math.ceil(totalRows / TICKETS_PER_PAGE);
-            var $pagination = $('#support-pagination');
-
-            if (totalRows <= TICKETS_PER_PAGE) {
-                $pagination.empty();
-                $rows.show();
-                return;
+        // ========= Пагинация истории тикетов (AJAX) =========
+        function buildTicketsPagination(currentPage, totalPages) {
+            if (totalPages <= 1) {
+                return '';
             }
 
-            currentPage = 1;
-            renderPagination(totalPages);
-            showPage(1, $rows, totalPages);
-        }
+            var range = 2;
+            var edge = 2;
+            var pagesSet = {};
+            var i;
 
-        function getPageNumbers(current, total) {
-            var range = 2, edge = 2, pages = [], i;
-            for (i = 1; i <= Math.min(edge, total); i++) pages.push(i);
-            for (i = Math.max(1, current - range); i <= Math.min(total, current + range); i++) pages.push(i);
-            for (i = Math.max(1, total - edge + 1); i <= total; i++) pages.push(i);
-            // unique + sort
-            pages = pages.filter(function(v, idx, arr) { return arr.indexOf(v) === idx; });
-            pages.sort(function(a, b) { return a - b; });
-            return pages;
-        }
+            for (i = 1; i <= Math.min(edge, totalPages); i++) {
+                pagesSet[i] = true;
+            }
+            for (i = Math.max(1, currentPage - range); i <= Math.min(totalPages, currentPage + range); i++) {
+                pagesSet[i] = true;
+            }
+            for (i = Math.max(1, totalPages - edge + 1); i <= totalPages; i++) {
+                pagesSet[i] = true;
+            }
 
-        function renderPagination(totalPages) {
-            var $pagination = $('#support-pagination');
-            var html = '';
+            var pages = Object.keys(pagesSet).map(Number).sort(function (a, b) { return a - b; });
 
-            // Кнопка «Назад»
-            html += '<button type="button" class="button support-page-btn" data-page="' + (currentPage - 1) + '"' + (currentPage <= 1 ? ' disabled' : '') + '>&lsaquo;</button>';
+            var html = '<nav class="woocommerce-pagination"><ul class="page-numbers">';
 
-            var pages = getPageNumbers(currentPage, totalPages);
+            if (currentPage > 1) {
+                html += '<li><a href="#" class="page-numbers prev" data-page="' + (currentPage - 1) + '">&lsaquo;</a></li>';
+            }
+
             var prev = 0;
-            for (var i = 0; i < pages.length; i++) {
-                if (prev && pages[i] - prev > 1) {
-                    html += '<span class="support-page-dots">&hellip;</span>';
+            for (i = 0; i < pages.length; i++) {
+                var page = pages[i];
+                if (prev && page - prev > 1) {
+                    html += '<li><span class="page-numbers dots">&hellip;</span></li>';
                 }
-                if (pages[i] === currentPage) {
-                    html += '<span class="support-page-num current">' + pages[i] + '</span>';
-                } else {
-                    html += '<button type="button" class="button support-page-btn" data-page="' + pages[i] + '">' + pages[i] + '</button>';
-                }
-                prev = pages[i];
+                var cls = (page === currentPage) ? 'current' : '';
+                html += '<li><a href="#" class="page-numbers ' + cls + '" data-page="' + page + '">' + page + '</a></li>';
+                prev = page;
             }
 
-            // Кнопка «Вперёд»
-            html += '<button type="button" class="button support-page-btn" data-page="' + (currentPage + 1) + '"' + (currentPage >= totalPages ? ' disabled' : '') + '>&rsaquo;</button>';
+            if (currentPage < totalPages) {
+                html += '<li><a href="#" class="page-numbers next" data-page="' + (currentPage + 1) + '">&rsaquo;</a></li>';
+            }
 
-            $pagination.html(html);
+            html += '</ul></nav>';
+            return html;
         }
 
-        function showPage(page, $rows, totalPages) {
-            currentPage = page;
-            var start = (page - 1) * TICKETS_PER_PAGE;
-            var end = start + TICKETS_PER_PAGE;
-
-            $rows.hide().slice(start, end).show();
-            renderPagination(totalPages);
+        function loadTicketsPage(page) {
+            $.ajax({
+                url: cashback_support.ajax_url,
+                type: 'POST',
+                data: {
+                    action: 'support_load_tickets_page',
+                    nonce: cashback_support.tickets_page_nonce,
+                    page: page
+                },
+                success: function (response) {
+                    if (response.success) {
+                        $('#support-tickets-container').html(response.data.html);
+                        $('#support-pagination').html(
+                            buildTicketsPagination(response.data.current_page, response.data.total_pages)
+                        );
+                    }
+                }
+            });
         }
 
-        $(document).on('click', '.support-page-btn:not(:disabled)', function() {
-            var page = parseInt($(this).data('page'), 10);
-            var $rows = $('#support-tickets-list .support-ticket-row');
-            var totalPages = Math.ceil($rows.length / TICKETS_PER_PAGE);
-            if (page >= 1 && page <= totalPages) {
-                showPage(page, $rows, totalPages);
+        $(document).on('click', '#support-pagination .page-numbers[data-page]', function (e) {
+            e.preventDefault();
+            var page = $(this).data('page');
+            if (page) {
+                loadTicketsPage(page);
             }
         });
-
-        initPagination();
 
         // ========= Вспомогательные функции =========
 

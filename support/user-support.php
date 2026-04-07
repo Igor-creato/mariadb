@@ -11,6 +11,9 @@ if (!defined('ABSPATH')) {
  */
 class Cashback_User_Support
 {
+    private const PER_PAGE = 10;
+    private const MAX_ALLOWED_PAGES = 1000;
+
     private static ?self $instance = null;
     private string $tickets_table;
     private string $messages_table;
@@ -50,6 +53,7 @@ class Cashback_User_Support
         add_action('wp_ajax_support_user_close_ticket', [$this, 'handle_close_ticket']);
         add_action('wp_ajax_support_load_ticket', [$this, 'handle_load_ticket']);
         add_action('wp_ajax_support_download_file', [$this, 'handle_download_file']);
+        add_action('wp_ajax_support_load_tickets_page', [$this, 'handle_load_tickets_page']);
     }
 
     /**
@@ -137,6 +141,7 @@ class Cashback_User_Support
             'close_nonce' => wp_create_nonce('support_close_ticket_nonce'),
             'load_nonce' => wp_create_nonce('support_load_ticket_nonce'),
             'download_nonce' => wp_create_nonce('support_download_file_nonce'),
+            'tickets_page_nonce' => wp_create_nonce('support_load_tickets_page_nonce'),
             'attachments_enabled' => Cashback_Support_DB::is_attachments_enabled() ? 1 : 0,
             'max_file_size_kb' => Cashback_Support_DB::get_max_file_size(),
             'max_files_per_message' => Cashback_Support_DB::get_max_files_per_message(),
@@ -239,27 +244,73 @@ class Cashback_User_Support
      */
     private function render_tickets_list(): void
     {
+        $user_id = get_current_user_id();
+        $per_page = self::PER_PAGE;
+        $total = $this->get_total_tickets($user_id);
+        $total_pages = $total > 0 ? (int) ceil($total / $per_page) : 1;
+        $total_pages = min($total_pages, self::MAX_ALLOWED_PAGES);
+
+        $tickets = $this->get_tickets($user_id, $per_page, 0);
+
+        echo '<p style="color: #666; font-size: 0.9em; margin-bottom: 15px;">Все закрытые тикеты автоматически удаляются через месяц!</p>';
+
+        echo '<div id="support-tickets-container">';
+        if (empty($tickets)) {
+            echo '<p>У вас пока нет тикетов. Создайте новый тикет, чтобы связаться с поддержкой.</p>';
+        } else {
+            $this->render_tickets_rows($tickets);
+        }
+        echo '</div>';
+
+        echo '<div id="support-pagination">';
+        if ($total_pages > 1) {
+            $this->render_pagination(1, $total_pages);
+        }
+        echo '</div>';
+    }
+
+    /**
+     * Получить тикеты с пагинацией.
+     *
+     * @return object[]
+     */
+    private function get_tickets(int $user_id, int $limit, int $offset): array
+    {
         global $wpdb;
 
-        $user_id = get_current_user_id();
-
-        $tickets = $wpdb->get_results($wpdb->prepare(
+        return $wpdb->get_results($wpdb->prepare(
             "SELECT t.*,
                 (SELECT COUNT(*) FROM `{$this->messages_table}` m WHERE m.ticket_id = t.id AND m.is_admin = 1 AND m.is_read = 0) as unread_count
              FROM `{$this->tickets_table}` t
              WHERE t.user_id = %d
              ORDER BY t.created_at DESC
-             LIMIT 50",
+             LIMIT %d OFFSET %d",
+            $user_id,
+            $limit,
+            $offset
+        ));
+    }
+
+    /**
+     * Получить общее количество тикетов пользователя.
+     */
+    private function get_total_tickets(int $user_id): int
+    {
+        global $wpdb;
+
+        return (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM `{$this->tickets_table}` WHERE user_id = %d",
             $user_id
         ));
+    }
 
-        echo '<p style="color: #666; font-size: 0.9em; margin-bottom: 15px;">Все закрытые тикеты автоматически удаляются через месяц!</p>';
-
-        if (empty($tickets)) {
-            echo '<p>У вас пока нет тикетов. Создайте новый тикет, чтобы связаться с поддержкой.</p>';
-            return;
-        }
-
+    /**
+     * Рендеринг строк тикетов.
+     *
+     * @param object[] $tickets
+     */
+    private function render_tickets_rows(array $tickets): void
+    {
         echo '<div id="support-tickets-list">';
         foreach ($tickets as $ticket) {
             $ticket_number = Cashback_Support_DB::format_ticket_number((int) $ticket->id);
@@ -287,7 +338,57 @@ class Cashback_User_Support
             <?php
         }
         echo '</div>';
-        echo '<div id="support-pagination"></div>';
+    }
+
+    /**
+     * Рендеринг пагинации (аналогично CashbackHistory).
+     */
+    private function render_pagination(int $current_page, int $total_pages): void
+    {
+        if ($total_pages <= 1) {
+            return;
+        }
+
+        $range = 2;
+        $edge = 2;
+
+        $pages = [];
+        for ($i = 1; $i <= min($edge, $total_pages); $i++) {
+            $pages[] = $i;
+        }
+        for ($i = max(1, $current_page - $range); $i <= min($total_pages, $current_page + $range); $i++) {
+            $pages[] = $i;
+        }
+        for ($i = max(1, $total_pages - $edge + 1); $i <= $total_pages; $i++) {
+            $pages[] = $i;
+        }
+
+        $pages = array_unique($pages);
+        sort($pages);
+
+        echo '<nav class="woocommerce-pagination">';
+        echo '<ul class="page-numbers">';
+
+        if ($current_page > 1) {
+            echo '<li><a href="#" class="page-numbers prev" data-page="' . esc_attr((string) ($current_page - 1)) . '">&lsaquo;</a></li>';
+        }
+
+        $prev = 0;
+        foreach ($pages as $page) {
+            if ($prev && $page - $prev > 1) {
+                echo '<li><span class="page-numbers dots">&hellip;</span></li>';
+            }
+            $class = ($page === $current_page) ? 'current' : '';
+            echo '<li><a href="#" class="page-numbers ' . esc_attr($class) . '" data-page="' . esc_attr((string) $page) . '">' . esc_html((string) $page) . '</a></li>';
+            $prev = $page;
+        }
+
+        if ($current_page < $total_pages) {
+            echo '<li><a href="#" class="page-numbers next" data-page="' . esc_attr((string) ($current_page + 1)) . '">&rsaquo;</a></li>';
+        }
+
+        echo '</ul>';
+        echo '</nav>';
     }
 
     /**
@@ -869,6 +970,58 @@ class Cashback_User_Support
         $unread_total = Cashback_Support_DB::get_unread_admin_replies_count($user_id);
 
         wp_send_json_success(['html' => $html, 'unread_total' => $unread_total]);
+    }
+
+    /**
+     * AJAX: загрузка страницы тикетов
+     */
+    public function handle_load_tickets_page(): void
+    {
+        if (!isset($_POST['nonce']) || !check_ajax_referer('support_load_tickets_page_nonce', 'nonce', false)) {
+            wp_send_json_error('Ошибка безопасности.');
+        }
+
+        $user_id = get_current_user_id();
+        if (!$user_id) {
+            wp_send_json_error('Вы должны быть авторизованы.');
+        }
+
+        // Rate limiting: максимум 30 запросов в минуту
+        $rate_key = 'cb_tickets_page_rate_' . $user_id;
+        $rate_count = (int) get_transient($rate_key);
+        if ($rate_count >= 30) {
+            wp_send_json_error('Слишком много запросов. Попробуйте через минуту.');
+        }
+        set_transient($rate_key, $rate_count + 1, MINUTE_IN_SECONDS);
+
+        if (!isset($_POST['page'])) {
+            wp_send_json_error('Некорректный запрос.');
+        }
+
+        $per_page = self::PER_PAGE;
+        $total = $this->get_total_tickets($user_id);
+        $total_pages = $total > 0 ? (int) ceil($total / $per_page) : 1;
+        $total_pages = min($total_pages, self::MAX_ALLOWED_PAGES);
+
+        $page = intval($_POST['page']);
+        $page = max(1, min($page, $total_pages));
+        $offset = ($page - 1) * $per_page;
+
+        $tickets = $this->get_tickets($user_id, $per_page, $offset);
+
+        ob_start();
+        if (empty($tickets)) {
+            echo '<p>У вас пока нет тикетов.</p>';
+        } else {
+            $this->render_tickets_rows($tickets);
+        }
+        $html = ob_get_clean();
+
+        wp_send_json_success([
+            'html' => $html,
+            'current_page' => $page,
+            'total_pages' => $total_pages,
+        ]);
     }
 
     /**
