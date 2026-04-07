@@ -454,6 +454,7 @@ class Cashback_Claims_Admin
                     <tr><th><?php esc_html_e('Вероятность', 'cashback-plugin'); ?></th><td><?php echo esc_html(number_format_i18n((float) $claim['probability_score'], 1)); ?>%</td></tr>
                     <tr><th><?php esc_html_e('Статус', 'cashback-plugin'); ?></th><td><span class="claim-status claim-status--<?php echo esc_attr($claim['status']); ?>"><?php echo esc_html($this->get_status_label($claim['status'])); ?></span></td></tr>
                     <tr><th><?php esc_html_e('Подозрительная', 'cashback-plugin'); ?></th><td><?php echo (int) $claim['is_suspicious'] ? '<span style="color:#d63638;">' . esc_html__('Да', 'cashback-plugin') . '</span>' : esc_html__('Нет', 'cashback-plugin'); ?></td></tr>
+                    <tr><th><?php esc_html_e('Click ID', 'cashback-plugin'); ?></th><td><code><?php echo esc_html($claim['click_id'] ?? '—'); ?></code></td></tr>
                     <tr><th><?php esc_html_e('IP', 'cashback-plugin'); ?></th><td><?php echo esc_html($claim['ip_address']); ?></td></tr>
                     <tr><th><?php esc_html_e('User-Agent', 'cashback-plugin'); ?></th><td><small><?php echo esc_html($claim['user_agent'] ?? '—'); ?></small></td></tr>
                     <tr><th><?php esc_html_e('Создана', 'cashback-plugin'); ?></th><td><?php echo esc_html(gmdate('d.m.Y H:i:s', strtotime($claim['created_at']))); ?></td></tr>

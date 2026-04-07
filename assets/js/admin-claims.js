@@ -379,6 +379,68 @@ jQuery(function($) {
         });
     });
 
+    // Inline notification helper
+    function showNotice(message, type) {
+        type = type || 'success';
+        var icon = type === 'success' ? 'yes' : 'warning';
+        var $notice = $(
+            '<div class="claims-notice claims-notice--' + type + '">' +
+                '<span class="dashicons dashicons-' + icon + '"></span> ' +
+                '<span>' + $('<span>').text(message).html() + '</span>' +
+                '<button type="button" class="claims-notice-dismiss">&times;</button>' +
+            '</div>'
+        );
+
+        // Place inside modal if open, otherwise at top of wrap
+        var $container = $('#claim-detail-body');
+        if ($container.is(':visible') && $container.length) {
+            $container.find('.claims-notice').remove();
+            $container.prepend($notice);
+        } else {
+            $('.cashback-claims-admin').find('.claims-notice').remove();
+            $('.cashback-claims-admin .wp-heading-inline').after($notice);
+        }
+
+        // Auto-close after 4 seconds
+        setTimeout(function() {
+            $notice.fadeOut(300, function() { $(this).remove(); });
+        }, 4000);
+    }
+
+    // Dismiss notice manually
+    $(document).on('click', '.claims-notice-dismiss', function() {
+        $(this).closest('.claims-notice').fadeOut(200, function() { $(this).remove(); });
+    });
+
+    // Confirm dialog helper (replaces native confirm)
+    function showConfirm(message, onConfirm) {
+        var $overlay = $(
+            '<div class="claims-confirm-overlay">' +
+                '<div class="claims-confirm-box">' +
+                    '<p>' + $('<span>').text(message).html() + '</p>' +
+                    '<div class="claims-confirm-buttons">' +
+                        '<button class="button button-primary claims-confirm-yes">Да</button>' +
+                        '<button class="button claims-confirm-no">Отмена</button>' +
+                    '</div>' +
+                '</div>' +
+            '</div>'
+        );
+        $('body').append($overlay);
+
+        $overlay.on('click', '.claims-confirm-yes', function() {
+            $overlay.remove();
+            onConfirm();
+        });
+        $overlay.on('click', '.claims-confirm-no', function() {
+            $overlay.remove();
+        });
+        $overlay.on('click', function(e) {
+            if ($(e.target).hasClass('claims-confirm-overlay')) {
+                $overlay.remove();
+            }
+        });
+    }
+
     // Status transition
     $(document).on('click', '.claims-action-btn', function() {
         var $btn = $(this);
@@ -386,25 +448,25 @@ jQuery(function($) {
         var claimId = $btn.data('claim-id') || $btn.closest('.claim-actions').data('claim-id');
 
         if (!claimId) {
-            alert('Ошибка: не удалось определить ID заявки');
+            showNotice('Ошибка: не удалось определить ID заявки', 'error');
             return;
         }
 
-        if (!confirm('Вы уверены?')) return;
-
-        $.post(ajaxUrl, {
-            action: 'claims_admin_transition',
-            nonce: data.transitionNonce,
-            claim_id: claimId,
-            new_status: action,
-            note: $('#claim-note-text').val() || ''
-        }, function(res) {
-            if (res.success) {
-                alert(res.data.message);
-                location.reload();
-            } else {
-                alert(res.data.message || 'Ошибка');
-            }
+        showConfirm('Вы уверены?', function() {
+            $.post(ajaxUrl, {
+                action: 'claims_admin_transition',
+                nonce: data.transitionNonce,
+                claim_id: claimId,
+                new_status: action,
+                note: $('#claim-note-text').val() || ''
+            }, function(res) {
+                if (res.success) {
+                    showNotice(res.data.message, 'success');
+                    setTimeout(function() { location.reload(); }, 1500);
+                } else {
+                    showNotice(res.data.message || 'Ошибка', 'error');
+                }
+            });
         });
     });
 
@@ -422,7 +484,7 @@ jQuery(function($) {
             note: note
         }, function(res) {
             if (res.success) {
-                alert(res.data.message);
+                showNotice(res.data.message, 'success');
                 $('#claim-note-text').val('');
                 $.post(ajaxUrl, {
                     action: 'claims_admin_get_detail',
@@ -434,7 +496,7 @@ jQuery(function($) {
                     }
                 });
             } else {
-                alert(res.data.message || 'Ошибка');
+                showNotice(res.data.message || 'Ошибка', 'error');
             }
         });
     });

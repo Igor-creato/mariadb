@@ -116,42 +116,94 @@ class CashbackHistory
         echo '<div class="wd-cashback-history">';
         echo '<h2>' . esc_html__('История покупок', 'cashback-plugin') . '</h2>';
 
+        // Фильтры
+        echo '<div class="clicks-filters">';
+        echo '<div class="clicks-filters-row">';
+
+        echo '<div class="clicks-filter-group">';
+        echo '<label for="history-date-from">' . esc_html__('С', 'cashback-plugin') . '</label>';
+        echo '<input type="date" id="history-date-from" class="clicks-filter-input">';
+        echo '</div>';
+
+        echo '<div class="clicks-filter-group">';
+        echo '<label for="history-date-to">' . esc_html__('По', 'cashback-plugin') . '</label>';
+        echo '<input type="date" id="history-date-to" class="clicks-filter-input">';
+        echo '</div>';
+
+        echo '<div class="clicks-filter-group">';
+        echo '<label for="history-search">' . esc_html__('Магазин', 'cashback-plugin') . '</label>';
+        echo '<input type="text" id="history-search" class="clicks-filter-input" placeholder="' . esc_attr__('Поиск по названию...', 'cashback-plugin') . '">';
+        echo '</div>';
+
+        echo '<div class="clicks-filter-group">';
+        echo '<label for="history-status">' . esc_html__('Статус', 'cashback-plugin') . '</label>';
+        echo '<select id="history-status" class="clicks-filter-input">';
+        echo '<option value="">' . esc_html__('Все статусы', 'cashback-plugin') . '</option>';
+        echo '<option value="waiting">' . esc_html__('В ожидании', 'cashback-plugin') . '</option>';
+        echo '<option value="completed">' . esc_html__('Подтвержден', 'cashback-plugin') . '</option>';
+        echo '<option value="hold">' . esc_html__('На проверке', 'cashback-plugin') . '</option>';
+        echo '<option value="declined">' . esc_html__('Отклонен', 'cashback-plugin') . '</option>';
+        echo '<option value="balance">' . esc_html__('Зачислен на баланс', 'cashback-plugin') . '</option>';
+        echo '</select>';
+        echo '</div>';
+
+        echo '<div class="clicks-filter-group clicks-filter-buttons">';
+        echo '<button type="button" id="history-filter-apply" class="button">' . esc_html__('Применить', 'cashback-plugin') . '</button>';
+        echo '<button type="button" id="history-filter-reset" class="button clicks-filter-reset">' . esc_html__('Сбросить', 'cashback-plugin') . '</button>';
+        echo '</div>';
+
+        echo '</div>'; // clicks-filters-row
+        echo '</div>'; // clicks-filters
+
+        echo '<div id="transactions-table-container">';
         if (empty($transactions)) {
             echo '<p>' . esc_html__('У вас нет истории покупок.', 'cashback-plugin') . '</p>';
         } else {
-            echo '<table class="wd-table shop_table_responsive">';
-            echo '<thead>';
-            echo '<tr>';
-            echo '<th>' . esc_html__('Дата', 'cashback-plugin') . '</th>';
-            echo '<th>' . esc_html__('Магазин', 'cashback-plugin') . '</th>';
-            echo '<th>' . esc_html__('Номер заказа', 'cashback-plugin') . '</th>';
-            echo '<th>' . esc_html__('Кэшбэк', 'cashback-plugin') . '</th>';
-            echo '<th>' . esc_html__('Статус', 'cashback-plugin') . '</th>';
-            echo '</tr>';
-            echo '</thead>';
-            echo '<tbody id="transactions-body">';
-
-            foreach ($transactions as $transaction) {
-                echo '<tr>';
-                echo '<td>' . $this->format_date($transaction->action_date ?? $transaction->created_at) . '</td>';
-                echo '<td>' . esc_html($transaction->offer_name ?? __('Н/Д', 'cashback-plugin')) . '</td>';
-                echo '<td>' . esc_html($transaction->order_number ?? __('Н/Д', 'cashback-plugin')) . '</td>';
-                echo '<td>' . esc_html($transaction->cashback ?? '0.00') . '</td>';
-                echo '<td>' . esc_html($this->get_status_label($transaction->order_status)) . '</td>';
-                echo '</tr>';
-            }
-
-            echo '</tbody>';
-            echo '</table>';
-
-            if ($total_pages > 1) {
-                echo '<div class="wd-pagination" id="pagination-container">';
-                $this->render_pagination($page, $total_pages);
-                echo '</div>';
-            }
+            $this->render_transactions_table($transactions);
         }
+        echo '</div>';
+
+        echo '<div id="pagination-container">';
+        if ($total_pages > 1) {
+            $this->render_pagination($page, $total_pages);
+        }
+        echo '</div>';
 
         echo '</div>';
+    }
+
+    /**
+     * Render transactions table HTML.
+     *
+     * @param array $transactions Array of transaction objects.
+     * @return void
+     */
+    private function render_transactions_table(array $transactions): void
+    {
+        echo '<table class="wd-table shop_table_responsive">';
+        echo '<thead>';
+        echo '<tr>';
+        echo '<th>' . esc_html__('Дата', 'cashback-plugin') . '</th>';
+        echo '<th>' . esc_html__('Магазин', 'cashback-plugin') . '</th>';
+        echo '<th>' . esc_html__('Номер заказа', 'cashback-plugin') . '</th>';
+        echo '<th>' . esc_html__('Кэшбэк', 'cashback-plugin') . '</th>';
+        echo '<th>' . esc_html__('Статус', 'cashback-plugin') . '</th>';
+        echo '</tr>';
+        echo '</thead>';
+        echo '<tbody id="transactions-body">';
+
+        foreach ($transactions as $transaction) {
+            echo '<tr>';
+            echo '<td data-title="' . esc_attr__('Дата', 'cashback-plugin') . '">' . $this->format_date($transaction->action_date ?? $transaction->created_at) . '</td>';
+            echo '<td data-title="' . esc_attr__('Магазин', 'cashback-plugin') . '">' . esc_html($transaction->offer_name ?? __('Н/Д', 'cashback-plugin')) . '</td>';
+            echo '<td data-title="' . esc_attr__('Номер заказа', 'cashback-plugin') . '">' . esc_html($transaction->order_number ?? __('Н/Д', 'cashback-plugin')) . '</td>';
+            echo '<td data-title="' . esc_attr__('Кэшбэк', 'cashback-plugin') . '">' . esc_html($transaction->cashback ?? '0.00') . '</td>';
+            echo '<td data-title="' . esc_attr__('Статус', 'cashback-plugin') . '">' . esc_html($this->get_status_label($transaction->order_status)) . '</td>';
+            echo '</tr>';
+        }
+
+        echo '</tbody>';
+        echo '</table>';
     }
 
     /**
@@ -220,36 +272,79 @@ class CashbackHistory
      * @param int $offset  Offset for pagination.
      * @return array Array of transaction objects.
      */
-    private function get_transactions($user_id, $limit, $offset)
+    private function get_transactions($user_id, $limit, $offset, array $filters = [])
     {
         global $wpdb;
         $table_name = $wpdb->prefix . 'cashback_transactions';
+
+        $where = 'WHERE user_id = %d';
+        $params = [$user_id];
+
+        $this->apply_filters($where, $params, $filters);
+
         return $wpdb->get_results($wpdb->prepare(
             "SELECT action_date, created_at, offer_name, order_number, cashback, order_status
              FROM {$table_name}
-             WHERE user_id = %d
+             {$where}
              ORDER BY created_at DESC
              LIMIT %d OFFSET %d",
-            $user_id,
-            $limit,
-            $offset
+            array_merge($params, [$limit, $offset])
         ));
     }
 
     /**
      * Get total number of transactions for a user.
      *
-     * @param int $user_id User ID.
+     * @param int   $user_id User ID.
+     * @param array $filters Optional filters.
      * @return int Total transaction count.
      */
-    private function get_total_transactions($user_id)
+    private function get_total_transactions($user_id, array $filters = [])
     {
         global $wpdb;
         $table_name = $wpdb->prefix . 'cashback_transactions';
+
+        $where = 'WHERE user_id = %d';
+        $params = [$user_id];
+
+        $this->apply_filters($where, $params, $filters);
+
         return (int) $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM {$table_name} WHERE user_id = %d",
-            $user_id
+            "SELECT COUNT(*) FROM {$table_name} {$where}",
+            $params
         ));
+    }
+
+    /**
+     * Apply filter conditions to WHERE clause.
+     *
+     * @param string $where  WHERE clause (modified by reference).
+     * @param array  $params Query parameters (modified by reference).
+     * @param array  $filters Filter values.
+     * @return void
+     */
+    private function apply_filters(string &$where, array &$params, array $filters): void
+    {
+        if (!empty($filters['date_from'])) {
+            $where .= ' AND created_at >= %s';
+            $params[] = $filters['date_from'] . ' 00:00:00';
+        }
+
+        if (!empty($filters['date_to'])) {
+            $where .= ' AND created_at <= %s';
+            $params[] = $filters['date_to'] . ' 23:59:59';
+        }
+
+        if (!empty($filters['search'])) {
+            $where .= ' AND offer_name LIKE %s';
+            $params[] = '%' . $GLOBALS['wpdb']->esc_like($filters['search']) . '%';
+        }
+
+        $allowed_statuses = ['waiting', 'completed', 'hold', 'declined', 'balance'];
+        if (!empty($filters['status']) && in_array($filters['status'], $allowed_statuses, true)) {
+            $where .= ' AND order_status = %s';
+            $params[] = $filters['status'];
+        }
     }
 
     /**
@@ -281,8 +376,15 @@ class CashbackHistory
             wp_send_json_error(esc_html__('Некорректный запрос.', 'cashback-plugin'));
         }
 
+        $filters = [
+            'date_from' => sanitize_text_field(wp_unslash($_POST['date_from'] ?? '')),
+            'date_to'   => sanitize_text_field(wp_unslash($_POST['date_to'] ?? '')),
+            'search'    => sanitize_text_field(wp_unslash($_POST['search'] ?? '')),
+            'status'    => sanitize_text_field(wp_unslash($_POST['status'] ?? '')),
+        ];
+
         $per_page = self::PER_PAGE;
-        $total = $this->get_total_transactions($user_id);
+        $total = $this->get_total_transactions($user_id, $filters);
         $total_pages = $total > 0 ? ceil($total / $per_page) : 1;
         $total_pages = min($total_pages, self::MAX_ALLOWED_PAGES);
 
@@ -290,18 +392,15 @@ class CashbackHistory
         $page = max(1, min($page, $total_pages));
         $offset = ($page - 1) * $per_page;
 
-        $transactions = $this->get_transactions($user_id, $per_page, $offset);
+        $transactions = $this->get_transactions($user_id, $per_page, $offset, $filters);
 
-        $html = '';
-        foreach ($transactions as $transaction) {
-            $html .= '<tr>';
-            $html .= '<td>' . $this->format_date($transaction->action_date ?? $transaction->created_at) . '</td>';
-            $html .= '<td>' . esc_html($transaction->offer_name ?? __('Н/Д', 'cashback-plugin')) . '</td>';
-            $html .= '<td>' . esc_html($transaction->order_number ?? __('Н/Д', 'cashback-plugin')) . '</td>';
-            $html .= '<td>' . esc_html($transaction->cashback ?? '0.00') . '</td>';
-            $html .= '<td>' . esc_html($this->get_status_label($transaction->order_status)) . '</td>';
-            $html .= '</tr>';
+        ob_start();
+        if (empty($transactions)) {
+            echo '<p>' . esc_html__('Ничего не найдено.', 'cashback-plugin') . '</p>';
+        } else {
+            $this->render_transactions_table($transactions);
         }
+        $html = ob_get_clean();
 
         wp_send_json_success(array(
             'html' => $html,
@@ -322,11 +421,20 @@ class CashbackHistory
 
         // Load script on account page
         if ($is_account_page) {
+            if ($is_cashback_page) {
+                wp_enqueue_style(
+                    'cashback-history-css',
+                    plugin_dir_url(__FILE__) . 'assets/css/cashback-history.css',
+                    array(),
+                    '1.0.0'
+                );
+            }
+
             wp_enqueue_script(
                 'cashback-history-ajax',
                 plugin_dir_url(__FILE__) . 'assets/js/cashback-history.js',
                 array('jquery'),
-                '1.0.3',
+                '1.1.0',
                 true
             );
 

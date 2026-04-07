@@ -1,18 +1,11 @@
 /**
- * Cashback History Pagination Handler
+ * Cashback History — Pagination + Filters
  * @package CashbackHistory
  */
 
 (function ($) {
   'use strict';
 
-  /**
-   * Build pagination HTML based on current page and total pages.
-   *
-   * @param {number} currentPage Current active page.
-   * @param {number} totalPages  Total number of pages.
-   * @return {string} Pagination HTML string.
-   */
   function buildPagination(currentPage, totalPages) {
     if (totalPages <= 1) {
       return '';
@@ -23,15 +16,12 @@
     var pagesSet = {};
     var i;
 
-    // Edge pages from the start
     for (i = 1; i <= Math.min(edge, totalPages); i++) {
       pagesSet[i] = true;
     }
-    // Pages around current
     for (i = Math.max(1, currentPage - range); i <= Math.min(totalPages, currentPage + range); i++) {
       pagesSet[i] = true;
     }
-    // Edge pages from the end
     for (i = Math.max(1, totalPages - edge + 1); i <= totalPages; i++) {
       pagesSet[i] = true;
     }
@@ -40,7 +30,6 @@
 
     var html = '<nav class="woocommerce-pagination"><ul class="page-numbers">';
 
-    // Back arrow — only if not on first page
     if (currentPage > 1) {
       html += '<li><a href="#" class="page-numbers prev" data-page="' + (currentPage - 1) + '">&lsaquo;</a></li>';
     }
@@ -56,7 +45,6 @@
       prev = page;
     }
 
-    // Forward arrow — only if not on last page
     if (currentPage < totalPages) {
       html += '<li><a href="#" class="page-numbers next" data-page="' + (currentPage + 1) + '">&rsaquo;</a></li>';
     }
@@ -65,56 +53,79 @@
     return html;
   }
 
-  /**
-   * Initialize pagination click handler for cashback history page.
-   * Uses delegated event binding on #pagination-container.
-   */
-  var initPagination = function () {
+  function getFilters() {
+    return {
+      date_from: $('#history-date-from').val() || '',
+      date_to: $('#history-date-to').val() || '',
+      search: $('#history-search').val() || '',
+      status: $('#history-status').val() || ''
+    };
+  }
+
+  function loadPage(page) {
+    var filters = getFilters();
+
+    $.ajax({
+      url: cashback_history_ajax.ajax_url,
+      type: 'POST',
+      data: $.extend({
+        action: 'load_page_transactions',
+        nonce: cashback_history_ajax.nonce,
+        page: page
+      }, filters),
+      success: function (response) {
+        if (response.success) {
+          $('#transactions-table-container').html(response.data.html);
+          $('#pagination-container').html(
+            buildPagination(response.data.current_page, response.data.total_pages)
+          );
+        }
+      }
+    });
+  }
+
+  var initHistory = function () {
     if (typeof cashback_history_ajax === 'undefined') {
       return;
     }
 
-    // Only initialize on cashback history page
     if (cashback_history_ajax.is_cashback_page !== 'true') {
       return;
     }
 
+    // Pagination
     $(document).on('click', '#pagination-container .page-numbers[data-page]', function (e) {
       e.preventDefault();
-      var $this = $(this);
-      var page = $this.data('page');
-
-      if (!page) {
-        return;
+      var page = $(this).data('page');
+      if (page) {
+        loadPage(page);
       }
+    });
 
-      $.ajax({
-        url: cashback_history_ajax.ajax_url,
-        type: 'POST',
-        data: {
-          action: 'load_page_transactions',
-          nonce: cashback_history_ajax.nonce,
-          page: page,
-        },
-        success: function (response) {
-          if (response.success) {
-            $('#transactions-body').html(response.data.html);
-            $('#pagination-container').html(
-              buildPagination(response.data.current_page, response.data.total_pages)
-            );
-          } else {
-            console.error('Cashback History: Error loading data:', response.data);
-          }
-        },
-        error: function (error) {
-          console.error('Cashback History AJAX Error:', error);
-        },
-      });
+    // Filter apply
+    $('#history-filter-apply').on('click', function () {
+      loadPage(1);
+    });
+
+    // Filter reset
+    $('#history-filter-reset').on('click', function () {
+      $('#history-date-from').val('');
+      $('#history-date-to').val('');
+      $('#history-search').val('');
+      $('#history-status').val('');
+      loadPage(1);
+    });
+
+    // Enter key in search field
+    $('#history-search').on('keypress', function (e) {
+      if (e.which === 13) {
+        e.preventDefault();
+        loadPage(1);
+      }
     });
   };
 
-  // Initialize on document ready
   $(document).ready(function () {
-    initPagination();
+    initHistory();
   });
 })(jQuery);

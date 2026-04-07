@@ -88,46 +88,98 @@ class HistoryPayout
         echo '<div class="wd-history-payout">';
         echo '<h2>' . esc_html__('История выплат', 'cashback-plugin') . '</h2>';
 
+        // Фильтры
+        echo '<div class="clicks-filters">';
+        echo '<div class="clicks-filters-row">';
+
+        echo '<div class="clicks-filter-group">';
+        echo '<label for="payout-date-from">' . esc_html__('С', 'cashback-plugin') . '</label>';
+        echo '<input type="date" id="payout-date-from" class="clicks-filter-input">';
+        echo '</div>';
+
+        echo '<div class="clicks-filter-group">';
+        echo '<label for="payout-date-to">' . esc_html__('По', 'cashback-plugin') . '</label>';
+        echo '<input type="date" id="payout-date-to" class="clicks-filter-input">';
+        echo '</div>';
+
+        echo '<div class="clicks-filter-group">';
+        echo '<label for="payout-search">' . esc_html__('Номер заявки', 'cashback-plugin') . '</label>';
+        echo '<input type="text" id="payout-search" class="clicks-filter-input" placeholder="' . esc_attr__('WD-XXXXXXXX', 'cashback-plugin') . '">';
+        echo '</div>';
+
+        echo '<div class="clicks-filter-group">';
+        echo '<label for="payout-status">' . esc_html__('Статус', 'cashback-plugin') . '</label>';
+        echo '<select id="payout-status" class="clicks-filter-input">';
+        echo '<option value="">' . esc_html__('Все статусы', 'cashback-plugin') . '</option>';
+        echo '<option value="waiting">' . esc_html__('В ожидании', 'cashback-plugin') . '</option>';
+        echo '<option value="processing">' . esc_html__('В обработке', 'cashback-plugin') . '</option>';
+        echo '<option value="paid">' . esc_html__('Выплачен', 'cashback-plugin') . '</option>';
+        echo '<option value="failed">' . esc_html__('Возврат в доступный баланс', 'cashback-plugin') . '</option>';
+        echo '<option value="declined">' . esc_html__('Выплата заморожена', 'cashback-plugin') . '</option>';
+        echo '</select>';
+        echo '</div>';
+
+        echo '<div class="clicks-filter-group clicks-filter-buttons">';
+        echo '<button type="button" id="payout-filter-apply" class="button">' . esc_html__('Применить', 'cashback-plugin') . '</button>';
+        echo '<button type="button" id="payout-filter-reset" class="button clicks-filter-reset">' . esc_html__('Сбросить', 'cashback-plugin') . '</button>';
+        echo '</div>';
+
+        echo '</div>'; // clicks-filters-row
+        echo '</div>'; // clicks-filters
+
+        echo '<div id="payouts-table-container">';
         if (empty($payouts)) {
             echo '<p>' . esc_html__('У вас нет истории выплат.', 'cashback-plugin') . '</p>';
         } else {
-            echo '<table class="wd-table shop_table_responsive">';
-            echo '<thead>';
-            echo '<tr>';
-            echo '<th>' . esc_html__('Номер заявки', 'cashback-plugin') . '</th>';
-            echo '<th>' . esc_html__('Дата', 'cashback-plugin') . '</th>';
-            echo '<th>' . esc_html__('Сумма', 'cashback-plugin') . '</th>';
-            echo '<th>' . esc_html__('Способ вывода', 'cashback-plugin') . '</th>';
-            echo '<th>' . esc_html__('Счет', 'cashback-plugin') . '</th>';
-            echo '<th>' . esc_html__('Банк', 'cashback-plugin') . '</th>';
-            echo '<th>' . esc_html__('Статус', 'cashback-plugin') . '</th>';
-            echo '</tr>';
-            echo '</thead>';
-            echo '<tbody id="payouts-body">';
-
-            foreach ($payouts as $payout) {
-                echo '<tr>';
-                echo '<td data-title="' . esc_attr__('Номер заявки', 'cashback-plugin') . '">' . esc_html(!empty($payout->reference_id) ? $payout->reference_id : '---') . '</td>';
-                echo '<td data-title="' . esc_attr__('Дата', 'cashback-plugin') . '">' . $this->format_date($payout->created_at) . '</td>';
-                echo '<td data-title="' . esc_attr__('Сумма', 'cashback-plugin') . '">' . esc_html($payout->total_amount ?? '0.00') . '</td>';
-                echo '<td data-title="' . esc_attr__('Способ вывода', 'cashback-plugin') . '">' . esc_html($this->get_payout_method_label($payout->payout_method) ?: __('Не указан', 'cashback-plugin')) . '</td>';
-                echo '<td data-title="' . esc_attr__('Счет', 'cashback-plugin') . '">' . esc_html($this->get_display_account($payout) ?: __('Не указан', 'cashback-plugin')) . '</td>';
-                echo '<td data-title="' . esc_attr__('Банк', 'cashback-plugin') . '">' . esc_html($this->get_bank_name_by_code($payout->provider ?? '') ?: __('Не указан', 'cashback-plugin')) . '</td>';
-                echo '<td data-title="' . esc_attr__('Статус', 'cashback-plugin') . '">' . esc_html($this->get_status_label($payout->status)) . '</td>';
-                echo '</tr>';
-            }
-
-            echo '</tbody>';
-            echo '</table>';
-
-            if ($total_pages > 1) {
-                echo '<div class="wd-pagination" id="pagination-container">';
-                $this->render_pagination($page, $total_pages);
-                echo '</div>';
-            }
+            $this->render_payouts_table($payouts);
         }
+        echo '</div>';
+
+        echo '<div id="pagination-container">';
+        if ($total_pages > 1) {
+            $this->render_pagination($page, $total_pages);
+        }
+        echo '</div>';
 
         echo '</div>';
+    }
+
+    /**
+     * Render payouts table HTML.
+     *
+     * @param array $payouts Array of payout objects.
+     * @return void
+     */
+    private function render_payouts_table(array $payouts): void
+    {
+        echo '<table class="wd-table shop_table_responsive">';
+        echo '<thead>';
+        echo '<tr>';
+        echo '<th>' . esc_html__('Номер заявки', 'cashback-plugin') . '</th>';
+        echo '<th>' . esc_html__('Дата', 'cashback-plugin') . '</th>';
+        echo '<th>' . esc_html__('Сумма', 'cashback-plugin') . '</th>';
+        echo '<th>' . esc_html__('Способ вывода', 'cashback-plugin') . '</th>';
+        echo '<th>' . esc_html__('Счет', 'cashback-plugin') . '</th>';
+        echo '<th>' . esc_html__('Банк', 'cashback-plugin') . '</th>';
+        echo '<th>' . esc_html__('Статус', 'cashback-plugin') . '</th>';
+        echo '</tr>';
+        echo '</thead>';
+        echo '<tbody id="payouts-body">';
+
+        foreach ($payouts as $payout) {
+            echo '<tr>';
+            echo '<td data-title="' . esc_attr__('Номер заявки', 'cashback-plugin') . '">' . esc_html(!empty($payout->reference_id) ? $payout->reference_id : '---') . '</td>';
+            echo '<td data-title="' . esc_attr__('Дата', 'cashback-plugin') . '">' . $this->format_date($payout->created_at) . '</td>';
+            echo '<td data-title="' . esc_attr__('Сумма', 'cashback-plugin') . '">' . esc_html($payout->total_amount ?? '0.00') . '</td>';
+            echo '<td data-title="' . esc_attr__('Способ вывода', 'cashback-plugin') . '">' . esc_html($this->get_payout_method_label($payout->payout_method) ?: __('Не указан', 'cashback-plugin')) . '</td>';
+            echo '<td data-title="' . esc_attr__('Счет', 'cashback-plugin') . '">' . esc_html($this->get_display_account($payout) ?: __('Не указан', 'cashback-plugin')) . '</td>';
+            echo '<td data-title="' . esc_attr__('Банк', 'cashback-plugin') . '">' . esc_html($this->get_bank_name_by_code($payout->provider ?? '') ?: __('Не указан', 'cashback-plugin')) . '</td>';
+            echo '<td data-title="' . esc_attr__('Статус', 'cashback-plugin') . '">' . esc_html($this->get_status_label($payout->status)) . '</td>';
+            echo '</tr>';
+        }
+
+        echo '</tbody>';
+        echo '</table>';
     }
 
     private function render_pagination($current_page, $total_pages)
@@ -181,30 +233,72 @@ class HistoryPayout
         echo '</nav>';
     }
 
-    private function get_payouts($user_id, $limit, $offset)
+    private function get_payouts($user_id, $limit, $offset, array $filters = [])
     {
         global $wpdb;
         $table_name = $wpdb->prefix . 'cashback_payout_requests';
+
+        $where = 'WHERE user_id = %d';
+        $params = [$user_id];
+
+        $this->apply_payout_filters($where, $params, $filters);
+
         return $wpdb->get_results($wpdb->prepare(
             "SELECT reference_id, created_at, total_amount, payout_method, payout_account, masked_details, provider, status
              FROM {$table_name}
-             WHERE user_id = %d
+             {$where}
              ORDER BY created_at DESC
              LIMIT %d OFFSET %d",
-            $user_id,
-            $limit,
-            $offset
+            array_merge($params, [$limit, $offset])
         ));
     }
 
-    private function get_total_payouts($user_id)
+    private function get_total_payouts($user_id, array $filters = [])
     {
         global $wpdb;
         $table_name = $wpdb->prefix . 'cashback_payout_requests';
+
+        $where = 'WHERE user_id = %d';
+        $params = [$user_id];
+
+        $this->apply_payout_filters($where, $params, $filters);
+
         return (int) $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM {$table_name} WHERE user_id = %d",
-            $user_id
+            "SELECT COUNT(*) FROM {$table_name} {$where}",
+            $params
         ));
+    }
+
+    /**
+     * Apply filter conditions to WHERE clause.
+     *
+     * @param string $where  WHERE clause (modified by reference).
+     * @param array  $params Query parameters (modified by reference).
+     * @param array  $filters Filter values.
+     * @return void
+     */
+    private function apply_payout_filters(string &$where, array &$params, array $filters): void
+    {
+        if (!empty($filters['date_from'])) {
+            $where .= ' AND created_at >= %s';
+            $params[] = $filters['date_from'] . ' 00:00:00';
+        }
+
+        if (!empty($filters['date_to'])) {
+            $where .= ' AND created_at <= %s';
+            $params[] = $filters['date_to'] . ' 23:59:59';
+        }
+
+        if (!empty($filters['search'])) {
+            $where .= ' AND reference_id LIKE %s';
+            $params[] = '%' . $GLOBALS['wpdb']->esc_like($filters['search']) . '%';
+        }
+
+        $allowed_statuses = ['waiting', 'processing', 'paid', 'failed', 'declined', 'needs_retry'];
+        if (!empty($filters['status']) && in_array($filters['status'], $allowed_statuses, true)) {
+            $where .= ' AND status = %s';
+            $params[] = $filters['status'];
+        }
     }
 
     public function ajax_load_page()
@@ -230,8 +324,15 @@ class HistoryPayout
             wp_send_json_error(esc_html__('Некорректный запрос.', 'cashback-plugin'));
         }
 
+        $filters = [
+            'date_from' => sanitize_text_field(wp_unslash($_POST['date_from'] ?? '')),
+            'date_to'   => sanitize_text_field(wp_unslash($_POST['date_to'] ?? '')),
+            'search'    => sanitize_text_field(wp_unslash($_POST['search'] ?? '')),
+            'status'    => sanitize_text_field(wp_unslash($_POST['status'] ?? '')),
+        ];
+
         $per_page = self::PER_PAGE;
-        $total = $this->get_total_payouts($user_id);
+        $total = $this->get_total_payouts($user_id, $filters);
         $total_pages = $total > 0 ? ceil($total / $per_page) : 1;
         $total_pages = min($total_pages, self::MAX_ALLOWED_PAGES);
 
@@ -239,20 +340,15 @@ class HistoryPayout
         $page = max(1, min($page, $total_pages));
         $offset = ($page - 1) * $per_page;
 
-        $payouts = $this->get_payouts($user_id, $per_page, $offset);
+        $payouts = $this->get_payouts($user_id, $per_page, $offset, $filters);
 
-        $html = '';
-        foreach ($payouts as $payout) {
-            $html .= '<tr>';
-            $html .= '<td>' . esc_html(!empty($payout->reference_id) ? $payout->reference_id : '---') . '</td>';
-            $html .= '<td>' . $this->format_date($payout->created_at) . '</td>';
-            $html .= '<td>' . esc_html($payout->total_amount ?? '0.00') . '</td>';
-            $html .= '<td>' . esc_html($this->get_payout_method_label($payout->payout_method) ?: __('Не указан', 'cashback-plugin')) . '</td>';
-            $html .= '<td>' . esc_html($this->get_display_account($payout) ?: __('Не указан', 'cashback-plugin')) . '</td>';
-            $html .= '<td>' . esc_html($this->get_bank_name_by_code($payout->provider ?? '') ?: __('Не указан', 'cashback-plugin')) . '</td>';
-            $html .= '<td>' . esc_html($this->get_status_label($payout->status)) . '</td>';
-            $html .= '</tr>';
+        ob_start();
+        if (empty($payouts)) {
+            echo '<p>' . esc_html__('Ничего не найдено.', 'cashback-plugin') . '</p>';
+        } else {
+            $this->render_payouts_table($payouts);
         }
+        $html = ob_get_clean();
 
         wp_send_json_success(array(
             'html' => $html,
@@ -264,11 +360,18 @@ class HistoryPayout
     public function enqueue_scripts()
     {
         if (function_exists('is_account_page') && is_account_page() && $this->is_history_payout_page()) {
+            wp_enqueue_style(
+                'history-payout-css',
+                plugin_dir_url(__FILE__) . 'assets/css/history-payout.css',
+                array(),
+                '1.0.0'
+            );
+
             wp_enqueue_script(
                 'history-payout-ajax',
                 plugin_dir_url(__FILE__) . 'assets/js/history-payout.js',
                 array('jquery'),
-                '1.0.1',
+                '1.1.0',
                 true
             );
             wp_localize_script('history-payout-ajax', 'payout_ajax', array(

@@ -502,6 +502,99 @@ input#clicks-date-to {
     flex: 1;
 }
 
+/* Inline AJAX notifications */
+.claims-notice {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    margin: 12px 0;
+    border-radius: 4px;
+    font-size: 14px;
+    animation: claimsNoticeIn 0.3s ease;
+}
+
+@keyframes claimsNoticeIn {
+    from { opacity: 0; transform: translateY(-8px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.claims-notice--success {
+    background: #edfaef;
+    border-left: 4px solid #00a32a;
+    color: #1e4620;
+}
+
+.claims-notice--error {
+    background: #fcf0f1;
+    border-left: 4px solid #d63638;
+    color: #8a1215;
+}
+
+.claims-notice .dashicons {
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+    line-height: 18px;
+}
+
+.claims-notice--success .dashicons { color: #00a32a; }
+.claims-notice--error .dashicons { color: #d63638; }
+
+.claims-notice-dismiss {
+    margin-left: auto;
+    background: none;
+    border: none;
+    font-size: 18px;
+    cursor: pointer;
+    color: #999;
+    padding: 0 4px;
+    line-height: 1;
+}
+
+.claims-notice-dismiss:hover {
+    color: #333;
+}
+
+/* Confirm dialog overlay */
+.claims-confirm-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.5);
+    z-index: 999999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.claims-confirm-box {
+    background: #fff;
+    padding: 24px 30px;
+    border-radius: 8px;
+    max-width: 400px;
+    width: 90%;
+    text-align: center;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+}
+
+.claims-confirm-box p {
+    font-size: 15px;
+    margin: 0 0 18px;
+}
+
+.claims-confirm-buttons {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+}
+
+.claims-confirm-buttons .button {
+    min-width: 80px;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
     .claim-detail-grid {
