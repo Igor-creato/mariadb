@@ -595,7 +595,7 @@ input#clicks-date-to {
     min-width: 80px;
 }
 
-/* Responsive */
+/* Responsive — admin */
 @media (max-width: 768px) {
     .claim-detail-grid {
         grid-template-columns: 1fr;
@@ -608,5 +608,166 @@ input#clicks-date-to {
     .claims-filters-form {
         flex-direction: column;
         align-items: stretch;
+    }
+}
+
+/* =============================================
+   Mobile cards — frontend clicks & claims tables
+   ============================================= */
+@media (max-width: 768px) {
+    /* Hide table header on mobile */
+    #tab-clicks .shop_table thead,
+    #tab-claims .shop_table thead {
+        display: none;
+    }
+
+    /* Table becomes a stack of cards */
+    #tab-clicks .shop_table,
+    #tab-claims .shop_table {
+        border: none;
+    }
+
+    #tab-clicks .shop_table tbody,
+    #tab-claims .shop_table tbody {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    /* Each row = card */
+    #tab-clicks .shop_table tbody tr,
+    #tab-claims .shop_table tbody tr.claim-row {
+        display: flex;
+        flex-direction: column;
+        background: #fff;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 14px 16px;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+    }
+
+    /* Each cell = labelled row inside the card */
+    #tab-clicks .shop_table tbody tr td,
+    #tab-claims .shop_table tbody tr.claim-row td {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 6px 0;
+        border: none;
+        border-bottom: 1px solid #f0f0f0;
+        font-size: 14px;
+    }
+
+    #tab-clicks .shop_table tbody tr td:last-child,
+    #tab-claims .shop_table tbody tr.claim-row td:last-child {
+        border-bottom: none;
+        padding-bottom: 0;
+    }
+
+    #tab-clicks .shop_table tbody tr td:first-child,
+    #tab-claims .shop_table tbody tr.claim-row td:first-child {
+        padding-top: 0;
+    }
+
+    /* data-title label */
+    #tab-clicks .shop_table tbody tr td::before,
+    #tab-claims .shop_table tbody tr.claim-row td::before {
+        content: attr(data-title);
+        font-weight: 600;
+        color: #555;
+        font-size: 13px;
+        flex-shrink: 0;
+        margin-right: 12px;
+    }
+
+    /* Product name — make it stand out as a card header */
+    #tab-clicks .shop_table tbody tr td:first-child,
+    #tab-claims .shop_table tbody tr.claim-row td:nth-child(2) {
+        font-weight: 700;
+        font-size: 15px;
+        padding-bottom: 8px;
+        margin-bottom: 2px;
+        border-bottom: 2px solid var(--btn-accented-bgcolor, #0073aa);
+    }
+
+    /* Action button — full width at the bottom */
+    #tab-clicks .shop_table tbody tr td:last-child {
+        flex-direction: column;
+        align-items: stretch;
+        padding-top: 10px;
+    }
+
+    #tab-clicks .shop_table tbody tr td:last-child::before {
+        display: none;
+    }
+
+    #tab-clicks .shop_table tbody tr td:last-child .button.claim-btn {
+        width: 100%;
+        text-align: center;
+    }
+
+    #tab-clicks .shop_table tbody tr td:last-child .na {
+        text-align: center;
+        display: block;
+        color: #888;
+        font-size: 13px;
+        font-style: italic;
+    }
+
+    /* Events expandable row */
+    #tab-claims .shop_table tbody tr.claim-events-row {
+        display: none;
+        border: 1px solid #e0e0e0;
+        border-top: none;
+        border-radius: 0 0 8px 8px;
+        margin-top: -13px;
+        padding: 0 16px 14px;
+        background: #fafafa;
+    }
+
+    #tab-claims .shop_table tbody tr.claim-events-row[style*="table-row"],
+    #tab-claims .shop_table tbody tr.claim-events-row[style*="block"] {
+        display: block !important;
+    }
+
+    #tab-claims .shop_table tbody tr.claim-events-row td {
+        display: block;
+        border: none;
+        padding: 0;
+    }
+
+    #tab-claims .shop_table tbody tr.claim-events-row td::before {
+        display: none;
+    }
+
+    /* When events row is open, remove bottom radius from card above */
+    #tab-claims .shop_table tbody tr.claim-row.events-open {
+        border-radius: 8px 8px 0 0;
+        border-bottom-color: transparent;
+        margin-bottom: -1px;
+    }
+
+    /* Claim event items stack nicely */
+    .claim-event-item {
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    .claim-event-date,
+    .claim-event-actor {
+        min-width: auto;
+    }
+
+    /* Tabs responsive */
+    .cashback-support-tabs {
+        flex-wrap: wrap;
+    }
+
+    .cashback-support-tabs button.cashback-support-tab {
+        flex: 1;
+        min-width: 0;
+        padding: 10px 12px !important;
+        font-size: 13px;
+        text-align: center;
     }
 }

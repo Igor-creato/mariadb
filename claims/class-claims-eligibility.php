@@ -72,6 +72,14 @@ class Cashback_Claims_Eligibility
         $product = wc_get_product((int) $click['product_id']);
         $product_name = $product ? $product->get_name() : __('Магазин удалён', 'cashback-plugin');
 
+        if (!$product || $product->get_status() !== 'publish') {
+            return [
+                'eligible' => false,
+                'reasons'  => [__('Заявка невозможна, магазин отключен от кэшбэка.', 'cashback-plugin')],
+                'data'     => null,
+            ];
+        }
+
         return [
             'eligible' => true,
             'reasons'  => [],
@@ -260,6 +268,10 @@ class Cashback_Claims_Eligibility
             $offer_id = (int) ($click['offer_id'] ?? 0);
 
             $reasons = [];
+
+            if (!$product || $product->get_status() !== 'publish') {
+                $reasons[] = __('Заявка невозможна, магазин отключен от кэшбэка.', 'cashback-plugin');
+            }
 
             if ((int) $click['spam_click'] === 1) {
                 $reasons[] = __('Подозрительный клик.', 'cashback-plugin');

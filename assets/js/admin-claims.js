@@ -336,6 +336,7 @@ jQuery(function($) {
         var claimId = $(this).data('claim-id');
         var $eventsRow = $('#claim-events-' + claimId);
         $eventsRow.toggle();
+        $(this).toggleClass('events-open');
     });
 
     function loadClaims(page) {

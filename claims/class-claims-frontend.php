@@ -600,14 +600,14 @@ class Cashback_Claims_Frontend
             'cashback-claims-css',
             $plugin_dir_url . 'assets/css/admin-claims.css',
             [],
-            '1.3.0'
+            '1.4.0'
         );
 
         wp_enqueue_script(
             'cashback-claims-js',
             $plugin_dir_url . 'assets/js/admin-claims.js',
             ['jquery'],
-            '1.3.0',
+            '1.4.0',
             true
         );
 
