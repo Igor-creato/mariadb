@@ -153,6 +153,8 @@ class Cashback_Notifications_DB
             'ticket_reply'       => __('Ответ на тикет поддержки', 'cashback-plugin'),
             'claim_created'      => __('Заявка на неначисленный кэшбэк', 'cashback-plugin'),
             'claim_status'       => __('Изменение статуса заявки', 'cashback-plugin'),
+            'affiliate_referral' => __('Регистрация нового реферала', 'cashback-plugin'),
+            'affiliate_commission' => __('Начисление партнёрского вознаграждения', 'cashback-plugin'),
         ];
     }
 

@@ -425,6 +425,9 @@ class Cashback_Affiliate_Service
             // Убеждаемся что у реферера тоже есть профиль
             Cashback_Affiliate_DB::ensure_profile($referrer_id);
 
+            // Уведомление рефереру о новом реферале
+            do_action('cashback_notification_affiliate_referral', $referrer_id, $user_id);
+
             // Аудит
             if (class_exists('Cashback_Encryption')) {
                 Cashback_Encryption::write_audit_log(
@@ -625,6 +628,28 @@ class Cashback_Affiliate_Service
 
             $result['inserted'] = count($accrual_values);
             $result['amount']   = number_format($total_commission, 2, '.', '');
+
+            // Уведомление рефереров о начислении партнёрского вознаграждения
+            if (!empty($balance_deltas)) {
+                $accrual_notifications = [];
+                foreach ($balance_deltas as $ref_id => $delta) {
+                    $accrual_notifications[$ref_id] = [
+                        'total' => $delta,
+                        'count' => 0,
+                    ];
+                }
+                // Подсчитываем количество начислений на каждого реферера
+                foreach ($candidates as $tx) {
+                    $uid = (int) $tx['user_id'];
+                    if (isset($referral_map[$uid])) {
+                        $ref_id = $referral_map[$uid];
+                        if (isset($accrual_notifications[$ref_id])) {
+                            $accrual_notifications[$ref_id]['count']++;
+                        }
+                    }
+                }
+                do_action('cashback_notification_affiliate_commission', $accrual_notifications);
+            }
         } catch (\Throwable $e) {
             $result['errors'][] = $e->getMessage();
             error_log('[Affiliate] process_affiliate_commissions error: ' . $e->getMessage());

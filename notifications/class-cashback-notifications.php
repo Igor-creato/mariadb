@@ -55,6 +55,10 @@ class Cashback_Notifications
         add_action('cashback_claim_created', [$this, 'on_claim_created'], 10, 3);
         add_action('cashback_claim_created', [$this, 'on_claim_admin_alert'], 10, 3);
         add_action('cashback_claim_status_changed', [$this, 'on_claim_status_changed'], 10, 6);
+
+        // Партнёрская программа (affiliate)
+        add_action('cashback_notification_affiliate_referral', [$this, 'on_affiliate_referral'], 10, 2);
+        add_action('cashback_notification_affiliate_commission', [$this, 'on_affiliate_commission'], 10, 1);
     }
 
     // =====================================================================
@@ -612,6 +616,111 @@ ID заявки: %4$d
             'claim_status',
             $user_id
         );
+    }
+
+    // =====================================================================
+    // Партнёрская программа (affiliate)
+    // =====================================================================
+
+    /**
+     * Новый реферал зарегистрирован — уведомление рефереру
+     *
+     * @param int $referrer_id ID реферера (кто пригласил)
+     * @param int $referral_id ID нового реферала (кто зарегистрировался)
+     */
+    public function on_affiliate_referral(int $referrer_id, int $referral_id): void
+    {
+        if ($referrer_id <= 0) {
+            return;
+        }
+
+        $referrer = get_user_by('id', $referrer_id);
+        if (!$referrer) {
+            return;
+        }
+
+        $referral = get_user_by('id', $referral_id);
+        $referral_name = $referral ? $referral->display_name : '—';
+
+        $subject = __('Новый реферал в вашей партнёрской программе', 'cashback-plugin');
+
+        $message = sprintf(
+            __('Здравствуйте, %1$s!
+
+По вашей партнёрской ссылке зарегистрировался новый пользователь: %2$s.
+
+Вы будете получать партнёрское вознаграждение с покупок этого пользователя.
+
+Статистика партнёрской программы: %3$s', 'cashback-plugin'),
+            $referrer->display_name,
+            $referral_name,
+            function_exists('wc_get_account_endpoint_url') ? wc_get_account_endpoint_url('cashback-affiliate') : home_url('/my-account/')
+        );
+
+        Cashback_Email_Sender::get_instance()->send(
+            $referrer->user_email,
+            $subject,
+            $message,
+            'affiliate_referral',
+            $referrer_id
+        );
+    }
+
+    /**
+     * Партнёрское вознаграждение начислено — уведомление рефереру
+     *
+     * @param array $accruals Массив начислений, сгруппированных по referrer_id:
+     *              [referrer_id => ['total' => float, 'count' => int]]
+     */
+    public function on_affiliate_commission(array $accruals): void
+    {
+        $sender = Cashback_Email_Sender::get_instance();
+
+        foreach ($accruals as $referrer_id => $info) {
+            $referrer = get_user_by('id', $referrer_id);
+            if (!$referrer) {
+                continue;
+            }
+
+            $total_formatted = number_format((float) $info['total'], 2, ',', ' ');
+
+            $subject = sprintf(
+                __('Партнёрское вознаграждение %s ₽ начислено', 'cashback-plugin'),
+                $total_formatted
+            );
+
+            if ($info['count'] === 1) {
+                $count_text = __('1 покупка реферала', 'cashback-plugin');
+            } else {
+                $count_text = sprintf(
+                    __('%d покупок рефералов', 'cashback-plugin'),
+                    $info['count']
+                );
+            }
+
+            $message = sprintf(
+                __('Здравствуйте, %1$s!
+
+Вам начислено партнёрское вознаграждение.
+
+Сумма: %2$s ₽
+%3$s
+
+Средства доступны для вывода: %4$s', 'cashback-plugin'),
+                $referrer->display_name,
+                $total_formatted,
+                $count_text,
+                function_exists('wc_get_account_endpoint_url') ? wc_get_account_endpoint_url('cashback-withdrawal') : ''
+            );
+
+            $sender->send(
+                $referrer->user_email,
+                $subject,
+                $message,
+                'affiliate_commission',
+                (int) $referrer_id
+            );
+        }
     }
 
     // =====================================================================
