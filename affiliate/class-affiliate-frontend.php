@@ -183,13 +183,18 @@ class Cashback_Affiliate_Frontend
         echo '</div>';
 
         echo '<div class="cashback-affiliate-stat">';
-        echo '<span class="stat-value">' . esc_html(number_format_i18n((float) $stats['total_available'], 2)) . ' ₽</span>';
-        echo '<span class="stat-label">' . esc_html__('Зачилен на баланс', 'cashback-plugin') . '</span>';
+        echo '<span class="stat-value">' . esc_html(number_format_i18n((float) $stats['total_pending'], 2)) . ' ₽</span>';
+        echo '<span class="stat-label">' . esc_html__('В ожидании', 'cashback-plugin') . '</span>';
         echo '</div>';
 
         echo '<div class="cashback-affiliate-stat">';
         echo '<span class="stat-value">' . esc_html(number_format_i18n((float) $stats['total_frozen'], 2)) . ' ₽</span>';
         echo '<span class="stat-label">' . esc_html__('Заморожено', 'cashback-plugin') . '</span>';
+        echo '</div>';
+
+        echo '<div class="cashback-affiliate-stat">';
+        echo '<span class="stat-value">' . esc_html(number_format_i18n((float) $stats['total_declined'], 2)) . ' ₽</span>';
+        echo '<span class="stat-label">' . esc_html__('Отклонено', 'cashback-plugin') . '</span>';
         echo '</div>';
 
         echo '<div class="cashback-affiliate-stat">';
@@ -236,7 +241,11 @@ class Cashback_Affiliate_Frontend
         global $wpdb;
         $prefix   = $wpdb->prefix;
         $per_page = self::PER_PAGE;
-        $offset   = ($page - 1) * $per_page;
+
+        // Ленивая синхронизация: создать pending-записи если их ещё нет
+        if (class_exists('Cashback_Affiliate_Service')) {
+            Cashback_Affiliate_Service::sync_pending_accruals();
+        }
 
         $total = (int) $wpdb->get_var($wpdb->prepare(
             "SELECT COUNT(*) FROM `{$prefix}cashback_affiliate_accruals`
@@ -246,10 +255,11 @@ class Cashback_Affiliate_Frontend
 
         $total_pages = max(1, (int) ceil($total / $per_page));
         $page        = min($page, $total_pages);
+        $offset      = ($page - 1) * $per_page;
 
         $accruals = $wpdb->get_results($wpdb->prepare(
             "SELECT a.reference_id, a.commission_amount, a.commission_rate,
-                    a.cashback_amount, a.status, a.created_at,
+                    a.cashback_amount, a.status AS display_status, a.created_at,
                     u.display_name AS referred_name
              FROM `{$prefix}cashback_affiliate_accruals` a
              LEFT JOIN `{$wpdb->users}` u ON u.ID = a.referred_user_id
@@ -282,11 +292,13 @@ class Cashback_Affiliate_Frontend
             'available' => __('Зачислен на баланс', 'cashback-plugin'),
             'frozen'    => __('Заморожено', 'cashback-plugin'),
             'paid'      => __('Выплачено', 'cashback-plugin'),
+            'pending'   => __('В ожидании', 'cashback-plugin'),
+            'declined'  => __('Отклонён', 'cashback-plugin'),
         ];
 
         foreach ($accruals as $row) {
-            $status_class = 'status-' . esc_attr($row['status']);
-            $status_label = $status_labels[$row['status']] ?? $row['status'];
+            $status_class = 'status-' . esc_attr($row['display_status']);
+            $status_label = $status_labels[$row['display_status']] ?? $row['display_status'];
 
             echo '<tr>';
             echo '<td>' . esc_html(wp_date('d.m.Y H:i', strtotime($row['created_at']))) . '</td>';

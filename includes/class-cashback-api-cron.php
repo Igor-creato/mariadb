@@ -147,6 +147,25 @@ class Cashback_API_Cron
                 error_log('Cashback API Cron: process_ready_transactions exception — ' . $e->getMessage());
             }
 
+            // Синхронизация pending-начислений партнёрской программы
+            if (class_exists('Cashback_Affiliate_DB')
+                && Cashback_Affiliate_DB::is_module_enabled()
+                && class_exists('Cashback_Affiliate_Service')
+            ) {
+                try {
+                    $aff_pending = Cashback_Affiliate_Service::sync_pending_accruals();
+                    if ($aff_pending['created'] > 0 || $aff_pending['updated'] > 0) {
+                        error_log(sprintf(
+                            'Cashback API Cron: affiliate pending sync: created=%d, updated=%d',
+                            $aff_pending['created'],
+                            $aff_pending['updated']
+                        ));
+                    }
+                } catch (Exception $e) {
+                    error_log('Cashback API Cron: affiliate pending sync exception — ' . $e->getMessage());
+                }
+            }
+
             // Проверка статусов кампаний и авто-деактивация/реактивация магазинов
             $campaign_results = null;
             try {

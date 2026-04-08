@@ -574,20 +574,62 @@ class Cashback_Affiliate_Service
         }
 
         try {
-            // INSERT IGNORE accruals (идемпотентно)
-            $accrual_sql = implode(', ', $accrual_values);
-            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
-            $accrual_result = $wpdb->query($wpdb->prepare(
-                "INSERT INTO `{$prefix}cashback_affiliate_accruals`
-                     (reference_id, referrer_id, referred_user_id, transaction_id,
-                      cashback_amount, commission_rate, commission_amount, status, idempotency_key)
-                 VALUES {$accrual_sql}
-                 ON DUPLICATE KEY UPDATE id = id",
-                ...$accrual_args
-            ));
+            // Сначала пробуем UPDATE pending → available (accruals могли быть созданы sync_pending_accruals)
+            $updated_count = 0;
+            $insert_accrual_values = [];
+            $insert_accrual_args   = [];
 
-            if ($accrual_result === false) {
-                throw new \RuntimeException('Affiliate accruals INSERT failed: ' . $wpdb->last_error);
+            foreach ($accrual_values as $idx => $value_tpl) {
+                // Извлекаем аргументы для этой записи (9 полей на запись)
+                $offset = $idx * 9;
+                $tx_id  = $accrual_args[$offset + 3]; // transaction_id — 4й аргумент
+
+                // Пробуем обновить существующую pending-запись
+                $upd = $wpdb->query($wpdb->prepare(
+                    "UPDATE `{$prefix}cashback_affiliate_accruals`
+                     SET status = 'available',
+                         cashback_amount   = %s,
+                         commission_rate   = %s,
+                         commission_amount = %s
+                     WHERE transaction_id = %d AND status IN ('pending','declined')
+                     LIMIT 1",
+                    $accrual_args[$offset + 4], // cashback_amount
+                    $accrual_args[$offset + 5], // commission_rate
+                    $accrual_args[$offset + 6], // commission_amount
+                    $tx_id
+                ));
+
+                if ($upd > 0) {
+                    $updated_count++;
+                } else {
+                    // Не было pending-записи — собираем для INSERT
+                    $insert_accrual_values[] = $value_tpl;
+                    for ($i = 0; $i < 9; $i++) {
+                        $insert_accrual_args[] = $accrual_args[$offset + $i];
+                    }
+                }
+            }
+
+            // INSERT оставшихся (без pending-записи) — идемпотентно
+            if (!empty($insert_accrual_values)) {
+                $accrual_sql = implode(', ', $insert_accrual_values);
+                // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                $accrual_result = $wpdb->query($wpdb->prepare(
+                    "INSERT INTO `{$prefix}cashback_affiliate_accruals`
+                         (reference_id, referrer_id, referred_user_id, transaction_id,
+                          cashback_amount, commission_rate, commission_amount, status, idempotency_key)
+                     VALUES {$accrual_sql}
+                     ON DUPLICATE KEY UPDATE
+                         status = 'available',
+                         cashback_amount = VALUES(cashback_amount),
+                         commission_rate = VALUES(commission_rate),
+                         commission_amount = VALUES(commission_amount)",
+                    ...$insert_accrual_args
+                ));
+
+                if ($accrual_result === false) {
+                    throw new \RuntimeException('Affiliate accruals INSERT failed: ' . $wpdb->last_error);
+                }
             }
 
             // INSERT IGNORE в единый ledger (идемпотентно)
@@ -627,6 +669,7 @@ class Cashback_Affiliate_Service
             }
 
             $result['inserted'] = count($accrual_values);
+            $result['updated_from_pending'] = $updated_count;
             $result['amount']   = number_format($total_commission, 2, '.', '');
 
             // Уведомление рефереров о начислении партнёрского вознаграждения
@@ -688,6 +731,122 @@ class Cashback_Affiliate_Service
         }
 
         return $rates;
+    }
+
+    /* ═══════════════════════════════════════
+     *  СИНХРОНИЗАЦИЯ PENDING-НАЧИСЛЕНИЙ
+     * ═══════════════════════════════════════ */
+
+    /**
+     * Создаёт pending/declined accruals для транзакций рефералов, у которых ещё нет записи.
+     * Обновляет статус существующих pending → declined и наоборот.
+     * НЕ затрагивает balance/ledger — только информационные записи.
+     *
+     * @return array{created: int, updated: int, errors: string[]}
+     */
+    public static function sync_pending_accruals(): array
+    {
+        global $wpdb;
+        $prefix = $wpdb->prefix;
+
+        $result = ['created' => 0, 'updated' => 0, 'errors' => []];
+
+        if (!Cashback_Affiliate_DB::is_module_enabled()) {
+            return $result;
+        }
+
+        $global_rate = (float) Cashback_Affiliate_DB::get_global_rate();
+
+        // 1. Найти транзакции рефералов без accrual (waiting/completed/hold/declined)
+        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        $missing = $wpdb->get_results($wpdb->prepare(
+            "SELECT t.id AS tx_id, t.user_id, t.cashback, t.order_status,
+                    ap.referred_by_user_id AS referrer_id,
+                    COALESCE(ap_ref.affiliate_rate, %f) AS eff_rate
+             FROM `{$prefix}cashback_transactions` t
+             INNER JOIN `{$prefix}cashback_affiliate_profiles` ap
+                     ON ap.user_id = t.user_id
+                    AND ap.referred_by_user_id IS NOT NULL
+             INNER JOIN `{$prefix}cashback_affiliate_profiles` ap_ref
+                     ON ap_ref.user_id = ap.referred_by_user_id
+                    AND ap_ref.affiliate_status = 'active'
+             INNER JOIN `{$prefix}cashback_user_profile` up
+                     ON up.user_id = ap.referred_by_user_id
+                    AND up.status != 'banned'
+             WHERE t.order_status IN ('waiting','completed','hold','declined')
+               AND t.cashback > 0
+               AND NOT EXISTS (
+                   SELECT 1 FROM `{$prefix}cashback_affiliate_accruals` aa
+                   WHERE aa.transaction_id = t.id AND aa.referrer_id = ap.referred_by_user_id
+               )
+             LIMIT 500",
+            $global_rate
+        ), ARRAY_A);
+
+        // Создаём pending/declined accruals
+        foreach ($missing as $row) {
+            $cashback   = (float) $row['cashback'];
+            $rate       = (float) $row['eff_rate'];
+            $commission = round($cashback * $rate / 100, 2);
+            if ($commission <= 0) {
+                continue;
+            }
+
+            $status = $row['order_status'] === 'declined' ? 'declined' : 'pending';
+            $reference_id    = Cashback_Affiliate_DB::generate_affiliate_reference_id();
+            $idempotency_key = 'aff_accrual_' . $row['tx_id'];
+
+            $inserted = $wpdb->query($wpdb->prepare(
+                "INSERT IGNORE INTO `{$prefix}cashback_affiliate_accruals`
+                     (reference_id, referrer_id, referred_user_id, transaction_id,
+                      cashback_amount, commission_rate, commission_amount, status, idempotency_key)
+                 VALUES (%s, %d, %d, %d, %s, %s, %s, %s, %s)",
+                $reference_id,
+                (int) $row['referrer_id'],
+                (int) $row['user_id'],
+                (int) $row['tx_id'],
+                number_format($cashback, 2, '.', ''),
+                number_format($rate, 2, '.', ''),
+                number_format($commission, 2, '.', ''),
+                $status,
+                $idempotency_key
+            ));
+
+            if ($inserted) {
+                $result['created']++;
+            }
+        }
+
+        // 2. Синхронизация статусов: pending ↔ declined
+        // pending → declined (транзакция была отклонена)
+        $updated_declined = $wpdb->query(
+            "UPDATE `{$prefix}cashback_affiliate_accruals` aa
+             INNER JOIN `{$prefix}cashback_transactions` t ON t.id = aa.transaction_id
+             SET aa.status = 'declined'
+             WHERE aa.status = 'pending' AND t.order_status = 'declined'"
+        );
+        $result['updated'] += (int) $updated_declined;
+
+        // declined → pending (транзакция вернулась в активный статус после апелляции)
+        $updated_pending = $wpdb->query(
+            "UPDATE `{$prefix}cashback_affiliate_accruals` aa
+             INNER JOIN `{$prefix}cashback_transactions` t ON t.id = aa.transaction_id
+             SET aa.status = 'pending'
+             WHERE aa.status = 'declined' AND t.order_status IN ('waiting','completed','hold')"
+        );
+        $result['updated'] += (int) $updated_pending;
+
+        // 3. Обновляем суммы если comission транзакции изменилась (пересчёт кешбэка триггером)
+        $wpdb->query(
+            "UPDATE `{$prefix}cashback_affiliate_accruals` aa
+             INNER JOIN `{$prefix}cashback_transactions` t ON t.id = aa.transaction_id
+             SET aa.cashback_amount = t.cashback,
+                 aa.commission_amount = ROUND(t.cashback * aa.commission_rate / 100, 2)
+             WHERE aa.status IN ('pending','declined')
+               AND ABS(aa.cashback_amount - t.cashback) >= 0.01"
+        );
+
+        return $result;
     }
 
     /* ═══════════════════════════════════════
@@ -1041,7 +1200,7 @@ class Cashback_Affiliate_Service
     /**
      * Статистика реферера для фронтенда.
      *
-     * @return array{total_referrals: int, total_earned: string, total_available: string, total_frozen: string}
+     * @return array{total_referrals: int, total_earned: string, total_available: string, total_frozen: string, total_pending: string, total_declined: string}
      */
     public static function get_referrer_stats(int $user_id): array
     {
@@ -1058,7 +1217,7 @@ class Cashback_Affiliate_Service
         $total_earned = $wpdb->get_var($wpdb->prepare(
             "SELECT COALESCE(SUM(commission_amount), 0)
              FROM `{$prefix}cashback_affiliate_accruals`
-             WHERE referrer_id = %d",
+             WHERE referrer_id = %d AND status IN ('available','frozen','paid')",
             $user_id
         )) ?: '0.00';
 
@@ -1076,11 +1235,27 @@ class Cashback_Affiliate_Service
             $user_id
         )) ?: '0.00';
 
+        $total_pending = $wpdb->get_var($wpdb->prepare(
+            "SELECT COALESCE(SUM(commission_amount), 0)
+             FROM `{$prefix}cashback_affiliate_accruals`
+             WHERE referrer_id = %d AND status = 'pending'",
+            $user_id
+        )) ?: '0.00';
+
+        $total_declined = $wpdb->get_var($wpdb->prepare(
+            "SELECT COALESCE(SUM(commission_amount), 0)
+             FROM `{$prefix}cashback_affiliate_accruals`
+             WHERE referrer_id = %d AND status = 'declined'",
+            $user_id
+        )) ?: '0.00';
+
         return [
             'total_referrals' => $total_referrals,
             'total_earned'    => $total_earned,
             'total_available' => $total_available,
             'total_frozen'    => $total_frozen,
+            'total_pending'   => $total_pending,
+            'total_declined'  => $total_declined,
         ];
     }
 }

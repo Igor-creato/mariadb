@@ -269,6 +269,7 @@ class CashbackPlugin
         $this->require_file('affiliate/class-affiliate-db.php');
         if (class_exists('Cashback_Affiliate_DB')) {
             Cashback_Affiliate_DB::create_tables();
+            Cashback_Affiliate_DB::migrate_accruals_pending_statuses();
         }
 
         // Создание таблиц claims-модуля (неначисленный кэшбэк)

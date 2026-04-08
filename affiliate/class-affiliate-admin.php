@@ -30,6 +30,7 @@ class Cashback_Affiliate_Admin
         add_action('wp_ajax_affiliate_update_partner', [$this, 'handle_update_partner']);
         add_action('wp_ajax_affiliate_get_partner_details', [$this, 'handle_get_partner_details']);
         add_action('wp_ajax_affiliate_bulk_update_commission_rate', [$this, 'handle_bulk_update_commission_rate']);
+        add_action('wp_ajax_affiliate_edit_accrual', [$this, 'handle_edit_accrual']);
     }
 
     public function add_admin_menu(): void
@@ -80,7 +81,8 @@ class Cashback_Affiliate_Admin
             'settingsNonce' => wp_create_nonce('affiliate_save_settings_nonce'),
             'partnerNonce'  => wp_create_nonce('affiliate_update_partner_nonce'),
             'detailsNonce'  => wp_create_nonce('affiliate_get_partner_details_nonce'),
-            'bulkRateNonce' => wp_create_nonce('affiliate_bulk_update_commission_rate_nonce'),
+            'bulkRateNonce'   => wp_create_nonce('affiliate_bulk_update_commission_rate_nonce'),
+            'editAccrualNonce' => wp_create_nonce('affiliate_edit_accrual_nonce'),
         ]);
     }
 
@@ -226,7 +228,13 @@ class Cashback_Affiliate_Admin
 
         echo '<select name="status">';
         echo '<option value="">' . esc_html__('Все статусы', 'cashback-plugin') . '</option>';
-        foreach (['available' => 'Доступно', 'frozen' => 'Заморожено', 'paid' => 'Выплачено'] as $val => $lbl) {
+        foreach ([
+            'pending'   => 'В ожидании',
+            'available' => 'Зачислен на баланс',
+            'frozen'    => 'Заморожено',
+            'paid'      => 'Выплачено',
+            'declined'  => 'Отклонён',
+        ] as $val => $lbl) {
             echo '<option value="' . esc_attr($val) . '"' . selected($filter_status, $val, false) . '>' . esc_html($lbl) . '</option>';
         }
         echo '</select>';
@@ -247,10 +255,11 @@ class Cashback_Affiliate_Admin
         echo '<th>' . esc_html__('Комиссия', 'cashback-plugin') . '</th>';
         echo '<th>' . esc_html__('Статус', 'cashback-plugin') . '</th>';
         echo '<th>' . esc_html__('Дата', 'cashback-plugin') . '</th>';
+        echo '<th>' . esc_html__('Действия', 'cashback-plugin') . '</th>';
         echo '</tr></thead><tbody>';
 
         if (empty($accruals)) {
-            echo '<tr><td colspan="8">' . esc_html__('Начислений нет.', 'cashback-plugin') . '</td></tr>';
+            echo '<tr><td colspan="9">' . esc_html__('Начислений нет.', 'cashback-plugin') . '</td></tr>';
         } else {
             $this->render_accrual_rows($accruals);
         }
@@ -286,7 +295,7 @@ class Cashback_Affiliate_Admin
         $where_clauses = [];
         $where_args    = [];
 
-        if ($filter_status && in_array($filter_status, ['available', 'frozen', 'paid'], true)) {
+        if ($filter_status && in_array($filter_status, ['pending', 'available', 'frozen', 'paid', 'declined'], true)) {
             $where_clauses[] = 'a.status = %s';
             $where_args[]    = $filter_status;
         }
@@ -338,12 +347,16 @@ class Cashback_Affiliate_Admin
     private function render_accrual_rows(array $accruals): void
     {
         $status_labels = [
-            'available' => '<span class="aff-status aff-status-available">Доступно</span>',
+            'pending'   => '<span class="aff-status aff-status-pending">В ожидании</span>',
+            'available' => '<span class="aff-status aff-status-available">Зачислен на баланс</span>',
             'frozen'    => '<span class="aff-status aff-status-frozen">Заморожено</span>',
             'paid'      => '<span class="aff-status aff-status-paid">Выплачено</span>',
+            'declined'  => '<span class="aff-status aff-status-declined">Отклонён</span>',
         ];
 
         foreach ($accruals as $row) {
+            $is_editable = $row['status'] !== 'available';
+
             echo '<tr>';
             echo '<td><code>' . esc_html($row['reference_id']) . '</code></td>';
             echo '<td>' . esc_html($row['referrer_name'] ?: '#' . $row['referrer_id']) . '</td>';
@@ -353,6 +366,19 @@ class Cashback_Affiliate_Admin
             echo '<td><strong>' . esc_html(number_format((float) $row['commission_amount'], 2, '.', ' ')) . ' ₽</strong></td>';
             echo '<td>' . ($status_labels[$row['status']] ?? esc_html($row['status'])) . '</td>';
             echo '<td>' . esc_html(wp_date('d.m.Y H:i', strtotime($row['created_at']))) . '</td>';
+            echo '<td>';
+            if ($is_editable) {
+                echo '<button type="button" class="button button-small aff-edit-accrual"'
+                    . ' data-id="' . esc_attr($row['id']) . '"'
+                    . ' data-rate="' . esc_attr($row['commission_rate']) . '"'
+                    . ' data-amount="' . esc_attr($row['commission_amount']) . '"'
+                    . ' data-cashback="' . esc_attr($row['cashback_amount']) . '"'
+                    . ' data-status="' . esc_attr($row['status']) . '"'
+                    . '>' . esc_html__('Изменить', 'cashback-plugin') . '</button>';
+            } else {
+                echo '<span class="description">' . esc_html__('—', 'cashback-plugin') . '</span>';
+            }
+            echo '</td>';
             echo '</tr>';
         }
     }
@@ -957,5 +983,118 @@ class Cashback_Affiliate_Admin
             'old_rate' => $old_rate_raw,
             'new_rate' => $new_rate,
         ]);
+    }
+
+    /* ═══════════════════════════════════════
+     *  AJAX: РЕДАКТИРОВАНИЕ НАЧИСЛЕНИЯ
+     * ═══════════════════════════════════════ */
+
+    public function handle_edit_accrual(): void
+    {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => self::MSG_NO_PERMISSION]);
+        }
+
+        if (!check_ajax_referer('affiliate_edit_accrual_nonce', 'nonce', false)) {
+            wp_send_json_error(['message' => self::MSG_INVALID_NONCE]);
+        }
+
+        global $wpdb;
+        $prefix = $wpdb->prefix;
+
+        $accrual_id = absint($_POST['accrual_id'] ?? 0);
+        if (!$accrual_id) {
+            wp_send_json_error(['message' => 'Не указан ID начисления.']);
+        }
+
+        // Получаем текущую запись
+        $accrual = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM `{$prefix}cashback_affiliate_accruals` WHERE id = %d LIMIT 1",
+            $accrual_id
+        ), ARRAY_A);
+
+        if (!$accrual) {
+            wp_send_json_error(['message' => 'Начисление не найдено.']);
+        }
+
+        // Запрет редактирования финального статуса
+        if ($accrual['status'] === 'available') {
+            wp_send_json_error(['message' => 'Начисление со статусом «Зачислен на баланс» нельзя редактировать.']);
+        }
+
+        $update_data    = [];
+        $update_formats = [];
+
+        // Ставка
+        if (isset($_POST['commission_rate'])) {
+            $rate = (float) $_POST['commission_rate'];
+            if ($rate < 0 || $rate > 100) {
+                wp_send_json_error(['message' => 'Ставка должна быть от 0 до 100.']);
+            }
+            $update_data['commission_rate'] = number_format($rate, 2, '.', '');
+            $update_formats[] = '%s';
+        }
+
+        // Сумма комиссии
+        if (isset($_POST['commission_amount'])) {
+            $amount = (float) $_POST['commission_amount'];
+            if ($amount < 0) {
+                wp_send_json_error(['message' => 'Сумма комиссии не может быть отрицательной.']);
+            }
+            $update_data['commission_amount'] = number_format($amount, 2, '.', '');
+            $update_formats[] = '%s';
+        }
+
+        // Статус (только для pending/declined — можно менять друг на друга)
+        if (isset($_POST['status'])) {
+            $new_status = sanitize_text_field(wp_unslash($_POST['status']));
+            $allowed_transitions = [
+                'pending'  => ['pending', 'declined'],
+                'declined' => ['pending', 'declined'],
+                'frozen'   => ['frozen'],
+                'paid'     => ['paid'],
+            ];
+            $allowed = $allowed_transitions[$accrual['status']] ?? [];
+            if (!in_array($new_status, $allowed, true)) {
+                wp_send_json_error(['message' => 'Недопустимый переход статуса.']);
+            }
+            if ($new_status !== $accrual['status']) {
+                $update_data['status'] = $new_status;
+                $update_formats[] = '%s';
+            }
+        }
+
+        if (empty($update_data)) {
+            wp_send_json_error(['message' => 'Нет данных для обновления.']);
+        }
+
+        $updated = $wpdb->update(
+            "{$prefix}cashback_affiliate_accruals",
+            $update_data,
+            ['id' => $accrual_id],
+            $update_formats,
+            ['%d']
+        );
+
+        if ($updated === false) {
+            wp_send_json_error(['message' => 'Ошибка обновления: ' . $wpdb->last_error]);
+        }
+
+        // Аудит-лог
+        if (class_exists('Cashback_Encryption')) {
+            Cashback_Encryption::write_audit_log(
+                'affiliate_accrual_edited',
+                get_current_user_id(),
+                'affiliate_accrual',
+                $accrual_id,
+                [
+                    'reference_id' => $accrual['reference_id'],
+                    'old_values'   => array_intersect_key($accrual, $update_data),
+                    'new_values'   => $update_data,
+                ]
+            );
+        }
+
+        wp_send_json_success(['message' => 'Начисление обновлено.']);
     }
 }

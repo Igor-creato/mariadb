@@ -166,7 +166,7 @@ class Cashback_Affiliate_DB
                 `cashback_amount` decimal(18,2) NOT NULL COMMENT 'Сумма кешбэка (основание для расчёта)',
                 `commission_rate` decimal(5,2) NOT NULL COMMENT 'Применённая ставка (%)',
                 `commission_amount` decimal(18,2) NOT NULL COMMENT 'Сумма комиссии',
-                `status` enum('available','frozen','paid') NOT NULL DEFAULT 'available',
+                `status` enum('pending','available','frozen','paid','declined') NOT NULL DEFAULT 'pending',
                 `idempotency_key` varchar(64) NOT NULL COMMENT 'aff_accrual_{transaction_id}',
                 `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (`id`),
@@ -224,6 +224,34 @@ class Cashback_Affiliate_DB
         }
 
         $wpdb->suppress_errors($suppress);
+    }
+
+    /**
+     * Миграция: добавление статусов pending/declined в ENUM.
+     * Безопасна для повторного запуска.
+     */
+    public static function migrate_accruals_pending_statuses(): void
+    {
+        global $wpdb;
+        $table = $wpdb->prefix . 'cashback_affiliate_accruals';
+
+        // Проверяем текущий ENUM — если pending уже есть, пропускаем
+        $col = $wpdb->get_row($wpdb->prepare(
+            "SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s AND COLUMN_NAME = 'status'",
+            DB_NAME,
+            $table
+        ));
+
+        if ($col && strpos($col->COLUMN_TYPE, "'pending'") !== false) {
+            return; // уже мигрировано
+        }
+
+        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        $wpdb->query(
+            "ALTER TABLE `{$table}`
+             MODIFY COLUMN `status` ENUM('pending','available','frozen','paid','declined') NOT NULL DEFAULT 'pending'"
+        );
     }
 
     /**

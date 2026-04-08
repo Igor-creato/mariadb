@@ -93,6 +93,35 @@
     color: #0c5460;
 }
 
+.aff-status-pending {
+    background: #e2e3e5;
+    color: #383d41;
+}
+
+.aff-status-declined {
+    background: #f8d7da;
+    color: #721c24;
+}
+
+/* Edit accrual modal */
+.aff-edit-modal {
+    min-width: 420px;
+}
+
+.aff-edit-modal .form-table th {
+    width: 140px;
+    padding: 8px 10px 8px 0;
+    font-weight: 600;
+}
+
+.aff-edit-modal .form-table td {
+    padding: 8px 0;
+}
+
+.aff-edit-modal .small-text {
+    width: 120px;
+}
+
 /* Partners tab */
 .aff-edit-rate,
 .aff-disable-partner,

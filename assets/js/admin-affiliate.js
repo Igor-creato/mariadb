@@ -250,4 +250,83 @@
         $('#bulk-aff-rate-info').text('');
     });
 
+    /* ── Edit accrual modal ── */
+    $(document).on('click', '.aff-edit-accrual', function () {
+        var $btn = $(this);
+        var accrualId = $btn.data('id');
+        var currentRate = $btn.data('rate');
+        var currentAmount = $btn.data('amount');
+        var currentCashback = $btn.data('cashback');
+        var currentStatus = $btn.data('status');
+
+        var statusOptions = '';
+        if (currentStatus === 'pending' || currentStatus === 'declined') {
+            statusOptions =
+                '<option value="pending"' + (currentStatus === 'pending' ? ' selected' : '') + '>В ожидании</option>' +
+                '<option value="declined"' + (currentStatus === 'declined' ? ' selected' : '') + '>Отклонён</option>';
+        } else {
+            var statusLabels = {frozen: 'Заморожено', paid: 'Выплачено'};
+            statusOptions = '<option value="' + currentStatus + '" selected>' + (statusLabels[currentStatus] || currentStatus) + '</option>';
+        }
+
+        var overlay = $('<div class="aff-rate-modal-overlay">' +
+            '<div class="aff-rate-modal aff-edit-modal">' +
+            '<h3>Редактирование начисления</h3>' +
+            '<table class="form-table"><tbody>' +
+            '<tr><th>Кешбэк реферала</th><td><strong>' + escapeHtml(String(currentCashback)) + ' ₽</strong></td></tr>' +
+            '<tr><th><label for="aff-edit-rate">Ставка (%)</label></th>' +
+            '<td><input type="number" id="aff-edit-rate" min="0" max="100" step="0.01" value="' + currentRate + '" class="small-text"></td></tr>' +
+            '<tr><th><label for="aff-edit-amount">Комиссия (₽)</label></th>' +
+            '<td><input type="number" id="aff-edit-amount" min="0" step="0.01" value="' + currentAmount + '" class="small-text"></td></tr>' +
+            '<tr><th><label for="aff-edit-status">Статус</label></th>' +
+            '<td><select id="aff-edit-status">' + statusOptions + '</select></td></tr>' +
+            '</tbody></table>' +
+            '<div class="aff-rate-actions">' +
+            '<button class="button aff-modal-cancel">Отмена</button>' +
+            '<button class="button button-primary aff-edit-save">Сохранить</button>' +
+            '</div></div></div>');
+
+        $('body').append(overlay);
+
+        // Пересчёт комиссии при изменении ставки
+        overlay.on('input', '#aff-edit-rate', function () {
+            var rate = parseFloat($(this).val()) || 0;
+            var commission = Math.round(currentCashback * rate) / 100;
+            overlay.find('#aff-edit-amount').val(commission.toFixed(2));
+        });
+
+        overlay.on('click', '.aff-modal-cancel', function () {
+            overlay.remove();
+        });
+
+        overlay.on('click', '.aff-edit-save', function () {
+            var $saveBtn = $(this).prop('disabled', true);
+
+            $.post(data.ajaxurl, {
+                action:            'affiliate_edit_accrual',
+                nonce:             data.editAccrualNonce,
+                accrual_id:        accrualId,
+                commission_rate:   overlay.find('#aff-edit-rate').val(),
+                commission_amount: overlay.find('#aff-edit-amount').val(),
+                status:            overlay.find('#aff-edit-status').val()
+            }, function (resp) {
+                overlay.remove();
+                if (resp.success) {
+                    location.reload();
+                } else {
+                    alert(resp.data && resp.data.message ? resp.data.message : 'Ошибка');
+                }
+            }).fail(function () {
+                $saveBtn.prop('disabled', false);
+                alert('Ошибка соединения.');
+            });
+        });
+
+        overlay.on('click', function (e) {
+            if ($(e.target).hasClass('aff-rate-modal-overlay')) {
+                overlay.remove();
+            }
+        });
+    });
+
 })(jQuery);
