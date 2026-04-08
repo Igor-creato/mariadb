@@ -34,6 +34,7 @@ function cashback_plugin_uninstall(): void
         'cashback_health_check_cron',
         'cashback_fraud_detection_cron',
         'cashback_fraud_cleanup_cron',
+        'cashback_notification_process_queue',
     ];
     foreach ($cron_hooks as $hook) {
         $timestamp = wp_next_scheduled($hook);
@@ -82,6 +83,9 @@ function cashback_plugin_uninstall(): void
         // Claims module (drop before claims — FK dependency)
         "{$prefix}cashback_claim_events",
         "{$prefix}cashback_claims",
+        // Notifications module
+        "{$prefix}cashback_notification_queue",
+        "{$prefix}cashback_notification_preferences",
     ];
 
     // Drop triggers
@@ -102,6 +106,10 @@ function cashback_plugin_uninstall(): void
         "{$prefix}tr_freeze_balance_on_ban",
         "{$prefix}tr_clear_ban_on_unban",
         "{$prefix}tr_unfreeze_balance_on_unban",
+        // tr_notify_transaction_insert/update удалены (запись в очередь на уровне приложения),
+        // но DROP оставлен для старых установок
+        "{$prefix}tr_notify_transaction_insert",
+        "{$prefix}tr_notify_transaction_update",
         "{$prefix}tr_webhook_payload_hash",
     ];
 
@@ -191,6 +199,17 @@ function cashback_plugin_uninstall(): void
         'cashback_claims_blocked_merchants',
         'cashback_claims_max_per_day',
         'cashback_claims_max_per_week',
+        // Notifications module (global toggles)
+        'cashback_notify_transaction_new',
+        'cashback_notify_transaction_status',
+        'cashback_notify_cashback_credited',
+        'cashback_notify_ticket_reply',
+        'cashback_notify_claim_created',
+        'cashback_notify_claim_status',
+        'cashback_notify_user_registered',
+        'cashback_notify_ticket_admin_alert',
+        'cashback_notify_claim_admin_alert',
+        'cashback_email_sender_email',
     ];
 
     foreach ($options as $option) {

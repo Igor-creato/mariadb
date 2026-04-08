@@ -79,6 +79,7 @@ class Mariadb_Plugin
             $instance->create_events();
             $instance->initialize_existing_users();
             $instance->migrate_rate_history_enum();
+            $instance->migrate_drop_notification_triggers();
 
             ob_end_clean();
         } catch (Exception $e) {
@@ -1075,6 +1076,11 @@ class Mariadb_Plugin
                 END IF;
             END;",
 
+            // Уведомления о транзакциях: запись в очередь выполняется на уровне приложения —
+            // Python webhook worker (transaction_new) и PHP API sync (transaction_status, transaction_data_changed).
+            // Триггеры tr_notify_transaction_insert/update удалены: они скрывали логику,
+            // срабатывали на каждый INSERT/UPDATE (включая служебные), и усложняли отладку.
+
             // Автоматический расчёт payload_hash при INSERT в cashback_webhooks
             // Заменяет GENERATED ALWAYS AS (SHA2(payload, 256)) STORED, убранный для совместимости
             "CREATE TRIGGER IF NOT EXISTS `{$safe_prefix}tr_webhook_payload_hash`
@@ -1363,6 +1369,7 @@ class Mariadb_Plugin
 
         if ($result && $is_new_user) {
             error_log('Mariadb Plugin: Successfully created cashback profile and balance for user ID: ' . $user_id);
+            do_action('cashback_notification_user_registered', $user_id);
         } elseif ($result && !$is_new_user) {
             error_log('Mariadb Plugin: User ID ' . $user_id . ' already initialized (skipped)');
         } else {
@@ -1571,6 +1578,11 @@ class Mariadb_Plugin
             }
 
             $wpdb->query('COMMIT');
+
+            // Уведомление о начислении кэшбэка (после коммита — некритичная операция)
+            if (!empty($candidates)) {
+                do_action('cashback_notification_balance_credited', $candidates);
+            }
         } catch (\Throwable $e) {
             $wpdb->query('ROLLBACK');
             $errors[] = $e->getMessage();
@@ -2009,6 +2021,27 @@ class Mariadb_Plugin
 
         if ($wpdb->last_error) {
             error_log('[Cashback] Failed to migrate rate_history ENUM: ' . $wpdb->last_error);
+        }
+    }
+
+    /**
+     * Удаление триггеров уведомлений tr_notify_transaction_insert/update
+     *
+     * Запись в очередь уведомлений перенесена на уровень приложения:
+     * Python webhook worker (transaction_new) и PHP API sync (status/data changes).
+     */
+    public function migrate_drop_notification_triggers(): void
+    {
+        global $wpdb;
+        $prefix = $wpdb->prefix;
+
+        $triggers = [
+            "{$prefix}tr_notify_transaction_insert",
+            "{$prefix}tr_notify_transaction_update",
+        ];
+
+        foreach ($triggers as $trigger) {
+            $wpdb->query("DROP TRIGGER IF EXISTS `{$trigger}`");
         }
     }
 

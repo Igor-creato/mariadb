@@ -222,13 +222,6 @@ class Cashback_Payout_Methods_Admin
                                 </td>
                             </tr>
                             <tr>
-                                <th scope="row"><label for="email_sender_name">Имя отправителя писем:</label></th>
-                                <td>
-                                    <input type="text" id="email_sender_name" name="email_sender_name" class="regular-text" value="<?php echo esc_attr(get_option('cashback_email_sender_name', '')); ?>" placeholder="Кэшбэк сервис" maxlength="100" />
-                                    <p class="description">Имя, от которого пользователи будут получать письма. Применяется ко всем письмам WordPress. Если не задано — используется стандартное имя WordPress.</p>
-                                </td>
-                            </tr>
-                            <tr>
                                 <th scope="row"><label for="balance_delay_days">Задержка начисления на баланс (дней):</label></th>
                                 <td>
                                     <input type="number" id="balance_delay_days" name="balance_delay_days" class="regular-text" value="<?php echo esc_attr(get_option('cashback_balance_delay_days', 0)); ?>" min="0" max="365" step="1" />
@@ -515,11 +508,6 @@ class Cashback_Payout_Methods_Admin
         }
 
         update_option('cashback_max_withdrawal_amount', $max_amount);
-
-        $email_sender_name = isset($_POST['email_sender_name'])
-            ? sanitize_text_field(wp_unslash($_POST['email_sender_name']))
-            : '';
-        update_option('cashback_email_sender_name', $email_sender_name);
 
         $delay_days = isset($_POST['balance_delay_days']) ? absint($_POST['balance_delay_days']) : 0;
         $delay_days = min($delay_days, 365);

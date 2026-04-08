@@ -2063,6 +2063,20 @@ class Cashback_API_Client
 
         $updated++;
 
+        // Запись в очередь уведомлений (вместо MySQL триггера)
+        $this->enqueue_notification_on_update(
+            $wpdb,
+            (int) $local['id'],
+            (int) $local['user_id'],
+            $local_status,
+            $mapped_status,
+            $status_changed,
+            $commission_changed,
+            $cart_changed,
+            $local,
+            $update_data
+        );
+
         $this->log_sync_event(
             $slug,
             (int) $local['id'],
@@ -2258,7 +2272,26 @@ class Cashback_API_Client
             return ['success' => false, 'insert_id' => 0, 'table_type' => $table_type, 'error' => $error ?: 'Unknown insert error'];
         }
 
-        return ['success' => true, 'insert_id' => (int) $wpdb->insert_id, 'table_type' => $table_type, 'error' => ''];
+        $insert_id = (int) $wpdb->insert_id;
+
+        // Запись в очередь уведомлений (вместо MySQL триггера)
+        if ($table_type === 'transactions') {
+            $user_id_int = (int) ($data['user_id'] ?? 0);
+            if ($user_id_int > 0) {
+                $wpdb->insert(
+                    $wpdb->prefix . 'cashback_notification_queue',
+                    [
+                        'event_type'     => 'transaction_new',
+                        'transaction_id' => $insert_id,
+                        'user_id'        => $user_id_int,
+                        'new_status'     => $data['order_status'] ?? 'waiting',
+                    ],
+                    ['%s', '%d', '%d', '%s']
+                );
+            }
+        }
+
+        return ['success' => true, 'insert_id' => $insert_id, 'table_type' => $table_type, 'error' => ''];
     }
 
     /**
@@ -2796,6 +2829,8 @@ class Cashback_API_Client
                 $wpdb->query('COMMIT');
                 $success = true;
 
+                // Уведомление о новой транзакции обрабатывается через MySQL триггер → очередь → WP Cron
+
                 // Аудит-лог
                 if (class_exists('Cashback_Encryption')) {
                     Cashback_Encryption::write_audit_log(
@@ -2829,6 +2864,79 @@ class Cashback_API_Client
         }
 
         return $result;
+    }
+
+    /**
+     * Записать уведомление в очередь после UPDATE транзакции (вместо MySQL триггера)
+     *
+     * Обрабатывает два случая:
+     * 1. Смена статуса → event_type = 'transaction_status'
+     * 2. Изменение комиссии/суммы без смены статуса → event_type = 'transaction_data_changed'
+     */
+    private function enqueue_notification_on_update(
+        \wpdb $wpdb,
+        int $transaction_id,
+        int $user_id,
+        string $old_status,
+        string $new_status,
+        bool $status_changed,
+        bool $commission_changed,
+        bool $cart_changed,
+        array $local,
+        array $update_data
+    ): void {
+        if ($user_id <= 0) {
+            return;
+        }
+
+        $queue_table = $wpdb->prefix . 'cashback_notification_queue';
+
+        // Смена статуса (исключаем balance — для него есть отдельное уведомление cashback_credited)
+        if ($status_changed && $new_status !== 'balance') {
+            $wpdb->insert(
+                $queue_table,
+                [
+                    'event_type'     => 'transaction_status',
+                    'transaction_id' => $transaction_id,
+                    'user_id'        => $user_id,
+                    'old_status'     => $old_status,
+                    'new_status'     => $new_status,
+                ],
+                ['%s', '%d', '%d', '%s', '%s']
+            );
+            return;
+        }
+
+        // Изменение комиссии или суммы заказа без смены статуса
+        if (($commission_changed || $cart_changed) && !$status_changed) {
+            $old_comission = (float) ($local['comission'] ?? 0);
+            $new_comission = isset($update_data['comission']) ? (float) $update_data['comission'] : $old_comission;
+            $old_sum_order = (float) ($local['sum_order'] ?? 0);
+            $new_sum_order = isset($update_data['sum_order']) ? (float) $update_data['sum_order'] : $old_sum_order;
+            $old_cashback  = (float) ($local['cashback'] ?? 0);
+            $new_cashback  = isset($update_data['cashback']) ? (float) $update_data['cashback'] : $old_cashback;
+
+            $extra = wp_json_encode([
+                'old_comission' => $old_comission,
+                'new_comission' => $new_comission,
+                'old_sum_order' => $old_sum_order,
+                'new_sum_order' => $new_sum_order,
+                'old_cashback'  => $old_cashback,
+                'new_cashback'  => $new_cashback,
+            ]);
+
+            $wpdb->insert(
+                $queue_table,
+                [
+                    'event_type'     => 'transaction_data_changed',
+                    'transaction_id' => $transaction_id,
+                    'user_id'        => $user_id,
+                    'new_status'     => $new_status,
+                    'extra_data'     => $extra,
+                ],
+                ['%s', '%d', '%d', '%s', '%s']
+            );
+        }
     }
 
     /**

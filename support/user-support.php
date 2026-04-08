@@ -577,8 +577,12 @@ class Cashback_User_Support
 
         $wpdb->query('COMMIT');
 
-        // Отправляем email администратору
-        $this->send_admin_notification($ticket_id, 'new_ticket', $subject);
+        // Отправляем email администратору через модуль уведомлений
+        if (has_action('cashback_notification_ticket_admin_alert')) {
+            do_action('cashback_notification_ticket_admin_alert', $ticket_id, 'new_ticket', $subject);
+        } else {
+            $this->send_admin_notification($ticket_id, 'new_ticket', $subject);
+        }
 
         $ticket_number = Cashback_Support_DB::format_ticket_number($ticket_id);
         $priority_label = $this->get_priority_label($priority);
@@ -756,7 +760,11 @@ class Cashback_User_Support
         }
 
         // ✉️ Email ПОСЛЕ транзакции (некритичная операция)
-        $this->send_admin_notification($ticket_id, 'user_reply', $ticket->subject);
+        if (has_action('cashback_notification_ticket_admin_alert')) {
+            do_action('cashback_notification_ticket_admin_alert', $ticket_id, 'user_reply', $ticket->subject);
+        } else {
+            $this->send_admin_notification($ticket_id, 'user_reply', $ticket->subject);
+        }
 
         $user = wp_get_current_user();
 

@@ -905,8 +905,12 @@ class Cashback_Support_Admin
             }
         }
 
-        // Отправляем email пользователю
-        $this->send_user_notification($ticket_id, $ticket->subject, (int) $ticket->user_id, $message);
+        // Отправляем email пользователю через модуль уведомлений
+        if (has_action('cashback_notification_ticket_reply')) {
+            do_action('cashback_notification_ticket_reply', $ticket_id, $ticket->subject, (int) $ticket->user_id, $message);
+        } else {
+            $this->send_user_notification($ticket_id, $ticket->subject, (int) $ticket->user_id, $message);
+        }
 
         // Генерируем HTML нового сообщения
         $msg = (object) [

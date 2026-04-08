@@ -437,6 +437,8 @@ class Cashback_Transactions_Admin
 
             $wpdb->query('COMMIT');
 
+            // Уведомление об изменении статуса обрабатывается через MySQL триггер → очередь → WP Cron
+
             // Аудит-лог: фиксируем ручное изменение транзакции
             if (class_exists('Cashback_Encryption')) {
                 $changes = [];
