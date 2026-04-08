@@ -27,6 +27,11 @@ const CASHBACK_CONFIG = {
     return `${this.SITE_URL}/shop/`;
   },
 
+  // URL страницы вывода кэшбэка
+  get WITHDRAWAL_URL() {
+    return `${this.SITE_URL}/my-account/cashback-withdrawal/`;
+  },
+
   // TTL кеша списка магазинов (10 минут в мс)
   // Короткий TTL гарантирует быстрое применение изменений popup_mode и других настроек
   STORES_CACHE_TTL: 10 * 60 * 1000,

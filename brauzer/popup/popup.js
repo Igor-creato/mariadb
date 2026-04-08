@@ -23,6 +23,7 @@ const els = {
     balanceAvailable:     $('#balance-available'),
     balancePending:       $('#balance-pending'),
     balancePaid:          $('#balance-paid'),
+    btnWithdraw:          $('#btn-withdraw'),
     cashbackSection:      $('#cashback-section'),
     // idle state
     cashbackAvailable:    $('#cashback-available'),
@@ -68,6 +69,11 @@ async function init() {
     els.btnActivate.addEventListener('click', () => handleActivate(els.btnActivate));
     els.btnReactivate.addEventListener('click', () => handleActivate(els.btnReactivate));
     els.btnReactivateExpired.addEventListener('click', () => handleActivate(els.btnReactivateExpired));
+
+    // Кнопка вывода кэшбэка
+    els.btnWithdraw.addEventListener('click', () => {
+        chrome.tabs.create({ url: CASHBACK_CONFIG.WITHDRAWAL_URL });
+    });
 
     // Кнопка обновления магазинов
     els.btnRefresh.addEventListener('click', handleRefresh);
@@ -122,6 +128,13 @@ function renderProfile(profile) {
     els.balanceAvailable.textContent = formatMoney(profile.balance.available);
     els.balancePending.textContent = formatMoney(profile.balance.pending);
     els.balancePaid.textContent = formatMoney(profile.balance.paid);
+
+    // Показываем кнопку вывода если доступный баланс > 0
+    if (parseFloat(profile.balance.available) > 0) {
+        els.btnWithdraw.classList.remove('hidden');
+    } else {
+        els.btnWithdraw.classList.add('hidden');
+    }
 }
 
 // ─── Кэшбэк-секция ───

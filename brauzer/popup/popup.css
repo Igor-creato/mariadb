@@ -270,6 +270,20 @@ body {
     color: #27ae60;
 }
 
+.btn-withdraw {
+    padding: 5px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    background: #27ae60;
+    color: #fff;
+    border-radius: 6px;
+    flex-shrink: 0;
+}
+
+.btn-withdraw:hover {
+    background: #219a52;
+}
+
 .balance-row {
     display: flex;
     justify-content: space-between;
