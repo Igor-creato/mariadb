@@ -2071,13 +2071,11 @@ class Mariadb_Plugin
     /**
      * Миграция: добавление reference_id к таблицам транзакций и бэкфилл существующих записей.
      * Формат: TX-XXXXXXXX (8 hex-символов из MD5(UUID()+RAND())).
-     * Идемпотентная — использует MariaDB ADD COLUMN IF NOT EXISTS.
+     * Идемпотентная — проверяет наличие колонки/индекса через INFORMATION_SCHEMA.
      */
     public function migrate_add_transaction_reference_id(): void
     {
         global $wpdb;
-
-        error_log('[Cashback Migration] migrate_add_transaction_reference_id() started');
 
         $tables = [
             $wpdb->prefix . 'cashback_transactions'              => 'uk_tx_reference_id',
@@ -2085,43 +2083,84 @@ class Mariadb_Plugin
         ];
 
         foreach ($tables as $table => $uk_name) {
-            // MariaDB поддерживает ADD COLUMN IF NOT EXISTS — безопасно для повторного запуска
-            $wpdb->query(
-                "ALTER TABLE `{$table}` ADD COLUMN IF NOT EXISTS `reference_id` varchar(11) NOT NULL DEFAULT '' COMMENT 'Публичный ID транзакции формата TX-XXXXXXXX'"
+            $column_exists = $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND COLUMN_NAME = 'reference_id'",
+                    $table
+                )
             );
-            if ($wpdb->last_error) {
-                error_log("[Cashback Migration] ALTER TABLE {$table}: " . $wpdb->last_error);
-            }
 
-            // Бэкфилл: генерируем reference_id для записей где он пустой (батчами по 500)
-            $total_filled = 0;
-            $max_iterations = 10000;
-
-            for ($i = 0; $i < $max_iterations; $i++) {
-                $affected = (int) $wpdb->query(
-                    "UPDATE `{$table}`
-                     SET reference_id = CONCAT('TX-', UPPER(LEFT(MD5(CONCAT(UUID(), RAND(), id)), 8)))
-                     WHERE reference_id = ''
-                     LIMIT 500"
+            if (! $column_exists) {
+                $wpdb->query(
+                    "ALTER TABLE `{$table}` ADD COLUMN `reference_id` varchar(11) NOT NULL DEFAULT '' COMMENT 'Public transaction ID, format TX-XXXXXXXX'"
                 );
-                $total_filled += $affected;
-                if ($affected === 0) {
-                    break;
+                if ($wpdb->last_error) {
+                    error_log("[Cashback Migration] ALTER TABLE {$table}: " . $wpdb->last_error);
+                    continue;
                 }
             }
 
-            if ($total_filled > 0) {
-                error_log("[Cashback Migration] Backfilled {$total_filled} rows in {$table}");
+            // Бэкфилл: генерируем reference_id для записей где он пустой.
+            // Сначала проверяем есть ли что заполнять — если нет, не трогаем триггер.
+            $empty_count = (int) $wpdb->get_var(
+                $wpdb->prepare("SELECT COUNT(*) FROM `{$table}` WHERE reference_id = %s", '')
+            );
+
+            if ($empty_count > 0) {
+                // Временно отключаем триггер валидации статусов — он блокирует UPDATE записей с order_status='balance'.
+                // Триггер будет пересоздан в recreate_triggers() после миграции.
+                $trigger_name = ($table === $wpdb->prefix . 'cashback_transactions')
+                    ? $wpdb->prefix . 'cashback_tr_validate_status_transition'
+                    : $wpdb->prefix . 'cashback_tr_validate_status_transition_unregistered';
+
+                $wpdb->query("DROP TRIGGER IF EXISTS `{$trigger_name}`");
+
+                $total_filled = 0;
+
+                for ($i = 0; $i < 10000; $i++) {
+                    $ids = $wpdb->get_col(
+                        $wpdb->prepare("SELECT id FROM `{$table}` WHERE reference_id = %s LIMIT 500", '')
+                    );
+
+                    if (empty($ids)) {
+                        break;
+                    }
+
+                    $cases = [];
+                    foreach ($ids as $id) {
+                        $ref = 'TX-' . strtoupper(substr(md5(wp_generate_uuid4() . wp_rand()), 0, 8));
+                        $cases[] = $wpdb->prepare('WHEN %d THEN %s', (int) $id, $ref);
+                    }
+
+                    $ids_list = implode(',', array_map('intval', $ids));
+                    $case_sql = implode(' ', $cases);
+                    $wpdb->query("UPDATE `{$table}` SET reference_id = CASE id {$case_sql} END WHERE id IN ({$ids_list})");
+
+                    if ($wpdb->last_error) {
+                        error_log("[Cashback Migration] Backfill error on {$table}: " . $wpdb->last_error);
+                        break;
+                    }
+
+                    $total_filled += count($ids);
+                }
             }
 
-            // UNIQUE KEY — через IF NOT EXISTS (MariaDB 10.5.2+) или подавляя ошибку дубликата индекса
-            $wpdb->query("ALTER TABLE `{$table}` ADD UNIQUE KEY IF NOT EXISTS `{$uk_name}` (`reference_id`)");
-            if ($wpdb->last_error) {
-                error_log("[Cashback Migration] UNIQUE KEY on {$table}: " . $wpdb->last_error);
+            // UNIQUE KEY
+            $index_exists = $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND INDEX_NAME = %s",
+                    $table,
+                    $uk_name
+                )
+            );
+
+            if (! $index_exists) {
+                $wpdb->query("ALTER TABLE `{$table}` ADD UNIQUE KEY `{$uk_name}` (`reference_id`)");
+                if ($wpdb->last_error) {
+                    error_log("[Cashback Migration] UNIQUE KEY on {$table}: " . $wpdb->last_error);
+                }
             }
         }
-
-        error_log('[Cashback Migration] migrate_add_transaction_reference_id() finished');
     }
 
 }

@@ -482,13 +482,25 @@ class CashbackPlugin
 
         if (empty($col)) {
             try {
-                error_log('[Cashback] Auto-migration: reference_id column missing, running migration...');
                 $instance = Mariadb_Plugin::get_instance();
                 $instance->migrate_add_transaction_reference_id();
                 $instance->recreate_triggers();
-                error_log('[Cashback] Auto-migration: completed successfully');
             } catch (\Throwable $e) {
                 error_log('[Cashback] Auto-migration failed: ' . $e->getMessage());
+            }
+        } else {
+            // Колонка есть, но бэкфилл мог не отработать (например, при предыдущей неудачной миграции).
+            $empty_count = (int) $wpdb->get_var(
+                "SELECT COUNT(*) FROM `{$wpdb->prefix}cashback_transactions` WHERE reference_id = ''"
+            );
+            if ($empty_count > 0) {
+                try {
+                    $instance = Mariadb_Plugin::get_instance();
+                    $instance->migrate_add_transaction_reference_id();
+                    $instance->recreate_triggers();
+                } catch (\Throwable $e) {
+                    error_log('[Cashback] Auto-migration backfill failed: ' . $e->getMessage());
+                }
             }
         }
     }
