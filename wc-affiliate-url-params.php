@@ -1029,7 +1029,7 @@ class WC_Affiliate_URL_Params
 
         // Текстовые строки
         $text_heading     = esc_html__('Переход в магазин', 'cashback-plugin');
-        $text_activated   = esc_html__('Кэшбэк активирован', 'cashback-plugin');
+        $text_activated   = esc_html__('Кэшбэк активируется через:', 'cashback-plugin');
         $text_redirect    = esc_html__('Вы будете перенаправлены через', 'cashback-plugin');
         $text_sec         = esc_html__('сек.', 'cashback-plugin');
         $text_go_now      = esc_html__('Перейти сейчас', 'cashback-plugin');
@@ -1188,8 +1188,8 @@ body{
     <p class="cb-activation__store">{$store_name_esc}</p>
     <div class="cb-activation__status" id="cb-ext-status">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="8" fill="#4caf50"/><path d="M4.5 8.5L7 11L11.5 5.5" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        {$text_activated}
     </div>
+    <p class="cb-activation__label">{$text_activated}</p>
     <div class="cb-activation__timer">
         <svg viewBox="0 0 72 72">
             <circle class="cb-activation__timer-bg" cx="36" cy="36" r="32"/>
