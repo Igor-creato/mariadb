@@ -80,14 +80,15 @@ class Mariadb_Plugin
             $instance->initialize_existing_users();
             $instance->migrate_rate_history_enum();
             $instance->migrate_drop_notification_triggers();
+            $instance->migrate_add_transaction_reference_id();
 
             ob_end_clean();
-        } catch (Exception $e) {
+        } catch (\Throwable $e) {
             ob_end_clean();
             if (function_exists('wc_get_logger')) {
                 wc_get_logger()->error('Mariadb Plugin Activation Error: ' . $e->getMessage());
             }
-            error_log('Mariadb Plugin Activation Error: ' . $e->getMessage());
+            error_log('Mariadb Plugin Activation Error: ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
             wp_die('Ошибка активации плагина Mariadb: ' . esc_html($e->getMessage()));
         }
     }
@@ -252,11 +253,13 @@ class Mariadb_Plugin
             `original_cpa_subid` varchar(255) DEFAULT NULL COMMENT 'Оригинальный subid2 переданный в CPA при клике. Для перенесённых из unregistered = значение user_id на момент клика (например: unregistered)',
             `spam_click` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = транзакция из подозрительного клика, кэшбэк только после ручной проверки',
             `funds_ready` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = CPA-сеть подтвердила готовность средств к снятию (Admitad: processed=1, EPN: status=approved)',
+            `reference_id` varchar(11) NOT NULL DEFAULT '' COMMENT 'Публичный ID транзакции формата TX-XXXXXXXX',
             `created_at` timestamp NULL DEFAULT current_timestamp(),
             `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
             PRIMARY KEY (`id`),
             UNIQUE KEY `unique_uniq_partner` (`uniq_id`,`partner`),
             UNIQUE KEY `idx_idempotency_key` (`idempotency_key`),
+            UNIQUE KEY `uk_tx_reference_id` (`reference_id`),
             KEY `user_id` (`user_id`),
             KEY `idx_user_created` (`user_id`,`created_at` DESC),
             KEY `idx_processed` (`processed_at`),
@@ -293,11 +296,13 @@ class Mariadb_Plugin
             `idempotency_key` varchar(64) DEFAULT NULL COMMENT 'Ключ идемпотентности для предотвращения дублирования транзакций',
             `spam_click` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = транзакция из подозрительного клика, кэшбэк только после ручной проверки',
             `funds_ready` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = CPA-сеть подтвердила готовность средств к снятию (Admitad: processed=1, EPN: status=approved)',
+            `reference_id` varchar(11) NOT NULL DEFAULT '' COMMENT 'Публичный ID транзакции формата TX-XXXXXXXX',
             `created_at` timestamp NULL DEFAULT current_timestamp(),
             `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
             PRIMARY KEY (`id`),
             UNIQUE KEY `unique_uniq_partner` (`uniq_id`,`partner`),
             UNIQUE KEY `idx_idempotency_key` (`idempotency_key`),
+            UNIQUE KEY `uk_utx_reference_id` (`reference_id`),
             KEY `idx_click_id` (`click_id`),
             KEY `idx_stats_created_at` (`created_at`)
         ) ENGINE=InnoDB {$charset_collate} COMMENT='Вэбхуки принятые от неавторизованных пользователей';";
@@ -816,6 +821,14 @@ class Mariadb_Plugin
     }
 
     /**
+     * Публичный метод для пересоздания триггеров (для миграций без реактивации).
+     */
+    public function recreate_triggers(): void
+    {
+        $this->create_triggers();
+    }
+
+    /**
      * Создание триггеров
      */
     private function create_triggers()
@@ -854,7 +867,7 @@ class Mariadb_Plugin
             "CREATE TRIGGER `{$safe_prefix}calculate_cashback_before_insert`
             BEFORE INSERT ON `{$safe_prefix}cashback_transactions`
             FOR EACH ROW
-            -- 'Автоматически рассчитывает кэшбэк при вставке на основе индивидуального cashback_rate пользователя'
+            -- 'Автоматически рассчитывает кэшбэк и генерирует reference_id при вставке'
             BEGIN
                 DECLARE v_rate DECIMAL(5,2) DEFAULT 60.00;
 
@@ -870,14 +883,24 @@ class Mariadb_Plugin
                 ELSE
                     SET NEW.cashback = 0.00;
                 END IF;
+
+                -- Генерация уникального публичного ID транзакции (TX-XXXXXXXX)
+                IF NEW.reference_id IS NULL OR NEW.reference_id = '' THEN
+                    SET NEW.reference_id = CONCAT('TX-', UPPER(LEFT(MD5(CONCAT(UUID(), RAND(), NOW(6))), 8)));
+                END IF;
             END;",
 
             "CREATE TRIGGER `{$safe_prefix}calculate_cashback_before_insert_unregistered`
             BEFORE INSERT ON `{$safe_prefix}cashback_unregistered_transactions`
             FOR EACH ROW
-            --  'Рассчитывает кэшбэк для незарегистрированных пользователей по фиксированной ставке 60%'
+            --  'Рассчитывает кэшбэк и генерирует reference_id для незарегистрированных пользователей'
             BEGIN
                 SET NEW.cashback = ROUND(NEW.comission * 0.6, 2);
+
+                -- Генерация уникального публичного ID транзакции (TX-XXXXXXXX)
+                IF NEW.reference_id IS NULL OR NEW.reference_id = '' THEN
+                    SET NEW.reference_id = CONCAT('TX-', UPPER(LEFT(MD5(CONCAT(UUID(), RAND(), NOW(6))), 8)));
+                END IF;
             END;",
 
             "CREATE TRIGGER `{$safe_prefix}calculate_cashback_before_update`
@@ -2043,6 +2066,62 @@ class Mariadb_Plugin
         foreach ($triggers as $trigger) {
             $wpdb->query("DROP TRIGGER IF EXISTS `{$trigger}`");
         }
+    }
+
+    /**
+     * Миграция: добавление reference_id к таблицам транзакций и бэкфилл существующих записей.
+     * Формат: TX-XXXXXXXX (8 hex-символов из MD5(UUID()+RAND())).
+     * Идемпотентная — использует MariaDB ADD COLUMN IF NOT EXISTS.
+     */
+    public function migrate_add_transaction_reference_id(): void
+    {
+        global $wpdb;
+
+        error_log('[Cashback Migration] migrate_add_transaction_reference_id() started');
+
+        $tables = [
+            $wpdb->prefix . 'cashback_transactions'              => 'uk_tx_reference_id',
+            $wpdb->prefix . 'cashback_unregistered_transactions' => 'uk_utx_reference_id',
+        ];
+
+        foreach ($tables as $table => $uk_name) {
+            // MariaDB поддерживает ADD COLUMN IF NOT EXISTS — безопасно для повторного запуска
+            $wpdb->query(
+                "ALTER TABLE `{$table}` ADD COLUMN IF NOT EXISTS `reference_id` varchar(11) NOT NULL DEFAULT '' COMMENT 'Публичный ID транзакции формата TX-XXXXXXXX'"
+            );
+            if ($wpdb->last_error) {
+                error_log("[Cashback Migration] ALTER TABLE {$table}: " . $wpdb->last_error);
+            }
+
+            // Бэкфилл: генерируем reference_id для записей где он пустой (батчами по 500)
+            $total_filled = 0;
+            $max_iterations = 10000;
+
+            for ($i = 0; $i < $max_iterations; $i++) {
+                $affected = (int) $wpdb->query(
+                    "UPDATE `{$table}`
+                     SET reference_id = CONCAT('TX-', UPPER(LEFT(MD5(CONCAT(UUID(), RAND(), id)), 8)))
+                     WHERE reference_id = ''
+                     LIMIT 500"
+                );
+                $total_filled += $affected;
+                if ($affected === 0) {
+                    break;
+                }
+            }
+
+            if ($total_filled > 0) {
+                error_log("[Cashback Migration] Backfilled {$total_filled} rows in {$table}");
+            }
+
+            // UNIQUE KEY — через IF NOT EXISTS (MariaDB 10.5.2+) или подавляя ошибку дубликата индекса
+            $wpdb->query("ALTER TABLE `{$table}` ADD UNIQUE KEY IF NOT EXISTS `{$uk_name}` (`reference_id`)");
+            if ($wpdb->last_error) {
+                error_log("[Cashback Migration] UNIQUE KEY on {$table}: " . $wpdb->last_error);
+            }
+        }
+
+        error_log('[Cashback Migration] migrate_add_transaction_reference_id() finished');
     }
 
 }

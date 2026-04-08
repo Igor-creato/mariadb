@@ -338,6 +338,10 @@ class CashbackPlugin
         // Проверяем, что WooCommerce активирован
         if (class_exists('WooCommerce')) {
             $this->load_dependencies();
+
+            // Автомиграция ПЕРЕД initialize_components — колонки должны существовать до регистрации хуков
+            $this->maybe_run_migrations();
+
             $this->initialize_components();
 
             // Одноразовый сброс rewrite rules после обновления кода
@@ -457,6 +461,35 @@ class CashbackPlugin
             $this->require_file('affiliate/class-affiliate-admin.php');
             $this->require_file('claims/class-claims-admin.php');
             $this->require_file('notifications/class-cashback-notifications-admin.php');
+        }
+    }
+
+    /**
+     * Запуск одноразовых миграций без реактивации плагина.
+     * Каждая миграция защищена опцией-флагом (идемпотентно).
+     */
+    private function maybe_run_migrations(): void
+    {
+        if (!class_exists('Mariadb_Plugin')) {
+            return;
+        }
+
+        // Миграция: reference_id для таблиц транзакций.
+        // Проверяем фактическое наличие колонки, а не флаг в wp_options
+        // (флаг мог установиться при провалившейся миграции).
+        global $wpdb;
+        $col = $wpdb->get_results("SHOW COLUMNS FROM `{$wpdb->prefix}cashback_transactions` LIKE 'reference_id'");
+
+        if (empty($col)) {
+            try {
+                error_log('[Cashback] Auto-migration: reference_id column missing, running migration...');
+                $instance = Mariadb_Plugin::get_instance();
+                $instance->migrate_add_transaction_reference_id();
+                $instance->recreate_triggers();
+                error_log('[Cashback] Auto-migration: completed successfully');
+            } catch (\Throwable $e) {
+                error_log('[Cashback] Auto-migration failed: ' . $e->getMessage());
+            }
         }
     }
 

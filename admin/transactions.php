@@ -131,7 +131,8 @@ class Cashback_Transactions_Admin
 
         if (!empty($search_query)) {
             $like_pattern = '%' . $wpdb->esc_like($search_query) . '%';
-            $where_conditions[] = '(click_id LIKE %s OR order_number LIKE %s)';
+            $where_conditions[] = '(reference_id LIKE %s OR click_id LIKE %s OR order_number LIKE %s)';
+            $where_params[] = $like_pattern;
             $where_params[] = $like_pattern;
             $where_params[] = $like_pattern;
         }
@@ -160,7 +161,7 @@ class Cashback_Transactions_Admin
         if (!empty($query_params)) {
             $transactions = $wpdb->get_results(
                 $wpdb->prepare(
-                    "SELECT id, user_id, order_number, partner, order_status, sum_order, comission, cashback, click_id, created_at
+                    "SELECT id, reference_id, user_id, order_number, partner, order_status, sum_order, comission, cashback, click_id, created_at
                      FROM {$table_name}{$where_clause}
                      ORDER BY created_at DESC
                      LIMIT %d OFFSET %d",
@@ -171,7 +172,7 @@ class Cashback_Transactions_Admin
         } else {
             $transactions = $wpdb->get_results(
                 $wpdb->prepare(
-                    "SELECT id, user_id, order_number, partner, order_status, sum_order, comission, cashback, click_id, created_at
+                    "SELECT id, reference_id, user_id, order_number, partner, order_status, sum_order, comission, cashback, click_id, created_at
                      FROM {$table_name}
                      ORDER BY created_at DESC
                      LIMIT %d OFFSET %d",
@@ -223,7 +224,7 @@ class Cashback_Transactions_Admin
 
                     <input type="search" id="filter-search"
                            value="<?php echo esc_attr($search_query); ?>"
-                           placeholder="Поиск по click_id или order_number"
+                           placeholder="Поиск по ID, click_id или order_number"
                            style="min-width: 280px;" />
 
                     <button type="button" id="filter-submit" class="button action">Фильтровать</button>
@@ -243,6 +244,7 @@ class Cashback_Transactions_Admin
                 <thead>
                     <tr>
                         <th scope="col" style="width: 50px;">ID</th>
+                        <th scope="col" style="width: 120px;">Номер</th>
                         <th scope="col" style="width: 80px;">User ID</th>
                         <th scope="col">Номер заказа</th>
                         <th scope="col">Сеть</th>
@@ -262,6 +264,7 @@ class Cashback_Transactions_Admin
                             <tr data-transaction-id="<?php echo esc_attr($tx['id']); ?>"
                                 data-tab="<?php echo esc_attr($current_tab); ?>">
                                 <td><?php echo esc_html($tx['id']); ?></td>
+                                <td><code><?php echo esc_html($tx['reference_id'] ?? ''); ?></code></td>
                                 <td><?php echo esc_html($tx['user_id']); ?></td>
                                 <td><?php echo esc_html($tx['order_number'] ?? ''); ?></td>
                                 <td><?php echo esc_html($tx['partner'] ?? ''); ?></td>
@@ -297,7 +300,7 @@ class Cashback_Transactions_Admin
                         <?php endforeach; ?>
                     <?php else: ?>
                         <tr>
-                            <td colspan="11">
+                            <td colspan="12">
                                 <?php if (!empty($search_query)): ?>
                                     По запросу &laquo;<?php echo esc_html($search_query); ?>&raquo; транзакции не найдены.
                                 <?php else: ?>
@@ -403,7 +406,7 @@ class Cashback_Transactions_Admin
         try {
             // Блокируем строку для предотвращения конкурентного обновления (MySQL Event, sync)
             $current = $wpdb->get_row($wpdb->prepare(
-                "SELECT id, user_id, order_status, sum_order, comission, cashback FROM {$table_name} WHERE id = %d FOR UPDATE",
+                "SELECT id, reference_id, user_id, order_status, sum_order, comission, cashback FROM {$table_name} WHERE id = %d FOR UPDATE",
                 $transaction_id
             ), ARRAY_A);
 
@@ -470,7 +473,7 @@ class Cashback_Transactions_Admin
 
         // Return fresh data (cashback may have been recalculated by trigger)
         $updated = $wpdb->get_row($wpdb->prepare(
-            "SELECT id, user_id, order_number, partner, order_status, sum_order, comission, cashback, click_id, created_at
+            "SELECT id, reference_id, user_id, order_number, partner, order_status, sum_order, comission, cashback, click_id, created_at
              FROM {$table_name} WHERE id = %d",
             $transaction_id
         ), ARRAY_A);
@@ -505,7 +508,7 @@ class Cashback_Transactions_Admin
         $table_name = ($tab === 'unregistered') ? $this->unregistered_table : $this->registered_table;
 
         $data = $wpdb->get_row($wpdb->prepare(
-            "SELECT id, user_id, order_number, partner, order_status, sum_order, comission, cashback, click_id, created_at
+            "SELECT id, reference_id, user_id, order_number, partner, order_status, sum_order, comission, cashback, click_id, created_at
              FROM {$table_name} WHERE id = %d",
             $transaction_id
         ), ARRAY_A);

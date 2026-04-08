@@ -183,6 +183,7 @@ class CashbackHistory
         echo '<table class="wd-table shop_table_responsive">';
         echo '<thead>';
         echo '<tr>';
+        echo '<th>' . esc_html__('ID', 'cashback-plugin') . '</th>';
         echo '<th>' . esc_html__('Дата', 'cashback-plugin') . '</th>';
         echo '<th>' . esc_html__('Магазин', 'cashback-plugin') . '</th>';
         echo '<th>' . esc_html__('Номер заказа', 'cashback-plugin') . '</th>';
@@ -194,6 +195,7 @@ class CashbackHistory
 
         foreach ($transactions as $transaction) {
             echo '<tr>';
+            echo '<td data-title="' . esc_attr__('ID', 'cashback-plugin') . '"><code>' . esc_html($transaction->reference_id ?? '') . '</code></td>';
             echo '<td data-title="' . esc_attr__('Дата', 'cashback-plugin') . '">' . $this->format_date($transaction->action_date ?? $transaction->created_at) . '</td>';
             echo '<td data-title="' . esc_attr__('Магазин', 'cashback-plugin') . '">' . esc_html($transaction->offer_name ?? __('Н/Д', 'cashback-plugin')) . '</td>';
             echo '<td data-title="' . esc_attr__('Номер заказа', 'cashback-plugin') . '">' . esc_html($transaction->order_number ?? __('Н/Д', 'cashback-plugin')) . '</td>';
@@ -283,7 +285,7 @@ class CashbackHistory
         $this->apply_filters($where, $params, $filters);
 
         return $wpdb->get_results($wpdb->prepare(
-            "SELECT action_date, created_at, offer_name, order_number, cashback, order_status
+            "SELECT reference_id, action_date, created_at, offer_name, order_number, cashback, order_status
              FROM {$table_name}
              {$where}
              ORDER BY created_at DESC
