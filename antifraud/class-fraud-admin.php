@@ -29,6 +29,7 @@ class Cashback_Fraud_Admin
         add_action('wp_ajax_fraud_save_settings', [$this, 'handle_save_settings']);
         add_action('wp_ajax_fraud_run_scan_now', [$this, 'handle_run_scan_now']);
         add_action('wp_ajax_fraud_ban_user', [$this, 'handle_ban_user']);
+        add_action('wp_ajax_fraud_save_bot_settings', [$this, 'handle_save_bot_settings']);
 
         add_action('admin_enqueue_scripts', [$this, 'enqueue_admin_scripts']);
     }
@@ -113,6 +114,7 @@ class Cashback_Fraud_Admin
             'settingsNonce' => wp_create_nonce('fraud_save_settings_nonce'),
             'scanNonce'     => wp_create_nonce('fraud_run_scan_now_nonce'),
             'banNonce'      => wp_create_nonce('fraud_ban_user_nonce'),
+            'botSettingsNonce' => wp_create_nonce('fraud_save_bot_settings_nonce'),
             'ajaxurl'       => admin_url('admin-ajax.php'),
         ]);
     }
@@ -746,6 +748,88 @@ class Cashback_Fraud_Admin
 
         echo '</form>';
         echo '<div id="fraud-settings-message" style="display:none;"></div>';
+
+        // --- Секция бот-защиты ---
+        $this->render_bot_protection_settings();
+    }
+
+    /**
+     * Рендер секции настроек бот-защиты и CAPTCHA
+     */
+    private function render_bot_protection_settings(): void
+    {
+        $bot_settings = Cashback_Fraud_Settings::get_all_bot_settings();
+
+        echo '<hr style="margin: 32px 0;">';
+        echo '<h1>' . esc_html__('Защита от ботов', 'cashback-plugin') . '</h1>';
+        echo '<p class="description">' . esc_html__('Централизованная защита от ботов и брутфорса на всех AJAX-эндпоинтах. Для серых IP показывается Яндекс SmartCaptcha.', 'cashback-plugin') . '</p>';
+
+        echo '<form id="bot-protection-settings-form">';
+
+        // General
+        echo '<h2>' . esc_html__('Общие', 'cashback-plugin') . '</h2>';
+        echo '<table class="form-table">';
+        $this->render_bot_checkbox_field('bot_protection_enabled', __('Бот-защита включена', 'cashback-plugin'), $bot_settings);
+        echo '</table>';
+
+        // SmartCaptcha
+        echo '<h2>' . esc_html__('Яндекс SmartCaptcha', 'cashback-plugin') . '</h2>';
+        echo '<p class="description">' . esc_html__('Ключи можно получить в Яндекс Cloud Console → SmartCaptcha. CAPTCHA показывается только для подозрительных (серых) IP.', 'cashback-plugin') . '</p>';
+        echo '<table class="form-table">';
+
+        // Client Key
+        echo '<tr>';
+        echo '<th scope="row">' . esc_html__('Ключ клиента (Client Key)', 'cashback-plugin') . '</th>';
+        echo '<td><input type="text" name="captcha_client_key" value="' . esc_attr($bot_settings['captcha_client_key'] ?? '') . '" class="regular-text" autocomplete="off"></td>';
+        echo '</tr>';
+
+        // Server Key
+        echo '<tr>';
+        echo '<th scope="row">' . esc_html__('Ключ сервера (Server Key)', 'cashback-plugin') . '</th>';
+        echo '<td><input type="password" name="captcha_server_key" value="' . esc_attr($bot_settings['captcha_server_key'] ?? '') . '" class="regular-text" autocomplete="off"></td>';
+        echo '</tr>';
+
+        echo '</table>';
+
+        // Thresholds
+        echo '<h2>' . esc_html__('Пороги серого/заблокированного IP', 'cashback-plugin') . '</h2>';
+        echo '<p class="description">' . esc_html__('Grey score IP копится при нарушениях (rate limit +10, бот UA +30, honeypot +40, быстрая отправка +15). Сбрасывается через 1 час.', 'cashback-plugin') . '</p>';
+        echo '<table class="form-table">';
+
+        // Grey threshold
+        echo '<tr>';
+        echo '<th scope="row">' . esc_html__('Порог серого IP (CAPTCHA)', 'cashback-plugin') . '</th>';
+        echo '<td><input type="number" name="bot_grey_threshold" value="' . esc_attr($bot_settings['bot_grey_threshold'] ?? '20') . '" class="small-text" min="1" max="100">';
+        echo ' <span class="description">' . esc_html__('По умолчанию: 20', 'cashback-plugin') . '</span></td>';
+        echo '</tr>';
+
+        // Block threshold
+        echo '<tr>';
+        echo '<th scope="row">' . esc_html__('Порог блокировки IP', 'cashback-plugin') . '</th>';
+        echo '<td><input type="number" name="bot_block_threshold" value="' . esc_attr($bot_settings['bot_block_threshold'] ?? '80') . '" class="small-text" min="1" max="100">';
+        echo ' <span class="description">' . esc_html__('По умолчанию: 80', 'cashback-plugin') . '</span></td>';
+        echo '</tr>';
+
+        echo '</table>';
+
+        echo '<p class="submit">';
+        echo '<button type="submit" id="bot-protection-save-settings" class="button button-primary">' . esc_html__('Сохранить настройки бот-защиты', 'cashback-plugin') . '</button>';
+        echo '</p>';
+
+        echo '</form>';
+        echo '<div id="bot-protection-settings-message" style="display:none;"></div>';
+    }
+
+    /**
+     * Рендер checkbox поля для бот-защиты
+     */
+    private function render_bot_checkbox_field(string $key, string $label, array $settings): void
+    {
+        $checked = !empty($settings[$key]) ? 'checked' : '';
+        echo '<tr>';
+        echo '<th scope="row">' . esc_html($label) . '</th>';
+        echo '<td><label><input type="checkbox" name="' . esc_attr($key) . '" value="1" ' . $checked . '> ' . esc_html__('Да', 'cashback-plugin') . '</label></td>';
+        echo '</tr>';
     }
 
     /**
@@ -963,6 +1047,43 @@ class Cashback_Fraud_Admin
         }
 
         wp_send_json_success(['message' => 'Настройки сохранены']);
+    }
+
+    /**
+     * Сохранение настроек бот-защиты
+     */
+    public function handle_save_bot_settings(): void
+    {
+        if (!check_ajax_referer('fraud_save_bot_settings_nonce', 'nonce', false)) {
+            wp_send_json_error(['message' => 'Invalid nonce']);
+            return;
+        }
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Недостаточно прав']);
+            return;
+        }
+
+        $settings = isset($_POST['settings']) ? (array) $_POST['settings'] : [];
+
+        $sanitized = [];
+        foreach ($settings as $key => $value) {
+            $sanitized[sanitize_text_field($key)] = sanitize_text_field(wp_unslash((string) $value));
+        }
+
+        Cashback_Fraud_Settings::save_bot_settings($sanitized);
+
+        if (class_exists('Cashback_Encryption')) {
+            Cashback_Encryption::write_audit_log(
+                'bot_protection_settings_updated',
+                get_current_user_id(),
+                'system',
+                null,
+                ['changed_keys' => array_keys($sanitized)]
+            );
+        }
+
+        wp_send_json_success(['message' => 'Настройки бот-защиты сохранены']);
     }
 
     /**

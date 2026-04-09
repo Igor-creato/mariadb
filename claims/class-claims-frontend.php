@@ -142,7 +142,7 @@ class Cashback_Claims_Frontend
 
                 <div id="claim-eligibility-msg" class="woocommerce-info" style="display:none;"></div>
 
-                <form id="claim-form" style="display:none;">
+                <form id="claim-form" style="display:none;" data-cb-protected="1">
                     <input type="hidden" id="claim-click-id" name="click_id" value="">
 
                     <p class="form-row form-row-wide">
@@ -171,6 +171,8 @@ class Cashback_Claims_Frontend
                             <div class="claim-score-bar-fill" id="claim-score-bar-fill"></div>
                         </div>
                     </div>
+
+                    <?php if (class_exists('Cashback_Captcha')) { echo Cashback_Captcha::render_container('cb-captcha-claims'); } ?>
 
                     <p class="form-row">
                         <button type="submit" class="button alt" id="claim-submit-btn" disabled>

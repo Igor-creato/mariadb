@@ -612,11 +612,15 @@ class CashbackWithdrawal
 
         // Форма вывода кэшбэка
         echo '<div class="cashback-withdrawal-form">';
-        echo '<form id="withdrawal-form">';
+        echo '<form id="withdrawal-form" data-cb-protected="1">';
         echo '<p class="form-row">';
         echo '<label for="withdrawal-amount">' . __('Сумма вывода', 'cashback-plugin') . ' <span class="required">*</span></label>';
         echo '<input type="number" class="input-text" name="withdrawal_amount" id="withdrawal-amount" placeholder="' . esc_attr__('Введите сумму', 'cashback-plugin') . '" value="" step="0.01" min="' . esc_attr((string)$min_payout_amount) . '" />';
         echo '</p>';
+        // CAPTCHA контейнер для серых IP
+        if (class_exists('Cashback_Captcha')) {
+            echo Cashback_Captcha::render_container('cb-captcha-withdrawal');
+        }
         echo '<p class="form-row">';
         echo '<button type="submit" class="woocommerce-Button button" id="withdrawal-submit" name="withdrawal_submit" value="' . esc_attr__('Вывести', 'cashback-plugin') . '">' . __('Вывести', 'cashback-plugin') . '</button>';
         echo '</p>';

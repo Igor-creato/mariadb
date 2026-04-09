@@ -399,7 +399,7 @@ class Cashback_User_Support
         ?>
         <div id="support-create-alert" style="display: none;"></div>
 
-        <form id="support-create-form" method="post" novalidate enctype="multipart/form-data">
+        <form id="support-create-form" method="post" novalidate enctype="multipart/form-data" data-cb-protected="1">
             <div class="support-form-group">
                 <label for="support-subject">Тема</label>
                 <input type="text" id="support-subject" name="subject" maxlength="255" placeholder="Опишите тему обращения">
@@ -430,6 +430,7 @@ class Cashback_User_Support
                 <div id="support-files-list" class="support-files-preview"></div>
             </div>
             <?php endif; ?>
+            <?php if (class_exists('Cashback_Captcha')) { echo Cashback_Captcha::render_container('cb-captcha-support'); } ?>
             <button type="submit" class="support-btn support-btn-primary" id="support-submit-btn">Отправить</button>
         </form>
         <?php

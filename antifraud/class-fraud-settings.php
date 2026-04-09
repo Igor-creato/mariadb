@@ -33,6 +33,17 @@ class Cashback_Fraud_Settings
         'cashback_fraud_email_notification_enabled'    => true,
     ];
 
+    /**
+     * Дефолтные значения настроек бот-защиты
+     */
+    private const BOT_DEFAULTS = [
+        'cashback_bot_protection_enabled' => true,
+        'cashback_captcha_client_key'     => '',
+        'cashback_captcha_server_key'     => '',
+        'cashback_bot_grey_threshold'     => 20,
+        'cashback_bot_block_threshold'    => 80,
+    ];
+
     public static function is_enabled(): bool
     {
         return (bool) get_option('cashback_fraud_enabled', self::DEFAULTS['cashback_fraud_enabled']);
@@ -103,8 +114,37 @@ class Cashback_Fraud_Settings
         return (bool) get_option('cashback_fraud_email_notification_enabled', self::DEFAULTS['cashback_fraud_email_notification_enabled']);
     }
 
+    // =========================================================================
+    // Бот-защита: геттеры
+    // =========================================================================
+
+    public static function is_bot_protection_enabled(): bool
+    {
+        return (bool) get_option('cashback_bot_protection_enabled', self::BOT_DEFAULTS['cashback_bot_protection_enabled']);
+    }
+
+    public static function get_captcha_client_key(): string
+    {
+        return (string) get_option('cashback_captcha_client_key', '');
+    }
+
+    public static function get_captcha_server_key(): string
+    {
+        return (string) get_option('cashback_captcha_server_key', '');
+    }
+
+    public static function get_grey_threshold(): int
+    {
+        return (int) get_option('cashback_bot_grey_threshold', self::BOT_DEFAULTS['cashback_bot_grey_threshold']);
+    }
+
+    public static function get_block_threshold(): int
+    {
+        return (int) get_option('cashback_bot_block_threshold', self::BOT_DEFAULTS['cashback_bot_block_threshold']);
+    }
+
     /**
-     * Получить все настройки с текущими значениями
+     * Получить все настройки антифрода с текущими значениями
      *
      * @return array<string, mixed>
      */
@@ -113,6 +153,21 @@ class Cashback_Fraud_Settings
         $settings = [];
         foreach (self::DEFAULTS as $key => $default) {
             $short_key = str_replace('cashback_fraud_', '', $key);
+            $settings[$short_key] = get_option($key, $default);
+        }
+        return $settings;
+    }
+
+    /**
+     * Получить все настройки бот-защиты с текущими значениями
+     *
+     * @return array<string, mixed>
+     */
+    public static function get_all_bot_settings(): array
+    {
+        $settings = [];
+        foreach (self::BOT_DEFAULTS as $key => $default) {
+            $short_key = str_replace('cashback_', '', $key);
             $settings[$short_key] = get_option($key, $default);
         }
         return $settings;
@@ -213,6 +268,37 @@ class Cashback_Fraud_Settings
     }
 
     /**
+     * Сохранить настройки бот-защиты
+     *
+     * @param array<string, mixed> $settings Массив с short-ключами (без cashback_ prefix)
+     */
+    public static function save_bot_settings(array $settings): void
+    {
+        $validation = [
+            'bot_protection_enabled' => 'bool',
+            'captcha_client_key'     => 'string',
+            'captcha_server_key'     => 'string',
+            'bot_grey_threshold'     => 'int_positive',
+            'bot_block_threshold'    => 'int_positive',
+        ];
+
+        foreach ($settings as $short_key => $value) {
+            $full_key = 'cashback_' . $short_key;
+
+            if (!array_key_exists($full_key, self::BOT_DEFAULTS)) {
+                continue;
+            }
+
+            $type = $validation[$short_key] ?? 'string';
+            $sanitized = self::sanitize_value($value, $type);
+
+            if ($sanitized !== null) {
+                update_option($full_key, $sanitized);
+            }
+        }
+    }
+
+    /**
      * Получить список всех ключей опций (для uninstall)
      *
      * @return string[]
@@ -221,6 +307,8 @@ class Cashback_Fraud_Settings
     {
         $keys = array_keys(self::DEFAULTS);
         $keys[] = 'cashback_fraud_last_run';
+        // Бот-защита
+        $keys = array_merge($keys, array_keys(self::BOT_DEFAULTS));
         return $keys;
     }
 }

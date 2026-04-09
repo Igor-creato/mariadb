@@ -210,6 +210,12 @@ function cashback_plugin_uninstall(): void
         'cashback_notify_ticket_admin_alert',
         'cashback_notify_claim_admin_alert',
         'cashback_email_sender_email',
+        // Бот-защита
+        'cashback_bot_protection_enabled',
+        'cashback_captcha_client_key',
+        'cashback_captcha_server_key',
+        'cashback_bot_grey_threshold',
+        'cashback_bot_block_threshold',
     ];
 
     foreach ($options as $option) {
@@ -247,6 +253,10 @@ function cashback_plugin_uninstall(): void
         'cb_close_ticket_rate_', 'cb_hist_page_rate_', 'cb_payout_page_rate_',
         'cb_api_sync_rate_', 'cb_api_validate_rate_', 'cb_fraud_scan_rate_',
         'cb_aff_ref_',
+        // Бот-защита: rate limiter, grey scoring, CAPTCHA verification cache
+        'cb_rl_', 'cb_grey_', 'cb_cap_',
+        // Контактная форма: rate limit
+        'cb_contact_rate_',
     ];
     $where_parts = [];
     $values = [];

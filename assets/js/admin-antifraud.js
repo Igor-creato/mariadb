@@ -253,6 +253,52 @@
     });
 
     // ===========================
+    // Bot protection settings
+    // ===========================
+
+    $('#bot-protection-settings-form').on('submit', function (e) {
+        e.preventDefault();
+
+        var $btn = $('#bot-protection-save-settings');
+        var $msg = $('#bot-protection-settings-message');
+
+        $btn.prop('disabled', true).text('Сохранение...');
+        $msg.hide();
+
+        var settings = {};
+        $(this).find('input, select').each(function () {
+            var $input = $(this);
+            var name = $input.attr('name');
+            if (!name) return;
+
+            if ($input.attr('type') === 'checkbox') {
+                settings[name] = $input.is(':checked') ? '1' : '0';
+            } else {
+                settings[name] = $input.val();
+            }
+        });
+
+        $.post(ajaxurl, {
+            action: 'fraud_save_bot_settings',
+            nonce: cashbackFraudData.botSettingsNonce,
+            settings: settings
+        })
+        .done(function (response) {
+            if (response.success) {
+                $msg.html('<div class="notice notice-success"><p>' + escHtml(response.data.message) + '</p></div>').show();
+            } else {
+                $msg.html('<div class="notice notice-error"><p>' + escHtml(response.data.message || 'Ошибка') + '</p></div>').show();
+            }
+        })
+        .fail(function () {
+            $msg.html('<div class="notice notice-error"><p>Ошибка сети</p></div>').show();
+        })
+        .always(function () {
+            $btn.prop('disabled', false).text('Сохранить настройки бот-защиты');
+        });
+    });
+
+    // ===========================
     // Ban user
     // ===========================
 

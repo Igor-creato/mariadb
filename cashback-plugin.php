@@ -377,6 +377,11 @@ class CashbackPlugin
         // Утилита шифрования (загружаем первой, т.к. используется в других компонентах)
         $this->require_file('includes/class-cashback-encryption.php');
 
+        // Бот-защита: rate limiter + CAPTCHA + guard (загружаем рано, до компонентов с AJAX)
+        $this->require_file('includes/class-cashback-rate-limiter.php');
+        $this->require_file('includes/class-cashback-captcha.php');
+        $this->require_file('includes/class-cashback-bot-protection.php');
+
         // Утилита проверки статуса пользователя (для блокировки забаненных)
         $this->require_file('includes/class-cashback-user-status.php');
 
@@ -421,6 +426,9 @@ class CashbackPlugin
 
         // Шорткоды (доступны на фронтенде и в превью редактора)
         $this->require_file('includes/class-cashback-shortcodes.php');
+
+        // Контактная форма (шорткод, доступен без авторизации)
+        $this->require_file('includes/class-cashback-contact-form.php');
 
         // Affiliate module (реферальная программа)
         $this->require_file('affiliate/class-affiliate-db.php');
@@ -525,6 +533,11 @@ class CashbackPlugin
      */
     private function initialize_components()
     {
+        // Бот-защита: инициализация guard (до других компонентов)
+        if (class_exists('Cashback_Bot_Protection')) {
+            Cashback_Bot_Protection::init();
+        }
+
         // Инициализация Mariadb_Plugin (регистрирует user_register хук)
         // mariadb.php загружается в load_dependencies(), но его add_action('plugins_loaded', ...)
         // не срабатывает, т.к. plugins_loaded уже выполнен к этому моменту
@@ -586,6 +599,11 @@ class CashbackPlugin
         // Шорткоды
         if (class_exists('Cashback_Shortcodes')) {
             Cashback_Shortcodes::get_instance();
+        }
+
+        // Контактная форма
+        if (class_exists('Cashback_Contact_Form')) {
+            Cashback_Contact_Form::get_instance();
         }
 
         // Affiliate module (реферальная программа)
