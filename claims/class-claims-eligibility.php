@@ -230,7 +230,7 @@ class Cashback_Claims_Eligibility
                  AND t.order_status IN ('waiting', 'completed', 'balance', 'hold')
              LEFT JOIN `{$wpdb->prefix}cashback_claims` c_active
                  ON c_active.click_id = cl.click_id AND c_active.user_id = cl.user_id
-                 AND c_active.status IN ('draft', 'submitted', 'sent_to_network', 'approved')
+                 AND c_active.status IN ('draft', 'submitted', 'sent_to_network', 'approved', 'declined')
              WHERE cl.user_id = %d{$where_extra}
              ORDER BY cl.created_at DESC
              LIMIT %d OFFSET %d";
@@ -245,7 +245,7 @@ class Cashback_Claims_Eligibility
                  AND t.order_status IN ('waiting', 'completed', 'balance', 'hold')
              LEFT JOIN `{$wpdb->prefix}cashback_claims` c_active
                  ON c_active.click_id = cl.click_id AND c_active.user_id = cl.user_id
-                 AND c_active.status IN ('draft', 'submitted', 'sent_to_network', 'approved')
+                 AND c_active.status IN ('draft', 'submitted', 'sent_to_network', 'approved', 'declined')
              WHERE cl.user_id = %d{$where_extra}";
 
         $total = (int) $wpdb->get_var($wpdb->prepare($count_query, ...$prepare_args));
@@ -295,8 +295,10 @@ class Cashback_Claims_Eligibility
                 $claim_st = $click['claim_status'];
                 if ($claim_st === 'approved') {
                     $reasons[] = __('Заявка уже одобрена.', 'cashback-plugin');
+                } elseif ($claim_st === 'declined') {
+                    $reasons[] = __('Заявка отклонена. Повторная подача невозможна.', 'cashback-plugin');
                 } else {
-                    $reasons[] = __('Заявка уже существует.', 'cashback-plugin');
+                    $reasons[] = __('Заявка уже подана, дождитесь решения.', 'cashback-plugin');
                 }
             }
 
@@ -441,6 +443,17 @@ class Cashback_Claims_Eligibility
 
         if ((int) $has_approved_claim > 0) {
             return __('Заявка по этому переходу уже одобрена.', 'cashback-plugin');
+        }
+
+        $has_declined_claim = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM `{$wpdb->prefix}cashback_claims`
+             WHERE click_id = %s AND user_id = %d AND status = 'declined'",
+            $click_id,
+            $user_id
+        ));
+
+        if ((int) $has_declined_claim > 0) {
+            return __('Заявка по этому переходу уже подана и отклонена. Повторная подача невозможна.', 'cashback-plugin');
         }
 
         return true;

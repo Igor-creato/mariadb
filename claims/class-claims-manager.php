@@ -108,7 +108,10 @@ class Cashback_Claims_Manager
         );
 
         if (!$inserted) {
-            return ['success' => false, 'error' => $wpdb->last_error];
+            if (strpos($wpdb->last_error, 'Duplicate entry') !== false && strpos($wpdb->last_error, 'uk_click_user') !== false) {
+                return ['success' => false, 'error' => __('Заявка по этому переходу уже подана. Повторная заявка невозможна, дождитесь решения сервиса.', 'cashback-plugin')];
+            }
+            return ['success' => false, 'error' => __('Не удалось создать заявку. Попробуйте позже.', 'cashback-plugin')];
         }
 
         $claim_id = (int) $wpdb->insert_id;
