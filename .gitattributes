@@ -1,0 +1,12 @@
+# Исключаем папки и файлы, которые не нужны в плагине
+/brauzer/       export-ignore
+/development/   export-ignore
+/support/       export-ignore
+
+# Все скрытые файлы и папки
+/.*        export-ignore
+
+# Исключаем файлы разработки
+/CLAUDE.md     export-ignore
+/sonar-project.properties     export-ignore
+
