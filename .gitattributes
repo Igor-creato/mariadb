@@ -1,7 +1,7 @@
 # Исключаем папки и файлы, которые не нужны в плагине
 /brauzer/       export-ignore
 /development/   export-ignore
-/support/       export-ignore
+/server/       export-ignore
 
 # Все скрытые файлы и папки
 /.*        export-ignore
